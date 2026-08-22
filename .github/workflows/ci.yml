@@ -90,6 +90,6 @@ jobs:
           echo 'vite never came up' >&2
           exit 1
       - name: Assert Vite proxy reaches the server
-        run: curl -sf http://localhost:5173/api/ping | grep -q '"pong":"true"'
+        run: curl -sf -X POST http://localhost:5173/api/auth/request-pin -H 'Content-Type: application/json' -d '{"email":"nobody@example.com"}' | grep -q '"ok":true'
       - name: Tear down
         run: docker compose -f docker-compose.dev.yml down
