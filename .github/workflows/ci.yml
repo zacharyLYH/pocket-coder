@@ -47,10 +47,12 @@ jobs:
         run: npm run lint
       - name: Typecheck & build
         run: npm run build
+      - name: Unit tests
+        run: npm run test:unit
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
-      - name: Behavioral tests
-        run: npm run test:e2e
+      - name: E2E tests (parallel)
+        run: npm run test:e2e:parallel
 
   docker-compose:
     name: Dev stack (docker compose) — build & health
@@ -90,6 +92,10 @@ jobs:
           echo 'vite never came up' >&2
           exit 1
       - name: Assert Vite proxy reaches the server
-        run: curl -sf -X POST http://localhost:5173/api/auth/request-pin -H 'Content-Type: application/json' -d '{"email":"nobody@example.com"}' | grep -q '"ok":true'
+        run: |
+          curl -sf -X POST http://localhost:5173/api/auth/request-pin \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"nobody@example.com"}' \
+            | grep -q '"ok":true'
       - name: Tear down
         run: docker compose -f docker-compose.dev.yml down
