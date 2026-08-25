@@ -31,9 +31,10 @@ test('create a project in the UI, open its terminal, type', async ({ page }) => 
     await page.getByPlaceholder(/Repo URL/).fill('')
     await page.getByRole('button', { name: 'Create project' }).click()
     // create is synchronous (sandbox up before the response); done when the
-    // button comes back
+    // button comes back. On a cold engine this includes building
+    // sps-sandbox — minutes on a fresh CI runner, so stay generous.
     await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({
-      timeout: 60_000,
+      timeout: 300_000,
     })
     const terminalButtons = page.getByRole('button', { name: 'Terminal' })
     await expect(terminalButtons).toHaveCount(1)
@@ -76,7 +77,7 @@ test('real OpenCode session renders through the backend terminal bridge', async 
   try {
     await deleteAllProjects(page.request)
     await page.getByRole('button', { name: 'Create project' }).click()
-    await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 60_000 })
+    await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
 
     // installs are explicit and per project: install OpenCode through the
     // home page (real npm download) BEFORE launching it

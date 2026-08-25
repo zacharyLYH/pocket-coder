@@ -53,6 +53,12 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: E2E tests (parallel)
         run: npm run test:e2e:parallel
+      - name: Upload e2e logs & reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: web/test-results/
 
   docker-compose:
     name: Dev stack (docker compose) — build & health

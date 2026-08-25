@@ -41,6 +41,12 @@ export default defineConfig({
   fullyParallel: true,
   workers: 1,
   outputDir: RUN_DIR,
+  // Generous default: journeys do synchronous sandbox-image builds and real
+  // npm installs, and e2e-parallel.sh stacks FOUR groups (each with its own
+  // Go server, Vite, and browser) on one machine — an unrelated group's
+  // docker build can stall another group's API calls past the 30s default.
+  // Specs needing more (the OpenCode TUI journey) raise their own budget.
+  timeout: 180_000,
   // One baseline per shot, no browser/platform suffix — the same PNGs serve
   // local macOS runs and Linux CI. maxDiffPixelRatio absorbs cross-OS font
   // rasterization noise; the visual suite guards responsive layout, not
