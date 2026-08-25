@@ -114,10 +114,27 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 	defer inW.Close() // signals the attach on ws-side shutdown
 
 	var wmu sync.Mutex // gorilla writes are not concurrent-safe
+
+	// The pty hands us raw bytes in arbitrary chunks, and a chunk can end in
+	// the middle of a multi-byte character. JSON text frames must carry valid
+	// UTF-8: marshaling a split character would silently replace it with
+	// U+FFFD and the browser would paint mojibake. So the writer holds back
+	// a trailing incomplete sequence (at most 3 bytes) until the next chunk
+	// completes it. carry is only touched under wmu.
+	var carry []byte
 	out := writerFunc(func(p []byte) (int, error) {
 		wmu.Lock()
 		defer wmu.Unlock()
-		frame, err := json.Marshal(wsOut{Type: "output", Data: string(p)})
+		buf := p
+		if len(carry) > 0 {
+			buf = append(carry, p...)
+		}
+		n, _ := splitUTF8(buf)
+		carry = append(carry[:0], buf[n:]...) // hold the tail for next time
+		if n == 0 {
+			return len(p), nil // nothing frameable yet; more bytes will come
+		}
+		frame, err := json.Marshal(wsOut{Type: "output", Data: string(buf[:n])})
 		if err != nil {
 			return 0, err
 		}
@@ -142,6 +159,25 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 		return
 	}
 
+	// inputs decouples websocket framing from attach-stdin writes. The pipe
+	// is synchronous: a write parks until the pty drains it, and once the
+	// exec stream ends nothing on the Docker side reads anymore. If the one
+	// goroutine that could notice the browser leaving were ever parked in
+	// that write, the handler would wedge forever (leaked goroutine, hijacked
+	// connection, FD per abused tab). So the reader only enqueues, and this
+	// pump owns the pipe; when the write side dies it drains the queue so the
+	// reader can always reach its ReadMessage again. Dropping stale keystrokes
+	// beats wedging the bridge; 64 frames is ample typing headroom.
+	inputs := make(chan string, 64)
+	go func() {
+		for data := range inputs {
+			if _, err := io.WriteString(inW, data); err != nil {
+				for range inputs { // stdin is dead; keep draining so sends never block
+				}
+			}
+		}
+	}()
+
 	resize := func(rows, cols int) {
 		if rows > 0 && cols > 0 {
 			_ = svc.Resize(ctx, execID, rows, cols)
@@ -162,8 +198,10 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 			}
 			switch f.Type {
 			case "input":
-				if _, err := io.WriteString(inW, f.Data); err != nil {
-					return
+				select {
+				case inputs <- f.Data:
+				default:
+					// queue full: the pty stopped keeping up; shed input
 				}
 			case "resize":
 				resize(f.Rows, f.Cols)
@@ -184,7 +222,8 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 	case <-closed:
 		// browser disconnected; cancel drops the attach, session survives
 	}
-	<-closed // let the reader drain before closing the pipe via defer
+	<-closed      // let the reader drain before closing the pipe via defer
+	close(inputs) // no more producers: let the pump finish and exit
 }
 
 // writerFunc adapts a function to io.Writer so pty output can be marshalled
@@ -192,6 +231,38 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// splitUTF8 finds where frameable output ends: it returns the length of the
+// longest prefix of b that ends on a character boundary, plus the number of
+// trailing bytes forming an incomplete sequence to carry into the next
+// chunk. A start byte promises 2-4 total bytes; if the buffer ends before
+// the promise is fulfilled, those bytes wait. Orphan continuation or invalid
+// bytes pass through rather than being held forever.
+func splitUTF8(b []byte) (n, hold int) {
+	for i := 1; i <= 3 && i <= len(b); i++ {
+		c := b[len(b)-i]
+		switch {
+		case c < 0x80:
+			return len(b), 0 // ASCII: nothing pending
+		case c >= 0xC2: // a start byte; C0/C1 never appear in valid UTF-8
+			size := 2
+			if c >= 0xF0 {
+				if c > 0xF4 { // F5-FF are not valid starts: flush, don't stall
+					return len(b), 0
+				}
+				size = 4
+			} else if c >= 0xE0 {
+				size = 3
+			}
+			if i < size {
+				return len(b) - i, i // sequence cut short: hold what we have
+			}
+			return len(b), 0 // fully present after all
+		}
+		// continuation byte: keep looking backward
+	}
+	return len(b), 0 // 3 continuation bytes with no start: pass it through
+}
 
 func handleListSessions(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

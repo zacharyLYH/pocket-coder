@@ -22,6 +22,17 @@ type streamReader struct{ r io.Reader }
 
 func (s streamReader) Read(p []byte) (int, error) { return s.r.Read(p) }
 
+// Close forwards to the wrapped reader when it has one (an io.Pipe writer
+// does). go-dockerclient closes its stdin stream when an exec's output ends;
+// without this wrapper hiding io.Closer, that cleanup never reaches us and a
+// writer parked inside the pipe stays parked forever.
+func (s streamReader) Close() error {
+	if c, ok := s.r.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
+
 type streamWriter struct{ w io.Writer }
 
 func (s streamWriter) Write(p []byte) (int, error) { return s.w.Write(p) }

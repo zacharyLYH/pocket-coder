@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
 import { HarnessesCard } from '@/components/HarnessesCard'
 
 // Unit tests for the harness/command orchestration card. The backend is
@@ -136,6 +136,46 @@ describe('HarnessesCard', () => {
     await screen.findByText(/Applied to 1 project \(skipped 1 stopped\)/)
     const call = fetchMock.mock.calls.find(([u]) => String(u).includes('/api/projects/exec'))
     expect(JSON.parse(String(call![1]?.body))).toEqual({ projectIds: ['p1', 'p2'], command: 'npm i -g x' })
+  })
+
+  // Regression: the form's Enter-submit used to bypass the project picker and
+  // POST /api/projects/exec with whatever ambient `picked` happened to hold —
+  // an empty selection if the picker was never opened, or a stale one after
+  // Cancel. A command must never run until the picker is confirmed.
+  it('never runs a command via Enter before projects are chosen', async () => {
+    const fetchMock = mockFetch((url) =>
+      url === '/api/harnesses' ? { status: 200, body: HARNESS_RESPONSE } : undefined)
+    vi.stubGlobal('fetch', fetchMock)
+    const { container } = render(<HarnessesCard projects={PROJECTS} />)
+
+    await screen.findByText('OpenCode')
+    const input = screen.getByPlaceholderText(/npm i -g opencode-ai@latest/)
+    fireEvent.change(input, { target: { value: 'echo hi' } })
+    await act(async () => {
+      fireEvent.submit(container.querySelector('form')!)
+    })
+
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/api/projects/exec'))).toBe(false)
+  })
+
+  it('discards a cancelled selection instead of leaking it into the next run', async () => {
+    const fetchMock = mockFetch((url) =>
+      url === '/api/harnesses' ? { status: 200, body: HARNESS_RESPONSE } : undefined)
+    vi.stubGlobal('fetch', fetchMock)
+    render(<HarnessesCard projects={PROJECTS} />)
+
+    await screen.findByText('OpenCode')
+    fireEvent.change(screen.getByPlaceholderText(/npm i -g opencode-ai@latest/), { target: { value: 'echo hi' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Choose projects…' }))
+    // uncheck everything, then back out
+    const picker = screen.getByText('alpha').closest('div.rounded-md') as HTMLElement
+    for (const box of picker.querySelectorAll('label input')) fireEvent.click(box)
+    fireEvent.click(within(picker).getByRole('button', { name: 'Cancel' }))
+
+    // reopening starts from a fresh default (everything checked), not the
+    // cancelled edits
+    fireEvent.click(screen.getByRole('button', { name: 'Choose projects…' }))
+    expect(screen.getByRole('button', { name: /Run in 2 project/ })).toBeInTheDocument()
   })
 
   it('adds a harness through the dialog and surfaces server rejection', async () => {

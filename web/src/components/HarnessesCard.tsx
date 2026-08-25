@@ -76,6 +76,9 @@ export function HarnessesCard({ projects }: { projects: Project[] }) {
 
   async function runCommand() {
     if (!commandInput.trim()) return
+    // only a confirmed picker selection may drive exec — never ambient `picked`,
+    // which can be empty or stale once the picker is closed
+    if (pickerFor !== 'command') return
     await applyToProjects('command', '/api/projects/exec', { command: commandInput.trim() })
   }
 
