@@ -101,18 +101,19 @@ func Open(dataDir string, seed Bootstrap) (*Store, error) {
 	}
 	s := &Store{path: filepath.Join(dataDir, "state.json")}
 	raw, err := os.ReadFile(s.path)
+	fresh := os.IsNotExist(err)
 	switch {
 	case err == nil:
 		if err := json.Unmarshal(raw, &s.doc); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", s.path, err)
 		}
-	case os.IsNotExist(err):
+	case fresh:
 		// fresh install: empty document, seeded below and persisted
 	default:
 		return nil, fmt.Errorf("read %s: %w", s.path, err)
 	}
 	s.seed(seed)
-	if !os.IsNotExist(err) { // loaded an existing doc — nothing to persist
+	if !fresh { // loaded an existing doc — nothing to persist
 		return s, nil
 	}
 	if err := s.save(); err != nil {
@@ -142,11 +143,24 @@ func (s *Store) Mutate(fn func(doc *Document) error) error {
 	if err != nil {
 		return err
 	}
+	normalize(&clone) // fn can assume the keyed collections are non-nil
 	if err := fn(&clone); err != nil {
 		return err
 	}
 	s.doc = clone
 	return s.save()
+}
+
+// normalize guarantees the keyed collections are non-nil for mutation fns,
+// so no caller of Mutate needs a nil-map guard before writing. Empty maps
+// stay out of the file: omitempty drops them at save time either way.
+func normalize(doc *Document) {
+	if doc.Projects == nil {
+		doc.Projects = map[string]Project{}
+	}
+	if doc.Harnesses == nil {
+		doc.Harnesses = map[string]Harness{}
+	}
 }
 
 // deepcopy round-trips through JSON: the document is small and plain, so

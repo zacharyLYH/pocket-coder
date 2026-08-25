@@ -31,7 +31,7 @@ export function Home({ email, onLogout, navigate }: {
 
   async function logout() {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' })
+      await api('/api/auth/logout', { method: 'POST' })
     } catch {
       // still sign out client-side
     }

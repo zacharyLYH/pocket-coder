@@ -220,25 +220,30 @@ func (s *Service) Email(r *http.Request) string {
 	return v
 }
 
-// SetCookie writes the session cookie for token. Secure is set when the
-// request arrived over TLS, directly or behind a reverse proxy that reports
-// https via X-Forwarded-Proto.
-func (s *Service) SetCookie(w http.ResponseWriter, r *http.Request, token string) {
-	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-	http.SetCookie(w, &http.Cookie{
+// sessionCookie builds the session cookie; maxAge < 0 expires it.
+func sessionCookie(token string, maxAge int) *http.Cookie {
+	return &http.Cookie{
 		Name:     CookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int(TokenTTL.Seconds()),
-		Secure:   secure,
-	})
+		MaxAge:   maxAge,
+	}
+}
+
+// SetCookie writes the session cookie for token. Secure is set when the
+// request arrived over TLS, directly or behind a reverse proxy that reports
+// https via X-Forwarded-Proto.
+func (s *Service) SetCookie(w http.ResponseWriter, r *http.Request, token string) {
+	c := sessionCookie(token, int(TokenTTL.Seconds()))
+	c.Secure = r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	http.SetCookie(w, c)
 }
 
 // ClearCookie expires the session cookie.
 func (s *Service) ClearCookie(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: CookieName, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	http.SetCookie(w, sessionCookie("", -1))
 }
 
 func writeUnauthorized(w http.ResponseWriter) {

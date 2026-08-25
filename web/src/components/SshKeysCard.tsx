@@ -39,7 +39,7 @@ export function SshKeysCard({ keys, onChanged }: {
 
   async function deleteKey(fp: string) {
     try {
-      await fetch(`/api/ssh-keys/${fp}`, { method: 'DELETE' })
+      await api(`/api/ssh-keys/${fp}`, { method: 'DELETE' })
       onChanged()
     } catch {
       // retry on next load

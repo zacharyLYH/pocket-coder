@@ -31,7 +31,6 @@ type Client interface {
 	EnsureNetwork(ctx context.Context, name string) error
 	Build(ctx context.Context, opts BuildOptions, log io.Writer) error
 	InspectImage(ctx context.Context, name string) error
-	Create(ctx context.Context, spec Spec) (string, error)
 	Start(ctx context.Context, id string) error
 	Run(ctx context.Context, spec Spec) (string, error)
 	Stop(ctx context.Context, id string, timeout time.Duration) error
@@ -95,8 +94,10 @@ func (d *Docker) EnsureNetwork(ctx context.Context, name string) error {
 	return nil
 }
 
-// Create creates a container from spec and returns its id.
-func (d *Docker) Create(ctx context.Context, spec Spec) (string, error) {
+// create creates a container from spec and returns its id. Unexported: the
+// only consumer is Run, and a bare created-but-not-started container is a
+// state callers should never see.
+func (d *Docker) create(ctx context.Context, spec Spec) (string, error) {
 	c, err := d.c.CreateContainer(containerOptions(ctx, spec))
 	if err != nil {
 		return "", fmt.Errorf("create container %s: %w", spec.Name, err)
@@ -114,7 +115,7 @@ func (d *Docker) Start(ctx context.Context, id string) error {
 
 // Run creates and starts a container, cleaning up on start failure.
 func (d *Docker) Run(ctx context.Context, spec Spec) (string, error) {
-	id, err := d.Create(ctx, spec)
+	id, err := d.create(ctx, spec)
 	if err != nil {
 		return "", err
 	}

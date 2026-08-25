@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { api, errMsg } from '@/lib/api'
+import { isLaunchable } from '@/lib/types'
 import type { ExecResult, Harness, Project } from '@/lib/types'
 
 type RowMsg = { kind: 'ok' | 'error'; text: string }
@@ -78,7 +79,7 @@ export function HarnessesCard({ projects }: { projects: Project[] }) {
     await applyToProjects('command', '/api/projects/exec', { command: commandInput.trim() })
   }
 
-  const suggestions = harnesses.filter((h) => h.command !== 'bash')
+  const suggestions = harnesses.filter(isLaunchable)
 
   return (
     <Card className="mt-4">

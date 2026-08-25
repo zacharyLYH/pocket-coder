@@ -62,21 +62,19 @@ func (l *Store) Get(id string) (Harness, error) {
 }
 
 // Save stores h under the slug of its name; an existing entry with that
-// slug is refused. It returns the id the plugin was saved under.
+// slug is refused (a name with no usable characters has no slug). It
+// returns the id the plugin was saved under.
 func (l *Store) Save(h Harness) (string, error) {
 	id := Slug(h.Name)
 	if id == "" {
 		return "", fmt.Errorf("name %q has no usable characters for an id", h.Name)
 	}
-	if strings.TrimSpace(h.Name) == "" || strings.TrimSpace(h.Command) == "" {
+	if strings.TrimSpace(h.Command) == "" {
 		return "", fmt.Errorf("name and command are required")
 	}
 	err := l.st.Mutate(func(doc *state.Document) error {
 		if _, exists := doc.Harnesses[id]; exists {
 			return fmt.Errorf("harness %q already exists", id)
-		}
-		if doc.Harnesses == nil {
-			doc.Harnesses = map[string]Harness{}
 		}
 		h.ID = id
 		doc.Harnesses[id] = h
@@ -109,9 +107,6 @@ func (l *Store) EnsureBuiltins() ([]string, error) {
 			id := Slug(b.Name)
 			if _, exists := doc.Harnesses[id]; exists {
 				continue
-			}
-			if doc.Harnesses == nil {
-				doc.Harnesses = map[string]Harness{}
 			}
 			b.ID = id
 			doc.Harnesses[id] = b

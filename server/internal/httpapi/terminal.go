@@ -15,7 +15,6 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"sps/internal/docker"
 	"sps/internal/project"
 	"sps/internal/session"
 )
@@ -137,13 +136,11 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 		_ = conn.WriteMessage(websocket.TextMessage, frame)
 	}
 
-	done := make(chan docker.ExecDone, 1)
 	execID, attachDone, err := svc.Attach(ctx, container, name, inR, out, out)
 	if err != nil {
 		exitFrame(-1, err.Error())
 		return
 	}
-	go func() { done <- <-attachDone }()
 
 	resize := func(rows, cols int) {
 		if rows > 0 && cols > 0 {
@@ -175,7 +172,7 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 	}()
 
 	select {
-	case out_ := <-done:
+	case out_ := <-attachDone:
 		if out_.Err != nil {
 			exitFrame(-1, out_.Err.Error())
 		} else {
@@ -206,9 +203,6 @@ func handleListSessions(d Deps) http.HandlerFunc {
 		if err != nil {
 			writeInternalErr(w, "terminal", err)
 			return
-		}
-		if sessions == nil {
-			sessions = []session.Entry{}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 	}
@@ -290,12 +284,9 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 
 // createShellSession creates a plain shell session and writes the response:
 // 201 for a fresh create, 200 for a restart under the same name. A duplicate
-// name is success either way (create doubles as the ensure call).
+// name is success either way (create doubles as the ensure call). Name
+// validity is enforced by session.Create; writeSessionErr maps the rejection.
 func createShellSession(d Deps, w http.ResponseWriter, ctx context.Context, id, name string, restart bool) {
-	if !session.ValidName(name) {
-		writeErr(w, http.StatusBadRequest, "invalid session name")
-		return
-	}
 	if err := d.Sessions.Create(ctx, project.ContainerName(id), name); err != nil {
 		writeSessionErr(w, d, id, name, err)
 		return

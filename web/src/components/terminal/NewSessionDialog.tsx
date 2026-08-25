@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { api, errMsg } from '@/lib/api'
-import type { Harness } from '@/lib/types'
+import { isLaunchable, type Harness } from '@/lib/types'
 
 // The launch timeout: harness installs (npm/pip) + CLI validation can
 // take a while. 3 minutes covers slow networks and large packages.
@@ -36,43 +36,44 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
     setLaunchError(null)
   }
 
+  // createShell ensures a plain-shell session exists under the typed name.
+  async function createShell(name: string, signal: AbortSignal) {
+    setProgress('Starting shell session…')
+    await api(`/api/projects/${projectId}/sessions`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+      signal,
+    })
+    return name
+  }
+
+  // createHarness launches a harness session; harness installs (npm/pip) can
+  // be slow, so it shares the launch timeout. The server picks the
+  // <harnessID>-<n> name to attach.
+  async function createHarness(id: string, signal: AbortSignal) {
+    setProgress('Installing harness (this may take a minute)…')
+    const created = await api<{ name?: string }>(`/api/projects/${projectId}/sessions`, {
+      method: 'POST',
+      body: JSON.stringify({ harnessId: id }),
+      signal,
+    })
+    if (!created?.name) throw new Error('launch response missing session name')
+    return created.name
+  }
+
   async function launch(e: FormEvent) {
     e.preventDefault()
     const isHarness = type !== 'shell'
-    // Harness sessions are auto-named by the server (<harnessID>-<n>); a
-    // typed name only applies to plain shells. Using the typed name here
-    // would create a stray bash session alongside the harness one.
     if (!isHarness && !name.trim()) return
     setLaunching(true)
     setLaunchError(null)
     setProgress('Creating session…')
-    let attached = name.trim()
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), LAUNCH_TIMEOUT_MS)
     try {
-      let body: string
-      if (isHarness) {
-        // Harness launch — may be slow (install + validation)
-        setProgress('Installing harness (this may take a minute)…')
-        body = JSON.stringify({ harnessId: type })
-      } else {
-        setProgress('Starting shell session…')
-        body = JSON.stringify({ name: attached })
-      }
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), LAUNCH_TIMEOUT_MS)
-      try {
-        const created = await api<{ name?: string }>(`/api/projects/${projectId}/sessions`, {
-          method: 'POST',
-          body,
-          signal: controller.signal,
-        })
-        if (isHarness) {
-          // the server picks the <harnessID>-<n> name to attach
-          if (!created?.name) throw new Error('launch response missing session name')
-          attached = created.name
-        }
-      } finally {
-        clearTimeout(timer)
-      }
+      const attached = isHarness
+        ? await createHarness(type, controller.signal)
+        : await createShell(name.trim(), controller.signal)
       onOpenChange(false)
       reset()
       onLaunched(attached)
@@ -84,6 +85,7 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
       }
       setProgress('')
     } finally {
+      clearTimeout(timer)
       setLaunching(false)
     }
   }
@@ -119,7 +121,7 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
               disabled={launching}
             >
               <option value="shell">Shell (bash)</option>
-              {harnesses.filter((h) => h.command !== 'bash').map((h) => (
+              {harnesses.filter(isLaunchable).map((h) => (
                 <option key={h.id} value={h.id}>
                   {h.name}{h.installed ? '' : ' — not installed in this project'}
                 </option>

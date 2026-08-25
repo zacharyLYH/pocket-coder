@@ -45,7 +45,7 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
   async function deleteProject(id: string) {
     if (!window.confirm('Delete this project — container and all volumes?')) return
     try {
-      await fetch(`/api/projects/${id}?scope=all`, { method: 'DELETE' })
+      await api(`/api/projects/${id}?scope=all`, { method: 'DELETE' })
       await refresh()
     } catch {
       // leave the row in place; the next refresh shows the truth

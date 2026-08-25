@@ -43,9 +43,6 @@ func Open(st *state.Store) *StateStore {
 // Create writes a new project record.
 func (s *StateStore) Create(id string, p Project) error {
 	return s.st.Mutate(func(doc *state.Document) error {
-		if doc.Projects == nil {
-			doc.Projects = map[string]Project{}
-		}
 		doc.Projects[id] = p
 		return nil
 	})

@@ -47,16 +47,27 @@ var nameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 // ValidName reports whether name may be used as a tmux session name.
 func ValidName(name string) bool { return nameRe.MatchString(name) }
 
+// splitSuffix splits "base-<n>" into its base and numeric suffix. The scan
+// runs backward so "a-2-3" splits as ("a-2", 3), never ("a", 2). ok is false
+// when no dash-digit tail exists.
+func splitSuffix(name string) (base string, n int, ok bool) {
+	for i := len(name) - 1; i > 0; i-- {
+		if name[i] == '-' {
+			if v, err := strconv.Atoi(name[i+1:]); err == nil {
+				return name[:i], v, true
+			}
+		}
+	}
+	return name, 0, false
+}
+
 // HarnessSuffixed reports whether name is exactly base+"-"+<number> — the
 // namespace Launch uses for harness sessions. A bare name ("opencode") is
 // NOT suffixed, so a plain shell that happens to share a harness's id is
 // never mistaken for a harness session.
 func HarnessSuffixed(name, base string) bool {
-	if !strings.HasPrefix(name, base+"-") {
-		return false
-	}
-	_, err := strconv.Atoi(strings.TrimPrefix(name, base+"-"))
-	return err == nil
+	b, _, ok := splitSuffix(name)
+	return ok && b == base
 }
 
 // ThemeArgs are the tmux commands appended to every session create so the
@@ -116,6 +127,9 @@ func (s *Service) List(ctx context.Context, container string) ([]Entry, error) {
 		if line = strings.TrimSpace(line); line != "" {
 			out = append(out, Entry{Name: line})
 		}
+	}
+	if out == nil {
+		out = []Entry{}
 	}
 	return out, nil
 }
@@ -201,14 +215,11 @@ func (s *Service) Resize(ctx context.Context, execID string, rows, cols int) err
 // shell "dev" → "dev". The suffix is the convention Launch uses; the base
 // alone tells restart which plugin to relaunch.
 func ParseBase(name string) string {
-	for i := len(name) - 1; i > 0; i-- {
-		if name[i] == '-' {
-			if _, err := strconv.Atoi(name[i+1:]); err == nil {
-				return name[:i]
-			}
-		}
+	base, _, ok := splitSuffix(name)
+	if !ok {
+		return name
 	}
-	return name
+	return base
 }
 
 // nextName returns <id>-<n> using the LOWEST free suffix for the prefix, so
@@ -222,10 +233,7 @@ func (s *Service) nextName(ctx context.Context, container, id string) (string, e
 	}
 	taken := map[int]bool{}
 	for _, e := range existing {
-		if ParseBase(e.Name) != id {
-			continue
-		}
-		if n, err := strconv.Atoi(strings.TrimPrefix(e.Name, id+"-")); err == nil {
+		if base, n, ok := splitSuffix(e.Name); ok && base == id {
 			taken[n] = true
 		}
 	}

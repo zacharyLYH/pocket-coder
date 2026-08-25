@@ -412,6 +412,7 @@ func (_c *MockClient_InspectImage_Call) RunAndReturn(run func(context.Context, s
 	return _c
 }
 
+// Remove provides a mock function with given fields: ctx, id, force
 func (_m *MockClient) Remove(ctx context.Context, id string, force bool) error {
 	ret := _m.Called(ctx, id, force)
 
