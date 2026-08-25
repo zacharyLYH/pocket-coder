@@ -145,63 +145,6 @@ func (_c *MockClient_Build_Call) RunAndReturn(run func(context.Context, docker.B
 	return _c
 }
 
-// Create provides a mock function with given fields: ctx, spec
-func (_m *MockClient) Create(ctx context.Context, spec docker.Spec) (string, error) {
-	ret := _m.Called(ctx, spec)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Create")
-	}
-
-	var r0 string
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, docker.Spec) (string, error)); ok {
-		return rf(ctx, spec)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, docker.Spec) string); ok {
-		r0 = rf(ctx, spec)
-	} else {
-		r0 = ret.Get(0).(string)
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, docker.Spec) error); ok {
-		r1 = rf(ctx, spec)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockClient_Create_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Create'
-type MockClient_Create_Call struct {
-	*mock.Call
-}
-
-// Create is a helper method to define mock.On call
-//   - ctx context.Context
-//   - spec docker.Spec
-func (_e *MockClient_Expecter) Create(ctx interface{}, spec interface{}) *MockClient_Create_Call {
-	return &MockClient_Create_Call{Call: _e.mock.On("Create", ctx, spec)}
-}
-
-func (_c *MockClient_Create_Call) Run(run func(ctx context.Context, spec docker.Spec)) *MockClient_Create_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(docker.Spec))
-	})
-	return _c
-}
-
-func (_c *MockClient_Create_Call) Return(_a0 string, _a1 error) *MockClient_Create_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockClient_Create_Call) RunAndReturn(run func(context.Context, docker.Spec) (string, error)) *MockClient_Create_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // EnsureNetwork provides a mock function with given fields: ctx, name
 func (_m *MockClient) EnsureNetwork(ctx context.Context, name string) error {
 	ret := _m.Called(ctx, name)
