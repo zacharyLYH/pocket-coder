@@ -75,16 +75,3 @@ func TestTarFileRoundTrip(t *testing.T) {
 		t.Fatalf("content = %q", got)
 	}
 }
-
-func TestParsePorts(t *testing.T) {
-	out := `State    Recv-Q   Send-Q     Local Address:Port     Peer Address:Port  Process
-LISTEN   0        4096       0.0.0.0:8000           0.0.0.0:*          users:(("python3",pid=7,fd=3))
-LISTEN   0        128        [::]:8080              [::]:*              users:(("node",pid=9,fd=3))
-LISTEN   0        4096       0.0.0.0:8000           0.0.0.0:*          users:(("python3",pid=11,fd=3))
-garbage line
-`
-	ports := parsePorts(out)
-	if len(ports) != 2 || ports[0].Number != 8000 || ports[1].Number != 8080 {
-		t.Fatalf("ports = %+v, want [8000 8080]", ports)
-	}
-}

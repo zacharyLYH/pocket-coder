@@ -15,8 +15,10 @@ import (
 	"sps/internal/auth"
 	"sps/internal/docker"
 	"sps/internal/events"
+	"sps/internal/harness"
 	"sps/internal/project"
 	"sps/internal/session"
+	"sps/internal/sshkeys"
 )
 
 // EventLog is what handlers need from the event log: read history and append
@@ -29,17 +31,22 @@ type EventLog interface {
 // Deps carries everything New needs. Grows over time instead of
 // stretching New's signature.
 type Deps struct {
-	Events   EventLog
-	Version  string
-	Auth     *auth.Service
-	Projects *project.Service
-	Sessions *session.Service
+	Events    EventLog
+	Version   string
+	Auth      *auth.Service
+	Projects  *project.Service
+	Sessions  *session.Service
+	Harnesses *harness.Store
+	SSHKeys   *sshkeys.Store
 }
 
 // New returns the HTTP handler for the whole server. Login/PIN routes are
 // public; everything else under /api requires a valid session cookie.
 func New(d Deps) http.Handler {
 	mux := http.NewServeMux()
+	authed := func(method, path string, h func(Deps) http.HandlerFunc) {
+		mux.Handle(method+" "+path, d.Auth.RequireAuth(h(d)))
+	}
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": d.Version})
@@ -48,23 +55,46 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/auth/request-pin", handleRequestPIN(d))
 	mux.HandleFunc("POST /api/auth/verify", handleVerify(d))
 	mux.HandleFunc("POST /api/auth/logout", handleLogout(d))
-	mux.Handle("GET /api/auth/me", d.Auth.RequireAuth(http.HandlerFunc(handleMe(d))))
-	mux.Handle("GET /api/events", d.Auth.RequireAuth(http.HandlerFunc(handleEvents(d.Events))))
+	authed("GET", "/api/auth/me", handleMe)
+	authed("GET", "/api/events", func(d Deps) http.HandlerFunc { return handleEvents(d.Events) })
 
 	if d.Projects != nil {
-		mux.Handle("GET /api/projects", d.Auth.RequireAuth(http.HandlerFunc(handleListProjects(d))))
-		mux.Handle("POST /api/projects", d.Auth.RequireAuth(http.HandlerFunc(handleCreateProject(d))))
-		mux.Handle("GET /api/projects/{id}", d.Auth.RequireAuth(http.HandlerFunc(handleGetProject(d))))
-		mux.Handle("DELETE /api/projects/{id}", d.Auth.RequireAuth(http.HandlerFunc(handleDeleteProject(d))))
+		authed("GET", "/api/projects", handleListProjects)
+		authed("POST", "/api/projects", handleCreateProject)
+		authed("GET", "/api/projects/{id}", handleGetProject)
+		authed("DELETE", "/api/projects/{id}", handleDeleteProject)
 		for _, op := range []string{"start", "stop", "restart"} {
-			mux.Handle("POST /api/projects/{id}/"+op, d.Auth.RequireAuth(http.HandlerFunc(handleProjectOp(d, op))))
+			authed("POST", "/api/projects/{id}/"+op, func(d Deps) http.HandlerFunc { return handleProjectOp(d, op) })
 		}
 	}
 
 	if d.Sessions != nil {
-		mux.Handle("GET /api/projects/{id}/sessions", d.Auth.RequireAuth(http.HandlerFunc(handleListSessions(d))))
-		mux.Handle("POST /api/projects/{id}/sessions", d.Auth.RequireAuth(http.HandlerFunc(handleCreateSession(d))))
-		mux.Handle("GET /ws/projects/{id}/sessions/{name}", d.Auth.RequireAuth(http.HandlerFunc(handleTerminal(d))))
+		authed("GET", "/api/projects/{id}/sessions", handleListSessions)
+		authed("POST", "/api/projects/{id}/sessions", handleCreateSession)
+		authed("DELETE", "/api/projects/{id}/sessions/{name}", handleKillSession)
+		authed("POST", "/api/projects/{id}/sessions/{name}/restart", handleRestartSession)
+		authed("GET", "/ws/projects/{id}/sessions/{name}", handleTerminal)
+	}
+
+	if d.Harnesses != nil && d.Projects != nil {
+		authed("GET", "/api/projects/{id}/harnesses", handleProjectHarnesses)
+		authed("POST", "/api/harnesses/{id}/install", handleInstallHarness)
+	}
+
+	if d.Projects != nil && d.Sessions != nil {
+		authed("POST", "/api/projects/exec", handleExecCommand)
+	}
+
+	if d.Harnesses != nil {
+		authed("GET", "/api/harnesses", handleListHarnesses)
+		authed("POST", "/api/harnesses", handleCreateHarness)
+		authed("DELETE", "/api/harnesses/{id}", handleDeleteHarness)
+	}
+
+	if d.SSHKeys != nil {
+		authed("GET", "/api/ssh-keys", handleListSSHKeys)
+		authed("POST", "/api/ssh-keys", handleAddSSHKey)
+		authed("DELETE", "/api/ssh-keys/{fingerprint}", handleDeleteSSHKey)
 	}
 	return mux
 }
@@ -74,8 +104,7 @@ func handleRequestPIN(d Deps) http.HandlerFunc {
 		var body struct {
 			Email string `json:"email"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		if !decodeBody(w, r, &body, false) {
 			return
 		}
 		body.Email = strings.TrimSpace(body.Email)
@@ -86,10 +115,9 @@ func handleRequestPIN(d Deps) http.HandlerFunc {
 			// address is configured.
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		case errors.Is(err, auth.ErrRateLimited):
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, try again later"})
+			writeErr(w, http.StatusTooManyRequests, "too many requests, try again later")
 		case err != nil:
-			slog.Error("request pin", "err", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			writeInternalErr(w, "request pin", err)
 		default:
 			d.Events.Append("login.pin.sent", map[string]any{"email": body.Email, "delivery": d.Auth.MailerName})
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -103,21 +131,19 @@ func handleVerify(d Deps) http.HandlerFunc {
 			Email string `json:"email"`
 			Pin   string `json:"pin"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		if !decodeBody(w, r, &body, false) {
 			return
 		}
 		token, err := d.Auth.Verify(strings.TrimSpace(body.Email), strings.TrimSpace(body.Pin))
 		switch {
 		case errors.Is(err, auth.ErrRateLimited):
 			d.Events.Append("login.failure", map[string]any{"email": body.Email, "reason": "rate_limited"})
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many attempts, try again later"})
+			writeErr(w, http.StatusTooManyRequests, "too many attempts, try again later")
 		case errors.Is(err, auth.ErrInvalidPIN):
 			d.Events.Append("login.failure", map[string]any{"email": body.Email, "reason": "invalid_pin"})
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid pin"})
+			writeErr(w, http.StatusUnauthorized, "invalid pin")
 		case err != nil:
-			slog.Error("verify pin", "err", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			writeInternalErr(w, "verify pin", err)
 		default:
 			d.Events.Append("login.success", map[string]any{"email": body.Email})
 			d.Auth.SetCookie(w, r, token)
@@ -144,21 +170,19 @@ func handleMe(d Deps) http.HandlerFunc {
 func handleCreateProject(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			RepoURL string `json:"repoUrl"`
-			Branch  string `json:"branch"`
+			RepoURL     string `json:"repoUrl"`
+			Branch      string `json:"branch"`
+			CloneMethod string `json:"cloneMethod"` // "ssh" or "http"
 		}
-		if r.Body != nil {
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-				return
-			}
+		if r.Body != nil && !decodeBody(w, r, &body, true) {
+			return
 		}
-		id, p, err := d.Projects.Create(r.Context(), strings.TrimSpace(body.RepoURL), strings.TrimSpace(body.Branch))
+		id, p, err := d.Projects.Create(r.Context(), strings.TrimSpace(body.RepoURL), strings.TrimSpace(body.Branch), strings.TrimSpace(body.CloneMethod))
 		switch {
 		case errors.Is(err, project.ErrInvalidInput):
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 		case err != nil:
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusInternalServerError, err.Error())
 		default:
 			writeJSON(w, http.StatusCreated, map[string]any{
 				"id": id, "name": p.Name, "repo": p.Repo, "branch": p.Branch,
@@ -171,8 +195,7 @@ func handleListProjects(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entries, err := d.Projects.List()
 		if err != nil {
-			slog.Error("list projects", "err", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			writeInternalErr(w, "list projects", err)
 			return
 		}
 		if entries == nil {
@@ -187,14 +210,13 @@ func handleGetProject(d Deps) http.HandlerFunc {
 		p, status, err := d.Projects.Get(r.Context(), r.PathValue("id"))
 		switch {
 		case errors.Is(err, project.ErrNotFound):
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such project"})
+			writeErr(w, http.StatusNotFound, "no such project")
 		case err != nil:
-			slog.Error("get project", "err", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			writeInternalErr(w, "get project", err)
 		default:
 			writeJSON(w, http.StatusOK, map[string]any{
 				"id": r.PathValue("id"), "name": p.Name, "repo": p.Repo,
-				"branch": p.Branch, "status": status.State,
+				"branch": p.Branch, "cloneMethod": p.CloneMethod, "status": status.State,
 			})
 		}
 	}
@@ -232,7 +254,7 @@ func handleDeleteProject(d Deps) http.HandlerFunc {
 		case err == nil:
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		case errors.Is(err, project.ErrInvalidScope):
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 		default:
 			writeServiceErr(w, err)
 		}
@@ -244,12 +266,11 @@ func handleDeleteProject(d Deps) http.HandlerFunc {
 func writeServiceErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, project.ErrNotFound):
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such project"})
+		writeErr(w, http.StatusNotFound, "no such project")
 	case errors.Is(err, docker.ErrNotFound):
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "container not found"})
+		writeErr(w, http.StatusNotFound, "container not found")
 	case err != nil:
-		slog.Error("project op", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeInternalErr(w, "project op", err)
 	}
 }
 
@@ -259,7 +280,7 @@ func handleEvents(ev events.Reader) http.HandlerFunc {
 		if v := r.URL.Query().Get("after"); v != "" {
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "after must be a number"})
+				writeErr(w, http.StatusBadRequest, "after must be a number")
 				return
 			}
 			after = n
@@ -268,7 +289,7 @@ func handleEvents(ev events.Reader) http.HandlerFunc {
 		if v := r.URL.Query().Get("limit"); v != "" {
 			n, err := strconv.Atoi(v)
 			if err != nil || n < 0 {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be a non-negative number"})
+				writeErr(w, http.StatusBadRequest, "limit must be a non-negative number")
 				return
 			}
 			limit = n
@@ -278,8 +299,7 @@ func handleEvents(ev events.Reader) http.HandlerFunc {
 		}
 		list, err := ev.Read(after, limit)
 		if err != nil {
-			slog.Error("read events", "err", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			writeInternalErr(w, "read events", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"events": list})
@@ -290,4 +310,30 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeErr writes the standard JSON error shape {"error": msg}.
+func writeErr(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+const errInternal = "internal error"
+
+// writeInternalErr logs op's failure and answers 500; the detail never
+// reaches the client.
+func writeInternalErr(w http.ResponseWriter, op string, err error) {
+	slog.Error(op, "err", err)
+	writeErr(w, http.StatusInternalServerError, errInternal)
+}
+
+// decodeBody decodes the JSON request body into v; on failure it writes the
+// standard 400 and returns false. tolerateEOF allows an empty body (used by
+// create-project, whose body is all-optional).
+func decodeBody(w http.ResponseWriter, r *http.Request, v any, tolerateEOF bool) bool {
+	err := json.NewDecoder(r.Body).Decode(v)
+	if err != nil && !(tolerateEOF && errors.Is(err, io.EOF)) {
+		writeErr(w, http.StatusBadRequest, "invalid JSON body")
+		return false
+	}
+	return true
 }

@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
-interface Project {
-  id: string
-  name: string
-}
+import { api, errMsg } from '@/lib/api'
+import type { Project } from '@/lib/types'
 
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([])
@@ -12,13 +10,11 @@ export function useProjects() {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch('/api/projects')
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = (await res.json()) as { projects: Project[] }
+      const data = await api<{ projects: Project[] }>('/api/projects')
       setProjects(data.projects)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errMsg(err))
     } finally {
       setLoading(false)
     }

@@ -1,69 +1,54 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
+import { deleteAllProjects, engineUp } from './helpers'
 
-// Visual tests for the terminal: the app runs against network-level mocks
-// (no backend), and the WebSocket is scripted with page.routeWebSocket so a
-// real xterm.js instance renders deterministic frames. Snapshots assert the
-// rendered pixels — this is what catches renderer/layout regressions.
-// Phone is covered deliberately: it is the primary use case (PRD litmus).
+// Visual tests for the terminal, rendered by a real xterm.js attached to a
+// real tmux session in a real project container. The prompt line carries the
+// container's random hostname — a tiny, per-run-varying region absorbed by
+// the global maxDiffPixelRatio; everything else (layout, chrome, colors)
+// must match. Phone is covered deliberately: it is the primary use case.
 
-async function scriptMocks(page: Page) {
-  await page.route('**/api/auth/me', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body:      JSON.stringify({ email: 'me@example.com' }) }))
-  await page.route('**/api/projects', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: [{ id: 'abc123', name: 'demo' }] }) }))
-  // TerminalView ensures the session exists before dialing the WS
-  await page.route('**/api/projects/abc123/sessions', (route) =>
-    route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ name: 'main' }) }))
-
-  // script the WS the page opens when Terminal is clicked: echo a prompt,
-  // then reply to input like a tiny line-buffered fake shell. Input arrives
-  // as one frame per keystroke, so commands are only recognized on Enter.
-  await page.routeWebSocket(/\/ws\/projects\/abc123/, (ws) => {
-    let line = ''
-    ws.send(JSON.stringify({ type: 'output', data: 'sps sandbox\r\n$ ' }))
-    ws.onMessage((message) => {
-      const frame = JSON.parse(String(message)) as { type: string; data?: string }
-      if (frame.type !== 'input' || !frame.data) return
-      line += frame.data
-      ws.send(JSON.stringify({ type: 'output', data: frame.data.replace(/\r/g, '\r\n') }))
-      if (!line.includes('\r')) return
-      const entered = line
-      line = ''
-      if (entered.trimEnd().endsWith('exit')) {
-        ws.send(JSON.stringify({ type: 'exit', code: 0 }))
-      }
-    })
-  })
+async function openTerminal(page: import('@playwright/test').Page) {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Terminal' }).click()
+  await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
 }
 
-async function typeUntilRendered(page: Page) {
-  await expect(page.locator('.xterm-screen')).toBeVisible()
-  await expect(page.getByText('Connected')).toBeVisible()
-
+async function typeUntilRendered(page: import('@playwright/test').Page) {
   await page.keyboard.type('echo hello')
-  // the fake shell echoes back; wait until it shows in the accessibility rows
-  await expect.poll(async () => {
-    const text = await page.locator('.xterm-rows').innerText()
-    // xterm rows may break mid-word; strip row-newlines to get logical text
-    return text.replace(/\n/g, '')
-  }).toContain('echo hello')
+  await expect
+    .poll(async () => {
+      const text = await page.locator('.xterm-rows').innerText()
+      // xterm rows may break mid-word; strip row-newlines to get logical text
+      return text.replace(/\n/g, '')
+    }, { timeout: 15_000 })
+    .toContain('echo hello')
 }
 
 test.describe('desktop', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('terminal renders on desktop', async ({ page }) => {
-    await scriptMocks(page)
-    await page.goto('/')
-    await page.getByRole('button', { name: 'Terminal' }).click()
-    await typeUntilRendered(page)
+    test.skip(!(await engineUp(page.request)), 'Docker engine unavailable')
+    await deleteAllProjects(page.request)
+    try {
+      await page.goto('/')
+      await page.getByRole('button', { name: 'Create project' }).click()
+      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 60_000 })
 
-    await expect(page).toHaveScreenshot('terminal-desktop.png')
+      await openTerminal(page)
+      await typeUntilRendered(page)
 
-    await page.keyboard.press('Enter')
-    await page.keyboard.type('exit')
-    await page.keyboard.press('Enter')
-    await expect(page.getByText('Disconnected')).toBeVisible({ timeout: 5_000 })
+      await expect(page).toHaveScreenshot('terminal-desktop.png', { caret: 'hide' })
+
+      // a real `exit` ends the shell, the session, and the attach
+      await page.keyboard.press('Enter')
+      await page.keyboard.type('exit')
+      await page.keyboard.press('Enter')
+      await expect(page.getByText('Disconnected')).toBeVisible({ timeout: 10_000 })
+    } finally {
+      await deleteAllProjects(page.request)
+    }
   })
 })
 
@@ -71,11 +56,19 @@ test.describe('phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
 
   test('terminal renders on a phone', async ({ page }) => {
-    await scriptMocks(page)
-    await page.goto('/')
-    await page.getByRole('button', { name: 'Terminal' }).click()
-    await typeUntilRendered(page)
+    test.skip(!(await engineUp(page.request)), 'Docker engine unavailable')
+    await deleteAllProjects(page.request)
+    try {
+      await page.goto('/')
+      await page.getByRole('button', { name: 'Create project' }).click()
+      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 60_000 })
 
-    await expect(page).toHaveScreenshot('terminal-phone.png')
+      await openTerminal(page)
+      await typeUntilRendered(page)
+
+      await expect(page).toHaveScreenshot('terminal-phone.png', { caret: 'hide' })
+    } finally {
+      await deleteAllProjects(page.request)
+    }
   })
 })

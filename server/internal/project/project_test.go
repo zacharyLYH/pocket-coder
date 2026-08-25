@@ -5,31 +5,39 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sps/internal/state"
+	"sps/internal/state/statetest"
 )
 
-func newStore(t *testing.T) *FileStore {
+func newStore(t *testing.T) (*state.Store, *StateStore) {
 	t.Helper()
-	dataDir := filepath.Join(t.TempDir(), "data")
-	if err := os.MkdirAll(filepath.Join(dataDir, "projects"), 0o700); err != nil {
+	st, err := state.Open(filepath.Join(t.TempDir(), "data"), state.Bootstrap{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	return Open(dataDir)
+	return st, Open(st)
 }
 
 func TestCRUD(t *testing.T) {
-	s := newStore(t)
-	p := Project{Name: "hello", Repo: "https://github.com/x/hello", Branch: "main",
-		Actions: []Action{{Label: "Test", Command: "go test"}}, Env: map[string]string{"FOO": "bar"}}
+	st, s := newStore(t)
+	p := Project{Name: "hello", Repo: "https://github.com/x/hello", Branch: "main"}
 
 	if err := s.Create("abc", p); err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	// on disk: exactly this project, exactly these fields — set fields only
+	// (no empty branch/cloneMethod), nothing else in the document
+	statetest.AssertEqual(t, st.Path(), map[string]any{
+		"user":     map[string]any{"email": ""},
+		"projects": map[string]any{"abc": map[string]any{"name": "hello", "repo": "https://github.com/x/hello", "branch": "main"}},
+	})
+
 	got, err := s.Get("abc")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Name != "hello" || got.Repo != p.Repo || got.Branch != "main" ||
-		len(got.Actions) != 1 || got.Env["FOO"] != "bar" {
+	if got.Name != "hello" || got.Repo != p.Repo || got.Branch != "main" {
 		t.Fatalf("round trip mismatch: %+v", got)
 	}
 
@@ -40,6 +48,10 @@ func TestCRUD(t *testing.T) {
 	if got, _ := s.Get("abc"); got.Name != "hello2" {
 		t.Fatalf("update not applied: %+v", got)
 	}
+	statetest.AssertEqual(t, st.Path(), map[string]any{
+		"user":     map[string]any{"email": ""},
+		"projects": map[string]any{"abc": map[string]any{"name": "hello2", "repo": "https://github.com/x/hello", "branch": "main"}},
+	})
 
 	entries, err := s.List()
 	if err != nil {
@@ -58,10 +70,29 @@ func TestCRUD(t *testing.T) {
 	if entries, _ := s.List(); len(entries) != 0 {
 		t.Fatalf("index not updated after delete: %+v", entries)
 	}
+	// the projects section is gone entirely once the last project is deleted
+	statetest.AssertEqual(t, st.Path(), map[string]any{
+		"user": map[string]any{"email": ""},
+	})
 }
 
+func TestGetUnknownIsNotExist(t *testing.T) {
+	_, s := newStore(t)
+	_, err := s.Get("ghost")
+	if !os.IsNotExist(err) && err == nil {
+		t.Fatalf("err = %v, want an os.ErrNotExist-wrapped error", err)
+	}
+}
+
+// The state file is written atomically with owner-only permissions, and no
+// .tmp files are ever left behind.
 func TestFileModesAndNoTempLeftovers(t *testing.T) {
-	s := newStore(t)
+	dataDir := filepath.Join(t.TempDir(), "data")
+	st, err := state.Open(dataDir, state.Bootstrap{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := Open(st)
 	if err := s.Create("abc", Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
@@ -69,20 +100,16 @@ func TestFileModesAndNoTempLeftovers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, p := range []string{
-		filepath.Join(s.dataDir, "projects", "abc", "project.json"),
-	} {
-		info, err := os.Stat(p)
-		if err != nil {
-			t.Fatalf("stat %s: %v", p, err)
-		}
-		if info.Mode().Perm() != 0o600 {
-			t.Fatalf("%s perms = %o, want 600", p, info.Mode().Perm())
-		}
+	path := filepath.Join(dataDir, "state.json")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("%s perms = %o, want 600", path, info.Mode().Perm())
 	}
 
-	// no .tmp files left behind after atomic writes
-	filepath.WalkDir(s.dataDir, func(p string, d os.DirEntry, err error) error {
+	filepath.WalkDir(dataDir, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -93,38 +120,34 @@ func TestFileModesAndNoTempLeftovers(t *testing.T) {
 	})
 }
 
-// List's policy: a project dir without a project.json is skipped (half-created
-// state), stray non-dirs are ignored, but corrupt JSON fails the whole list —
-// broken things must be visible, never silently dropped.
-func TestListSkipsIncompleteAndRejectsCorrupt(t *testing.T) {
-	s := newStore(t)
-	if err := s.Create("ok", Project{Name: "fine"}); err != nil {
+// A blank sandbox persists with name+repo only — no omitempty noise.
+func TestCreateBlankSandboxExactFile(t *testing.T) {
+	st, s := newStore(t)
+	if err := s.Create("abc", Project{Name: "untitled"}); err != nil {
 		t.Fatal(err)
 	}
-	half := filepath.Join(s.dataDir, "projects", "half")
-	if err := os.MkdirAll(half, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(s.dataDir, "projects", "stray.txt"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	statetest.AssertEqual(t, st.Path(), map[string]any{
+		"user":     map[string]any{"email": ""},
+		"projects": map[string]any{"abc": map[string]any{"name": "untitled", "repo": ""}},
+	})
+}
 
-	entries, err := s.List()
+// List ordering is stable across calls: name, then id as tiebreak.
+func TestListStableOrder(t *testing.T) {
+	_, s := newStore(t)
+	for _, id := range []string{"b", "a", "c"} {
+		if err := s.Create(id, Project{Name: "untitled"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := s.List()
 	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(entries) != 1 || entries[0].ID != "ok" || entries[0].Name != "fine" {
-		t.Fatalf("entries = %+v, want only the healthy project", entries)
-	}
-
-	bad := filepath.Join(s.dataDir, "projects", "bad")
-	if err := os.MkdirAll(bad, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bad, "project.json"), []byte("{not json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.List(); err == nil {
-		t.Fatal("corrupt project.json should fail the list loudly, not be dropped")
+	second, _ := s.List()
+	for i := range first {
+		if first[i] != second[i] {
+			t.Fatalf("list order unstable: %+v vs %+v", first, second)
+		}
 	}
 }

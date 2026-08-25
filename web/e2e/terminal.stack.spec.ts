@@ -1,40 +1,31 @@
 import { readFileSync } from 'node:fs'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
+import { DATA_DIR } from './env'
+import { deleteAllProjects, engineUp } from './helpers'
 
-// Full-stack user journey: real Go server (booted by playwright.config as a
+test.describe.configure({ mode: 'serial' })
+
+// Full-stack user journeys: real Go server (booted by playwright.config as a
 // webServer) + Vite dev proxy + real login. NOTHING is mocked — even the PIN
-// comes from the console-mailer output redirected to
-// test-results/sps-stack-server.log. Skips itself when Docker is unavailable.
+// comes from the console-mailer output (see e2e/helpers.ts).
 //
-// The rule that keeps this test honest: no API shortcuts for state the UI
-// can create itself. It once pre-created the tmux session via a raw POST and
-// thereby masked that clicking Terminal was broken for real users — the UI
-// path IS the test path now.
+// The rule that keeps these tests honest: no API shortcuts for state the UI
+// can create itself. The first test once pre-created the tmux session via a
+// raw POST and thereby masked that clicking Terminal was broken for real
+// users — the UI path IS the test path now.
 
-test('login, create a project in the UI, open its terminal, type', async ({ page }) => {
-  // the real Go server is only booted when SPS_STACK=1 (see playwright.config)
-  test.skip(process.env.SPS_STACK !== '1', 'run with SPS_STACK=1 to boot the stack')
+test('create a project in the UI, open its terminal, type', async ({ page }) => {
   await page.goto('/')
 
-  // --- real login via console-mailer PIN ---
-  await page.getByPlaceholder('you@example.com').fill('me@example.com')
-  await page.getByRole('button', { name: 'Send code' }).click()
-  await expect(page.getByPlaceholder('6-digit PIN')).toBeVisible()
-
-  const pin = waitForPin()
-  await page.getByPlaceholder('6-digit PIN').fill(pin)
-  await page.getByRole('button', { name: 'Log in' }).click()
-  await expect(page.getByText('Welcome, me@example.com')).toBeVisible()
-
-  if (!(await engineUp(page))) {
+  if (!(await engineUp(page.request))) {
     test.skip(true, 'Docker engine unavailable — full-stack terminal test skipped')
     return
   }
 
   try {
-    // --- clean slate: the stack data dir persists between runs; leftovers
-    // would make row-scoping below ambiguous ---
-    await deleteAllProjects(page)
+    // --- clean slate: leftovers from earlier tests in this run would make
+    // row-scoping below ambiguous ---
+    await deleteAllProjects(page.request)
 
     // --- create through the REAL form, exactly as a user would ---
     await page.getByPlaceholder(/Repo URL/).fill('')
@@ -59,40 +50,72 @@ test('login, create a project in the UI, open its terminal, type', async ({ page
 
     // plumbing proof in the backend's own audit trail: clicking Terminal
     // created the session AND attached to it — no API help needed
-    const log = readFileSync('test-results/sps-stack-data/events.log', 'utf8')
+    const log = readFileSync(`${DATA_DIR}/events.log`, 'utf8')
     expect(log).toContain('"session.create"')
     expect(log).toContain('"terminal.attach"')
   } finally {
     // destructor: never leak containers/volumes, even on failure
-    await deleteAllProjects(page)
+    await deleteAllProjects(page.request)
   }
 })
 
-async function engineUp(page: Page): Promise<boolean> {
-  const res = await page.request.get('/api/projects')
-  return res.status() !== 500
-}
+// This is intentionally not a mocked visual test. OpenCode is a full-screen
+// TUI whose Unicode glyphs, ANSI colors, tmux negotiation, and layout cannot
+// be represented by a scripted WebSocket. Keep the screenshot as a test
+// artifact so a real OpenCode rendering can be inspected or compared against
+// the expected UI.
+test('real OpenCode session renders through the backend terminal bridge', async ({ page }, testInfo) => {
+  test.setTimeout(600_000)
+  await page.goto('/')
 
-// The server maps an unreachable engine to 500 on project ops; a healthy
-// engine answers 200 even with zero projects.
-async function deleteAllProjects(page: Page): Promise<void> {
-  const res = await page.request.get('/api/projects')
-  if (!res.ok()) return
-  for (const p of ((await res.json()) as { projects: { id: string }[] }).projects) {
-    await page.request.delete(`/api/projects/${p.id}?scope=all`)
+  if (!(await engineUp(page.request))) {
+    test.skip(true, 'Docker engine unavailable — full-stack terminal test skipped')
+    return
   }
-}
 
-function waitForPin(): string {
-  const logPath = 'test-results/sps-stack-server.log'
-  for (let i = 0; i < 50; i++) {
-    try {
-      const m = readFileSync(logPath, 'utf8').match(/login PIN for me@example\.com: (\d{6})/)
-      if (m) return m[1]
-    } catch {
-      // log not flushed yet
-    }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
+  try {
+    await deleteAllProjects(page.request)
+    await page.getByRole('button', { name: 'Create project' }).click()
+    await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 60_000 })
+
+    // installs are explicit and per project: install OpenCode through the
+    // home page (real npm download) BEFORE launching it
+    const row = page.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
+    await row.getByRole('button', { name: 'Install…' }).click()
+    await page.getByRole('button', { name: /Install in 1 project/ }).click()
+    await expect(page.getByText('Applied to 1 project.')).toBeVisible({ timeout: 300_000 })
+
+    await page.getByRole('button', { name: 'Terminal' }).click()
+    await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
+
+    await page.getByRole('button', { name: '+ New Session' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.locator('select').selectOption('opencode')
+    await expect(page.getByText(/Not installed in this project yet/)).not.toBeVisible()
+    await dialog.getByRole('button', { name: 'Create & Attach' }).click()
+
+    await expect(dialog).not.toBeVisible({ timeout: 240_000 })
+    const sessionSelect = page.locator('select[aria-label="Session"]')
+    await expect(sessionSelect).toHaveValue('opencode-1', { timeout: 30_000 })
+    await expect(page.getByText('Connected')).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('.xterm-screen')).toBeVisible()
+
+    // Exercise the same dropdown interaction as the reported naming bug,
+    // then save the real rendered OpenCode screen for visual review.
+    await sessionSelect.selectOption('opencode-1')
+    await expect
+      .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 60_000 })
+      .toMatch(/Build|Connect|Ask anything/)
+    await page.waitForTimeout(2_000)
+    await page.screenshot({ path: testInfo.outputPath('opencode-real-backend.png'), fullPage: true })
+    await expect(page).toHaveScreenshot('terminal-opencode-stack.png', {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+
+    const terminalText = await page.locator('.xterm-rows').innerText()
+    expect(terminalText).toMatch(/Build|Connect|Ask anything/)
+  } finally {
+    await deleteAllProjects(page.request)
   }
-  throw new Error(`no PIN found in ${logPath} — does the console mailer print it?`)
-}
+})

@@ -14,18 +14,24 @@ import (
 
 	"sps/internal/docker"
 	"sps/internal/project"
+	"sps/internal/state"
+	"sps/internal/state/statetest"
 	dockermocks "sps/mocks/docker"
 )
 
 // newProjectDeps wires the real project.Service over a mocked Docker client
 // into the handler, so the HTTP layer is tested against the actual pipeline.
-func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer, string) {
+// Returns the shared state store so tests can seed it directly.
+func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer, *state.Store) {
 	t.Helper()
 	d, pinOut := newTestDeps(t)
 	md := dockermocks.NewMockClient(t)
-	dataDir := t.TempDir()
-	d.Projects = project.NewService(project.Open(dataDir), md, d.Events)
-	return d, md, pinOut, dataDir
+	st, err := state.Open(t.TempDir(), state.Bootstrap{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Projects = project.NewService(project.Open(st), md, d.Events)
+	return d, md, pinOut, st
 }
 
 func authedPost(t *testing.T, h http.Handler, cookie *http.Cookie, path, body string) *httptest.ResponseRecorder {
@@ -58,7 +64,7 @@ func TestProjectsRequireAuth(t *testing.T) {
 }
 
 func TestCreateListGetProjectAPI(t *testing.T) {
-	d, md, pinOut, _ := newProjectDeps(t)
+	d, md, pinOut, st := newProjectDeps(t)
 	h := New(d)
 
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
@@ -85,6 +91,15 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 		created.Repo != want || created.Branch != "" {
 		t.Fatalf("created = %+v (want name=hello repo=%s branch=\"\"), err=%v", created, want, err)
 	}
+
+	// the source of truth on disk is exactly this project — name+repo only
+	// (branch/cloneMethod empty → omitted), nothing else in the document
+	statetest.AssertEqual(t, st.Path(), map[string]any{
+		"user": map[string]any{"email": ""},
+		"projects": map[string]any{
+			created.ID: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
+		},
+	})
 
 	rec = authedGet(t, h, cookie, "/api/projects")
 	var list struct {

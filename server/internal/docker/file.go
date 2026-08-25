@@ -28,30 +28,6 @@ func (d *Docker) WriteFile(ctx context.Context, id, path string, content []byte)
 	return nil
 }
 
-// ReadFile reads a file from inside the container.
-func (d *Docker) ReadFile(ctx context.Context, id, path string) ([]byte, error) {
-	var buf bytes.Buffer
-	if err := d.c.DownloadFromContainer(id, dockerclient.DownloadFromContainerOptions{
-		Context: ctx, Path: path, OutputStream: &buf,
-	}); err != nil {
-		return nil, fmt.Errorf("read %s from %s: %w", path, id, err)
-	}
-	tr := tar.NewReader(&buf)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read %s from %s: %w", path, id, err)
-		}
-		if hdr.Typeflag == tar.TypeReg {
-			return io.ReadAll(tr)
-		}
-	}
-	return nil, fmt.Errorf("read %s from %s: not found", path, id)
-}
-
 // tarFile builds a tar stream containing one regular file named name.
 func tarFile(name string, content []byte) io.Reader {
 	var buf bytes.Buffer

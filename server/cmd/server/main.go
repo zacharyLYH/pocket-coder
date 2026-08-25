@@ -1,7 +1,7 @@
 // Command server is the Side Project Saviour control plane: it serves the
-// HTTP API and talks to Docker on the host. (tmux/git session management is
-// not built yet.) This file only boots: config, data dir, event log,
-// harness seeding. The HTTP surface lives in internal/httpapi.
+// HTTP API and talks to Docker on the host. This file only boots: config,
+// data dir, state file, event log, harness seeding. The HTTP surface lives
+// in internal/httpapi.
 package main
 
 import (
@@ -17,13 +17,14 @@ import (
 
 	"sps/internal/auth"
 	"sps/internal/config"
-	"sps/internal/data"
 	"sps/internal/docker"
 	"sps/internal/events"
 	"sps/internal/harness"
 	"sps/internal/httpapi"
 	"sps/internal/project"
 	"sps/internal/session"
+	"sps/internal/sshkeys"
+	"sps/internal/state"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".
@@ -39,8 +40,15 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	slog.SetDefault(logger)
 
-	if err := data.Bootstrap(cfg.DataDir); err != nil {
-		slog.Error("bootstrap data dir", "err", err)
+	// state.Open creates the data dir if missing. state.json is the single
+	// source of truth for desired app state; env config seeds a fresh
+	// document only — existing values win.
+	st, err := state.Open(cfg.DataDir, state.Bootstrap{
+		LoginEmail: cfg.LoginEmail,
+		SMTP:       smtpFromConfig(cfg),
+	})
+	if err != nil {
+		slog.Error("open state", "err", err)
 		os.Exit(1)
 	}
 
@@ -51,13 +59,14 @@ func main() {
 	}
 	defer ev.Close()
 
-	seeded, err := harness.SeedBuiltins(filepath.Join(cfg.DataDir, "harnesses"))
+	harnesses := harness.New(st)
+	seeded, err := harnesses.EnsureBuiltins()
 	if err != nil {
 		slog.Error("seed harnesses", "err", err)
 		os.Exit(1)
 	}
 
-	authSvc, err := newAuthService(cfg)
+	authSvc, err := newAuthService(cfg, st)
 	if err != nil {
 		slog.Error("init auth", "err", err)
 		os.Exit(1)
@@ -74,7 +83,9 @@ func main() {
 		slog.Warn("docker engine unreachable", "err", err)
 	}
 
-	svc := project.NewService(project.Open(cfg.DataDir), dkr, ev)
+	sshKeyStore := sshkeys.New(st)
+	svc := project.NewService(project.Open(st), dkr, ev)
+	svc.SetSSHKeys(sshKeyStore)
 
 	ev.Append("boot", map[string]any{"version": version})
 	if len(seeded) > 0 {
@@ -83,7 +94,9 @@ func main() {
 	logger.Info("data dir ready", "data_dir", cfg.DataDir, "seeded_harnesses", seeded)
 
 	srv := &http.Server{Addr: cfg.Bind, Handler: httpapi.New(httpapi.Deps{
-		Events: ev, Version: version, Auth: authSvc, Projects: svc, Sessions: session.New(dkr),
+		Events: ev, Version: version, Auth: authSvc, Projects: svc,
+		Sessions: session.New(dkr), Harnesses: harnesses,
+		SSHKeys: sshKeyStore,
 	})}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -113,10 +126,17 @@ func main() {
 	}
 }
 
-// newAuthService builds the auth service: signing secret from SPS_JWT_SECRET
-// or a generated, persisted file under the data dir; PIN delivery by SMTP
-// when credentials are configured, console (server log) otherwise.
-func newAuthService(cfg *config.Config) (*auth.Service, error) {
+func smtpFromConfig(cfg *config.Config) *state.SMTP {
+	if cfg.SMTPUser == "" || cfg.SMTPPass == "" {
+		return nil
+	}
+	return &state.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, User: cfg.SMTPUser, Password: cfg.SMTPPass, From: cfg.SMTPFrom}
+}
+
+// newAuthService builds the auth service from state (email + SMTP creds,
+// seeded from env on first boot): PIN delivery by SMTP when configured,
+// console (server log) otherwise.
+func newAuthService(cfg *config.Config, st *state.Store) (*auth.Service, error) {
 	secret := []byte(cfg.JWTSecret)
 	if len(secret) == 0 {
 		var err error
@@ -125,14 +145,22 @@ func newAuthService(cfg *config.Config) (*auth.Service, error) {
 			return nil, err
 		}
 	}
-	var mailer auth.Mailer = auth.ConsoleMailer{Out: os.Stderr}
-	name := "console"
-	if cfg.SMTPUser != "" && cfg.SMTPPass != "" {
-		mailer = auth.SmtpMailer{Host: cfg.SMTPHost, Port: cfg.SMTPPort, User: cfg.SMTPUser, Password: cfg.SMTPPass, From: cfg.SMTPFrom}
-		name = "smtp"
+	var (
+		email    string
+		smtpCfg  *state.SMTP
+		mailer   auth.Mailer = auth.ConsoleMailer{Out: os.Stderr}
+		mailerNm             = "console"
+	)
+	st.View(func(doc *state.Document) {
+		email = doc.User.Email
+		smtpCfg = doc.SMTP
+	})
+	if smtpCfg != nil && smtpCfg.User != "" && smtpCfg.Password != "" {
+		mailer = auth.SmtpMailer{Host: smtpCfg.Host, Port: smtpCfg.Port, User: smtpCfg.User, Password: smtpCfg.Password, From: smtpCfg.From}
+		mailerNm = "smtp"
 	}
-	svc := auth.New(cfg.LoginEmail, secret, mailer)
-	svc.MailerName = name
-	slog.Info("auth ready", "login_email", cfg.LoginEmail, "mailer", name)
+	svc := auth.New(email, secret, mailer)
+	svc.MailerName = mailerNm
+	slog.Info("auth ready", "login_email", email, "mailer", mailerNm)
 	return svc, nil
 }

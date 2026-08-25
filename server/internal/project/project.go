@@ -1,31 +1,18 @@
-// Package project stores one JSON file per project under
-// $DATA_DIR/projects/<id>/project.json. The directory listing is the index;
-// there is no separate summary file to keep in sync. Writes are atomic
-// (temp + rename) with owner-only permissions.
+// Package project is the project control plane: desired state lives in the
+// central state.json (internal/state), Docker containers/volumes are live
+// state derived from the project id and reconciled against it.
 package project
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
+
+	"sps/internal/state"
 )
 
-// Project holds only what cannot be defaulted.
-type Project struct {
-	Name    string            `json:"name"`
-	Repo    string            `json:"repo"`
-	Branch  string            `json:"branch,omitempty"`
-	Actions []Action          `json:"actions,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-}
-
-// Action is a button: {label, command} run in a session.
-type Action struct {
-	Label   string `json:"label"`
-	Command string `json:"command"`
-}
+// Project aliases the canonical persisted shape.
+type Project = state.Project
 
 // Entry is one row of the projects index.
 type Entry struct {
@@ -43,104 +30,77 @@ type Store interface {
 	List() ([]Entry, error)
 }
 
-// FileStore reads and writes projects under a data dir: one JSON file per
-// project. The projects directory listing is the index; there is no separate
-// summary state to keep consistent. Writes are atomic (temp + rename) with
-// owner-only permissions.
-type FileStore struct {
-	dataDir string
+// StateStore implements Store over the central state file.
+type StateStore struct {
+	st *state.Store
 }
 
-// Open returns a FileStore rooted at $DATA_DIR. The projects directory must
-// already exist (data.Bootstrap).
-func Open(dataDir string) *FileStore {
-	return &FileStore{dataDir: dataDir}
+// Open returns a project store backed by st.
+func Open(st *state.Store) *StateStore {
+	return &StateStore{st: st}
 }
 
-// Create writes a new project file.
-func (s *FileStore) Create(id string, p Project) error {
-	dir := filepath.Join(s.dataDir, "projects", id)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create project dir: %w", err)
-	}
-	if err := writeJSON(filepath.Join(dir, "project.json"), p); err != nil {
-		return fmt.Errorf("write project: %w", err)
-	}
-	return nil
+// Create writes a new project record.
+func (s *StateStore) Create(id string, p Project) error {
+	return s.st.Mutate(func(doc *state.Document) error {
+		if doc.Projects == nil {
+			doc.Projects = map[string]Project{}
+		}
+		doc.Projects[id] = p
+		return nil
+	})
 }
 
 // Get reads one project.
-func (s *FileStore) Get(id string) (Project, error) {
-	var p Project
-	if err := readJSON(filepath.Join(s.dataDir, "projects", id, "project.json"), &p); err != nil {
-		return Project{}, err
+func (s *StateStore) Get(id string) (Project, error) {
+	var (
+		p  Project
+		ok bool
+	)
+	s.st.View(func(doc *state.Document) {
+		p, ok = doc.Projects[id]
+	})
+	if !ok {
+		return Project{}, fmt.Errorf("project %s: %w", id, os.ErrNotExist)
 	}
 	return p, nil
 }
 
-// Update replaces a project's file.
-func (s *FileStore) Update(id string, p Project) error {
-	if err := writeJSON(filepath.Join(s.dataDir, "projects", id, "project.json"), p); err != nil {
-		return fmt.Errorf("write project: %w", err)
-	}
-	return nil
+// Update replaces a project's record.
+func (s *StateStore) Update(id string, p Project) error {
+	return s.st.Mutate(func(doc *state.Document) error {
+		if _, ok := doc.Projects[id]; !ok {
+			return fmt.Errorf("project %s: %w", id, os.ErrNotExist)
+		}
+		doc.Projects[id] = p
+		return nil
+	})
 }
 
-// Delete removes a project's directory.
-func (s *FileStore) Delete(id string) error {
-	if err := os.RemoveAll(filepath.Join(s.dataDir, "projects", id)); err != nil {
-		return fmt.Errorf("remove project: %w", err)
-	}
-	return nil
+// Delete removes a project's record.
+func (s *StateStore) Delete(id string) error {
+	return s.st.Mutate(func(doc *state.Document) error {
+		delete(doc.Projects, id)
+		return nil
+	})
 }
 
-// List scans the projects directory and returns every project as an entry,
-// sorted by name. Each project.json is the single source of truth — no
-// separate index to fall out of sync. A project dir without a readable
-// project.json is skipped (never half-created); anything else fails loudly.
-func (s *FileStore) List() ([]Entry, error) {
-	entries, err := os.ReadDir(filepath.Join(s.dataDir, "projects"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []Entry{}, nil
+// List returns every project as an entry, sorted by name then id. Name,
+// then id: blank sandboxes are all "untitled", and an unstable tiebreak
+// would reorder the list between API calls (the home page's project pickers
+// must not shuffle under the user).
+func (s *StateStore) List() ([]Entry, error) {
+	out := []Entry{}
+	s.st.View(func(doc *state.Document) {
+		for id, p := range doc.Projects {
+			out = append(out, Entry{ID: id, Name: p.Name})
 		}
-		return nil, fmt.Errorf("list projects: %w", err)
-	}
-	var out []Entry
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	})
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
 		}
-		var p Project
-		if err := readJSON(filepath.Join(s.dataDir, "projects", e.Name(), "project.json"), &p); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("read project %s: %w", e.Name(), err)
-		}
-		out = append(out, Entry{ID: e.Name(), Name: p.Name})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+		return out[i].ID < out[j].ID
+	})
 	return out, nil
-}
-
-// writeJSON writes v to path atomically (temp + rename) with owner-only perms.
-func writeJSON(path string, v any) error {
-	raw, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-func readJSON(path string, v any) error {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(raw, v)
 }

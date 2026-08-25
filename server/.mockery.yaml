@@ -8,18 +8,6 @@ issue-845-fix: true
 dir: "mocks/{{.PackageName}}"
 outpkg: "mocks"
 packages:
-  sps/internal/events:
-    interfaces:
-      Reader:
-  sps/internal/project:
-    interfaces:
-      Store:
-  sps/internal/harness:
-    interfaces:
-      Loader:
-  sps/internal/httpapi:
-    interfaces:
-      EventLog:
   sps/internal/auth:
     interfaces:
       Mailer:

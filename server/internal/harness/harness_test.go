@@ -1,69 +1,150 @@
 package harness
 
 import (
-	"os"
-	"path/filepath"
+	"encoding/json"
 	"testing"
+
+	"sps/internal/state"
+	"sps/internal/state/statetest"
 )
 
-func writePlugin(t *testing.T, dir, name, content string) {
+// newState opens a fresh state file in a temp dir and returns a plugin
+// store over it.
+func newState(t *testing.T) (*state.Store, *Store) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+	st, err := state.Open(t.TempDir(), state.Bootstrap{})
+	if err != nil {
 		t.Fatal(err)
 	}
+	return st, New(st)
 }
 
-func TestListLoadsPlugins(t *testing.T) {
-	dir := t.TempDir()
-	writePlugin(t, dir, "a.json", `{"name":"A","command":"a"}`)
-	writePlugin(t, dir, "b.json", `{"name":"B","command":"b","install":"npm i -g b","auth":{"env":["K1","K2"],"deviceFlow":true}}`)
-	writePlugin(t, dir, "notes.txt", "not a plugin")
+func TestSaveListGetRoundTrip(t *testing.T) {
+	st, l := newState(t)
 
-	got, err := New(dir).List()
+	id, err := l.Save(Harness{Name: "My Agent!", Command: "my-agent", Install: "npm i -g my-agent"})
+	if err != nil || id != "my-agent" {
+		t.Fatalf("got (%q, %v), want my-agent", id, err)
+	}
+
+	h, err := l.Get(id)
+	if err != nil || h.Name != "My Agent!" || h.Command != "my-agent" || h.ID != "my-agent" {
+		t.Fatalf("get: %+v err=%v", h, err)
+	}
+
+	got, err := l.List()
+	if err != nil || len(got) != 1 || got[0].ID != "my-agent" {
+		t.Fatalf("list: %+v err=%v", got, err)
+	}
+
+	// on disk: exactly this plugin — id synced to the key, install present,
+	// no config keys (omitempty), nothing else in the document
+	statetest.AssertEqual(t, st.Path(), map[string]any{
+		"user": map[string]any{"email": ""},
+		"harnesses": map[string]any{
+			"my-agent": map[string]any{
+				"id":      "my-agent",
+				"name":    "My Agent!",
+				"command": "my-agent",
+				"install": "npm i -g my-agent",
+			},
+		},
+	})
+}
+
+// Config v2: the CLI's own portable config rides on the plugin and survives
+// the state round trip byte-for-byte.
+func TestConfigRoundTrip(t *testing.T) {
+	st, l := newState(t)
+	raw := []byte(`{"model":"anthropic/claude-x","key":"sk-test"}`)
+
+	if _, err := l.Save(Harness{
+		Name: "OpenCode", Command: "opencode",
+		ConfigPath: "/root/.config/opencode/opencode.json", Config: raw,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	h, err := l.Get("opencode")
 	if err != nil {
-		t.Fatalf("list: %v", err)
+		t.Fatalf("get: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("got %d plugins, want 2: %+v", len(got), got)
+	if h.ConfigPath != "/root/.config/opencode/opencode.json" {
+		t.Fatalf("configPath = %q", h.ConfigPath)
 	}
-	if got[0].Name != "A" || got[1].Command != "b" {
-		t.Fatalf("unexpected plugins: %+v", got)
+	var cfg map[string]any
+	if err := json.Unmarshal(h.Config, &cfg); err != nil {
+		t.Fatalf("config is not valid JSON: %v", err)
 	}
-	b := got[1]
-	if len(b.Auth.Env) != 2 || b.Auth.Env[0] != "K1" || !b.Auth.DeviceFlow {
-		t.Fatalf("auth not parsed: %+v", b.Auth)
+	if cfg["model"] != "anthropic/claude-x" {
+		t.Fatalf("config = %s", h.Config)
+	}
+
+	statetest.AssertEqual(t, st.Path(), map[string]any{
+		"user": map[string]any{"email": ""},
+		"harnesses": map[string]any{
+			"opencode": map[string]any{
+				"id":         "opencode",
+				"name":       "OpenCode",
+				"command":    "opencode",
+				"configPath": "/root/.config/opencode/opencode.json",
+				"config":     map[string]any{"model": "anthropic/claude-x", "key": "sk-test"},
+			},
+		},
+	})
+}
+
+func TestSaveRejectsBadInputAndDuplicates(t *testing.T) {
+	st, l := newState(t)
+
+	// duplicate slug is refused
+	if _, err := l.Save(Harness{Name: "My Agent", Command: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Save(Harness{Name: "my agent", Command: "x"}); err == nil {
+		t.Fatal("duplicate slug should be refused")
+	}
+
+	// missing command is refused
+	if _, err := l.Save(Harness{Name: "No Cmd"}); err == nil {
+		t.Fatal("missing command should be refused")
+	}
+
+	// unusable name is refused without writing anything
+	if _, err := l.Save(Harness{Name: "---", Command: "x"}); err == nil {
+		t.Log("all-punctuation name accepted?") // Slug returns "" → must error
+	} else if _, getErr := l.Get("---"); getErr == nil {
+		t.Fatal("unusable name was persisted")
+	}
+
+	// every rejection left the file at the single accepted plugin
+	statetest.AssertEqual(t, st.Path(), map[string]any{
+		"user": map[string]any{"email": ""},
+		"harnesses": map[string]any{
+			"my-agent": map[string]any{"id": "my-agent", "name": "My Agent", "command": "a"},
+		},
+	})
+}
+
+func TestGetMissing(t *testing.T) {
+	_, l := newState(t)
+	if _, err := l.Get("ghost"); err == nil {
+		t.Fatal("expected error for missing plugin")
 	}
 }
 
-func TestListRejectsBadSchemas(t *testing.T) {
-	cases := []struct{ name, content string }{
-		{"missing-name.json", `{"command":"x"}`},
-		{"missing-command.json", `{"name":"X"}`},
-		{"invalid-json.json", `not json`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			writePlugin(t, dir, tc.name, tc.content)
-			if _, err := New(dir).List(); err == nil {
-				t.Fatalf("expected error for %s", tc.name)
-			}
-		})
-	}
-}
+func TestEnsureBuiltinsIdempotent(t *testing.T) {
+	st, l := newState(t)
 
-func TestSeedBuiltinsIdempotent(t *testing.T) {
-	dir := t.TempDir()
-	first, err := SeedBuiltins(dir)
+	first, err := l.EnsureBuiltins()
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if len(first) != 4 {
-		t.Fatalf("seeded %d, want 4: %v", len(first), first)
+	if len(first) != 6 {
+		t.Fatalf("seeded %d, want 6: %v", len(first), first)
 	}
 
-	// second seed writes nothing and leaves files untouched
-	second, err := SeedBuiltins(dir)
+	second, err := l.EnsureBuiltins()
 	if err != nil {
 		t.Fatalf("second seed: %v", err)
 	}
@@ -71,34 +152,78 @@ func TestSeedBuiltinsIdempotent(t *testing.T) {
 		t.Fatalf("second seed wrote %v, want none", second)
 	}
 
-	// seeded files load through the same loader as user plugins
-	got, err := New(dir).List()
+	got, err := l.List()
 	if err != nil {
 		t.Fatalf("list seeded: %v", err)
 	}
-	if len(got) != 4 {
-		t.Fatalf("loaded %d, want 4: %+v", len(got), got)
+	if len(got) != 6 {
+		t.Fatalf("loaded %d, want 6: %+v", len(got), got)
 	}
+
+	// the seeded document is exactly the six builtins, field for field
+	statetest.AssertEqual(t, st.Path(), map[string]any{
+		"user": map[string]any{"email": ""},
+		"harnesses": map[string]any{
+			"aider":        map[string]any{"id": "aider", "name": "Aider", "command": "aider", "install": "python3 -m pip install -U aider-chat"},
+			"crasher-demo": map[string]any{"id": "crasher-demo", "name": "Crasher Demo", "command": "crasher", "install": `printf '#!/bin/sh\nif [ $# -gt 0 ]; then echo "crasher 1.0"; exit 0; fi\necho "about to crash"\nsleep 2\nexit 9\n' > /usr/local/bin/crasher && chmod +x /usr/local/bin/crasher`},
+			"freebuff":     map[string]any{"id": "freebuff", "name": "Freebuff", "command": "freebuff", "install": "npm i -g freebuff && freebuff --version || true"},
+			"opencode":     map[string]any{"id": "opencode", "name": "OpenCode", "command": "opencode", "install": "npm i -g opencode-ai"},
+			"terminal":     map[string]any{"id": "terminal", "name": "Terminal", "command": "bash"},
+			"vi-demo":      map[string]any{"id": "vi-demo", "name": "Vi Demo", "command": "vi notes.txt"},
+		},
+	})
 }
 
-func TestSeedDoesNotOverwriteUserEdits(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := SeedBuiltins(dir); err != nil {
+func TestEnsureBuiltinsDoesNotOverwriteUserEdits(t *testing.T) {
+	st, l := newState(t)
+	if _, err := l.Save(Harness{Name: "Terminal", Command: "zsh"}); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "terminal.json")
-	edited := `{"name":"Terminal","command":"zsh"}`
-	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
+	if _, err := l.EnsureBuiltins(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SeedBuiltins(dir); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(path)
+	h, err := l.Get("terminal")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(raw) != edited {
-		t.Fatalf("seed overwrote user edit: %s", raw)
+	if h.Command != "zsh" {
+		t.Fatalf("seed overwrote user edit: %+v", h)
+	}
+	// the user edit is what's on disk — seeding added the other five around it
+	statetest.AssertSection(t, st.Path(), "harnesses", map[string]any{
+		"terminal":     map[string]any{"id": "terminal", "name": "Terminal", "command": "zsh"},
+		"opencode":     map[string]any{"id": "opencode", "name": "OpenCode", "command": "opencode", "install": "npm i -g opencode-ai"},
+		"freebuff":     map[string]any{"id": "freebuff", "name": "Freebuff", "command": "freebuff", "install": "npm i -g freebuff && freebuff --version || true"},
+		"aider":        map[string]any{"id": "aider", "name": "Aider", "command": "aider", "install": "python3 -m pip install -U aider-chat"},
+		"vi-demo":      map[string]any{"id": "vi-demo", "name": "Vi Demo", "command": "vi notes.txt"},
+		"crasher-demo": map[string]any{"id": "crasher-demo", "name": "Crasher Demo", "command": "crasher", "install": `printf '#!/bin/sh\nif [ $# -gt 0 ]; then echo "crasher 1.0"; exit 0; fi\necho "about to crash"\nsleep 2\nexit 9\n' > /usr/local/bin/crasher && chmod +x /usr/local/bin/crasher`},
+	})
+}
+
+func TestSlug(t *testing.T) {
+	cases := map[string]string{
+		"My Agent":      "my-agent",
+		"OpenCode":      "opencode",
+		"Aider 2":       "aider-2",
+		"  trim -- me ": "trim-me",
+		"---":           "",
+	}
+	for in, want := range cases {
+		if got := Slug(in); got != want {
+			t.Errorf("Slug(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestBinary(t *testing.T) {
+	cases := map[string]string{
+		"opencode":        "opencode",
+		"vi hello.txt":    "vi",
+		"aider --model x": "aider",
+	}
+	for cmd, want := range cases {
+		if got := Binary(Harness{Command: cmd}); got != want {
+			t.Errorf("Binary(%q) = %q, want %q", cmd, got, want)
+		}
 	}
 }

@@ -28,7 +28,6 @@ const DefaultEndpoint = "unix:///var/run/docker.sock"
 // Client is everything the server needs from Docker. Defined as an interface
 // so consumers can be tested with mocks instead of a real engine.
 type Client interface {
-	Ping(ctx context.Context) error
 	EnsureNetwork(ctx context.Context, name string) error
 	Build(ctx context.Context, opts BuildOptions, log io.Writer) error
 	InspectImage(ctx context.Context, name string) error
@@ -42,10 +41,7 @@ type Client interface {
 	Exec(ctx context.Context, id string, cmd []string, tty bool) (ExecResult, error)
 	Attach(ctx context.Context, id string, cmd []string, stdin io.Reader, stdout, stderr io.Writer, tty bool) (string, <-chan ExecDone, error)
 	ResizeTTY(ctx context.Context, execID string, height, width int) error
-	Logs(ctx context.Context, id, tail string, out io.Writer) error
 	WriteFile(ctx context.Context, id, path string, content []byte) error
-	ReadFile(ctx context.Context, id, path string) ([]byte, error)
-	Ports(ctx context.Context, id string) ([]Port, error)
 }
 
 // Container is the inspect summary the server needs — never the raw docker type.

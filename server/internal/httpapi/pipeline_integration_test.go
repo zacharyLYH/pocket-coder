@@ -28,18 +28,18 @@ import (
 	"sps/internal/auth"
 	"sps/internal/docker"
 	"sps/internal/events"
+	"sps/internal/harness"
 	"sps/internal/project"
 	"sps/internal/session"
+	"sps/internal/sshkeys"
+	"sps/internal/state"
 )
 
 var pinRe = regexp.MustCompile(`\d{6}`)
 
-func newLiveDeps(t *testing.T) (http.Handler, *docker.Docker, *project.Service, *bytes.Buffer, *events.Log, string) {
+func newLiveDeps(t *testing.T) (http.Handler, *docker.Docker, *project.Service, *bytes.Buffer, *events.Log, *state.Store) {
 	t.Helper()
 	dataDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dataDir, "projects"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	ev, err := events.Open(filepath.Join(dataDir, "events.log"))
 	if err != nil {
 		t.Fatal(err)
@@ -56,11 +56,19 @@ func newLiveDeps(t *testing.T) (http.Handler, *docker.Docker, *project.Service, 
 		t.Skipf("docker unavailable: %v", err)
 	}
 
+	st, err := state.Open(dataDir, state.Bootstrap{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	var pinOut bytes.Buffer
 	authSvc := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut})
-	svc := project.NewService(project.Open(dataDir), dkr, ev)
-	h := New(Deps{Events: ev, Version: "itest", Auth: authSvc, Projects: svc, Sessions: session.New(dkr)})
-	return h, dkr, svc, &pinOut, ev, dataDir
+	sshKeyStore := sshkeys.New(st)
+	svc := project.NewService(project.Open(st), dkr, ev)
+	svc.SetSSHKeys(sshKeyStore)
+	h := New(Deps{Events: ev, Version: "itest", Auth: authSvc, Projects: svc,
+		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore})
+	return h, dkr, svc, &pinOut, ev, st
 }
 
 func login(t *testing.T, h http.Handler, pinOut *bytes.Buffer) *http.Cookie {
@@ -98,6 +106,20 @@ func doJSON(t *testing.T, h http.Handler, cookie *http.Cookie, method, path, bod
 	var out map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	return rec.Code, out
+}
+
+// deleteProjectAll registers scope=all deletion as test cleanup, so a failed
+// assertion can never leak a sandbox container (and its volumes) on the
+// engine. Safe to call even when the test itself deletes the project: the
+// final cleanup delete is a no-op 404.
+func deleteProjectAll(t *testing.T, h http.Handler, cookie *http.Cookie, id string) {
+	t.Helper()
+	t.Cleanup(func() {
+		code, _ := doJSON(t, h, cookie, http.MethodDelete, "/api/projects/"+id+"?scope=all", "")
+		if code != http.StatusOK && code != http.StatusNotFound {
+			t.Errorf("cleanup: delete project %s → %d", id, code)
+		}
+	})
 }
 
 // fixtureRepo creates a one-commit git repo under dir/repo and serves it
@@ -175,6 +197,7 @@ func TestProjectPipelineLifecycle(t *testing.T) {
 		t.Fatalf("create: %d %v", code, body)
 	}
 	id, _ := body["id"].(string)
+	deleteProjectAll(t, h, cookie, id)
 	wantPayload := map[string]any{"id": id, "name": "repo", "repo": url, "branch": "main"}
 	if id == "" || !reflect.DeepEqual(body, wantPayload) {
 		t.Fatalf("create payload = %v, want %v", body, wantPayload)
@@ -241,6 +264,7 @@ func TestBlankSandboxLifecycle(t *testing.T) {
 		t.Fatalf("blank create: %d %v", code, body)
 	}
 	id := body["id"].(string)
+	deleteProjectAll(t, h, cookie, id)
 	wantPayload := map[string]any{"id": id, "name": "untitled", "repo": "", "branch": ""}
 	if !reflect.DeepEqual(body, wantPayload) {
 		t.Fatalf("blank create payload = %v, want %v", body, wantPayload)
@@ -299,6 +323,7 @@ func TestProjectBranchPinning(t *testing.T) {
 		t.Fatalf("create: %d %v", code, body)
 	}
 	id := body["id"].(string)
+	deleteProjectAll(t, h, cookie, id)
 	wantPayload := map[string]any{"id": id, "name": "repo", "repo": url, "branch": "dev"}
 	if !reflect.DeepEqual(body, wantPayload) {
 		t.Fatalf("create payload = %v, want %v", body, wantPayload)
@@ -324,7 +349,6 @@ func TestCloneFailureLiveKeepsSandboxAndLogsError(t *testing.T) {
 	if code != http.StatusInternalServerError || !strings.HasPrefix(errMsg, wantPrefix) {
 		t.Fatalf("clone failure: got %d %q, want 500 with %q…", code, errMsg, wantPrefix)
 	}
-
 	entries, listErr := svc.List()
 	if listErr != nil || len(entries) != 1 {
 		t.Fatalf("sandbox must survive failed clone: %+v err=%v", entries, listErr)
@@ -334,8 +358,9 @@ func TestCloneFailureLiveKeepsSandboxAndLogsError(t *testing.T) {
 		t.Fatalf("sandbox must survive failed clone as %+v: %+v", wantEntries, entries)
 	}
 	id := entries[0].ID
+	deleteProjectAll(t, h, cookie, id)
 	code, body = doJSON(t, h, cookie, http.MethodGet, "/api/projects/"+id, "")
-	wantStatus := map[string]any{"id": id, "name": "nope", "repo": "git://host.docker.internal:1/nope.git", "branch": "", "status": "running"}
+	wantStatus := map[string]any{"id": id, "name": "nope", "repo": "git://host.docker.internal:1/nope.git", "branch": "", "cloneMethod": "http", "status": "running"}
 	if code != http.StatusOK || !reflect.DeepEqual(body, wantStatus) {
 		t.Fatalf("post-failure status: got %d %v, want %v", code, body, wantStatus)
 	}
@@ -352,7 +377,6 @@ func TestCloneFailureLiveKeepsSandboxAndLogsError(t *testing.T) {
 	if !found {
 		t.Fatal("expected an error event with op=project.clone for id " + id)
 	}
-	_, _ = doJSON(t, h, cookie, http.MethodDelete, "/api/projects/"+id+"?scope=all", "")
 }
 
 func TestCreateRejectsBadInputBeforeDocker(t *testing.T) {
@@ -376,7 +400,7 @@ func TestCreateRejectsBadInputBeforeDocker(t *testing.T) {
 }
 
 func TestSandboxIsolationAndRestartSurvival(t *testing.T) {
-	h, _, _, pinOut, ev, dataDir := newLiveDeps(t)
+	h, _, _, pinOut, ev, st := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
 
 	createBlank := func() string {
@@ -388,6 +412,8 @@ func TestSandboxIsolationAndRestartSurvival(t *testing.T) {
 		return body["id"].(string)
 	}
 	idA, idB := createBlank(), createBlank()
+	deleteProjectAll(t, h, cookie, idA)
+	deleteProjectAll(t, h, cookie, idB)
 	if idA == idB {
 		t.Fatal("ids collided")
 	}
@@ -405,7 +431,7 @@ func TestSandboxIsolationAndRestartSurvival(t *testing.T) {
 
 	// a fresh Service over the same data dir (server restart) still sees B
 	// and can drive its container
-	ev2, err := events.Open(filepath.Join(dataDir, "events.log"))
+	ev2, err := events.Open(filepath.Join(filepath.Dir(st.Path()), "events.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +443,7 @@ func TestSandboxIsolationAndRestartSurvival(t *testing.T) {
 		t.Fatal(err)
 	}
 	h2 := New(Deps{Events: ev2, Version: "itest", Auth: auth2,
-		Projects: project.NewService(project.Open(dataDir), dkr2, ev2)})
+		Projects: project.NewService(project.Open(st), dkr2, ev2)})
 	code, body := doJSON(t, h2, cookie, http.MethodGet, "/api/projects/"+idB, "")
 	if code != http.StatusOK || body["status"] != "running" {
 		t.Fatalf("restarted server lost the project: %d %v", code, body)

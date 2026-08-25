@@ -124,51 +124,12 @@ func TestDockerLifecycle(t *testing.T) {
 		t.Fatalf("exit code propagation: %+v err=%v", res, err)
 	}
 
-	// file upload (docker cp) + read back + verify via exec
+	// file upload (docker cp) + verify via exec
 	if err := d.WriteFile(ctx, id, "/root/hello.txt", []byte("hello world\n")); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	got, err := d.ReadFile(ctx, id, "/root/hello.txt")
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(got) != "hello world\n" {
-		t.Fatalf("read file got %q", got)
-	}
 	if res, _ := d.Exec(ctx, id, []string{"cat", "/root/hello.txt"}, false); res.Output != "hello world\n" {
 		t.Fatalf("cat file: %+v", res)
-	}
-
-	// logs tail
-	var logs bytes.Buffer
-	if err := d.Logs(ctx, id, "10", &logs); err != nil {
-		t.Fatalf("logs: %v", err)
-	}
-	if !strings.Contains(logs.String(), "started") {
-		t.Fatalf("logs missing 'started': %q", logs.String())
-	}
-
-	// port detection (ss -tlnp): the http server binds asynchronously after
-	// container start, so poll until it appears instead of racing it
-	found := false
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		ports, err := d.Ports(ctx, id)
-		if err != nil {
-			t.Fatalf("ports: %v", err)
-		}
-		for _, p := range ports {
-			if p.Number == 8000 {
-				found = true
-			}
-		}
-		if found {
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	if !found {
-		t.Fatal("port 8000 not detected within 30s")
 	}
 
 	// interactive exec: attach + resize while running

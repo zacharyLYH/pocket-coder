@@ -1,6 +1,7 @@
 // Package events implements the server's audit log: an append-only JSONL
-// file ($DATA_DIR/events.log) with a typed writer and a paginated read API.
-// Reading it *is* history — the UI reads from it.
+// file ($DATA_DIR/events.log) with a typed writer and a paginated read API
+// (GET /api/events). History lives here, desired state in state.json —
+// never confuse the two.
 package events
 
 import (

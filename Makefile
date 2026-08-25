@@ -25,9 +25,10 @@ lint: ## Format + vet (Go) and lint (web)
 	go -C server vet ./...
 	cd web && npm run lint
 
-check: ## Lint, test, typecheck/build the web app, and run FE behavioral tests
+check: ## Lint, test, typecheck/build the web app, run FE unit + e2e tests (e2e needs Docker)
 	$(MAKE) lint
 	go -C server test ./...
+	cd web && npm run test:unit
 	cd web && npm run build
 	cd web && npm run test:e2e
 
@@ -37,8 +38,11 @@ e2e: ## Stub — the end-to-end compose flow lands in Phase 6 (see docs/plan.md)
 web-install: ## Install web dependencies
 	cd web && npm install
 
-web-test: ## Run web behavioral tests (Playwright against installed Chrome)
+web-test: ## Run web e2e tests (real backend; needs Go toolchain + Docker engine)
 	cd web && npm run test:e2e
+
+web-test-parallel: ## Run web e2e tests in parallel, one process per test type
+	cd web && npm run test:e2e:parallel
 
 generate: ## Regenerate Go mocks (mockery) into server/mocks
 	cd server && go generate ./...

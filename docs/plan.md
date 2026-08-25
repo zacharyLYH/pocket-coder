@@ -168,6 +168,45 @@ Placement: a top-level item on the home screen, outside any project — the syst
 
 **Gate.** Launch a fake CLI harness (fixture shell script) in a real container, list/kill/restart it, verify the `|| echo` failure path surfaces. Validation probe rejects a "not-a-CLI" fixture with the exact PRD message.
 
+### Phase 8 completion checklist (each step verifiable on its own)
+
+> Status: items 1–4 landed and verified (unit + both integration suites +
+> race + playwright green; integration tests clean up via t.Cleanup, no
+> leaked containers). Remaining: item 4's manual phone smoke against
+> `go run`. Sandbox image v3 ships node/npm/python3/pip and an
+> `sps-update-runtime` script for latest-stable updates on request; Vi Demo
+> and Crasher Demo harnesses are seeded so the TUI and `|| echo` failure
+> stories are visible from the "+ New Session" picker.
+
+1. **Real-TUI transport gate.** The sandbox image ships busybox `vi`; use it
+   as the harness command in the live integration test, drive it over the
+   WebSocket bridge (keystrokes in), assert the screen changed
+   (`capture-pane`). This is the faithful stand-in for coding CLIs: real PTY,
+   real cursor addressing, no network installs. *Verify:* integration suite.
+   DONE — sandbox image v2 adds busybox `vi`; sessions zero tmux
+   `escape-time` (a lone ESC followed by a key was parsed as Meta-key and
+   swallowed); command probing targets the binary (first word of `command`);
+   `TestRealTUIGate` drives vi over the WS bridge and asserts the file edit.
+2. **Harness config v2 — native configs, not our invention.** Plugin schema
+   gains `configPath` + `config` (any JSON, the CLI's own portable format).
+   At launch, before validation, the platform writes it into the container
+   at exactly the path the CLI reads (`docker cp` primitive). Users paste
+   their existing opencode/aider config into the settings page once; keys
+   live inside it because that is how those tools take keys — no more
+   invented `auth.env` indirection. *Verify:* unit tests pin the
+   write-before-validate ordering; integration test launches with a config
+   and asserts the file's presence + contents inside the container. DONE.
+3. **Drop the `Auth` block** from the schema and builtins. Old plugin files
+   containing `auth` keep parsing (unknown fields are ignored); seeds never
+   overwrite user edits. *Verify:* unit tests + seed idempotence. DONE.
+4. **Installed-aware "+ New Session".** `GET /api/projects/{id}/harnesses`
+   (probe per container, one exec) feeds the picker so users see what is
+   ready vs what will self-heal on launch. *Verify:* handler tests (done),
+   playwright mock updated, manual smoke. Code + tests done; manual smoke open.
+5. **Full sweep:** race detector, both integration suites, playwright, then
+   a phone-browser smoke against `go run`. Automated parts green; phone
+   smoke pending.
+
 ---
 
 ## Phase 9 — Preview & diff

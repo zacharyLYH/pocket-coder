@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -17,21 +18,33 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"sps/internal/docker"
+	"sps/internal/harness"
 	"sps/internal/project"
 	"sps/internal/session"
+	"sps/internal/sshkeys"
+	"sps/internal/state"
+	"sps/internal/state/statetest"
 	dockermocks "sps/mocks/docker"
 )
 
-func newSessionDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer, string) {
+func newSessionDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer, *state.Store) {
 	t.Helper()
-	d, md, pinOut, dataDir := newProjectDeps(t)
+	d, md, pinOut, st := newProjectDeps(t)
 	d.Sessions = session.New(md)
-	return d, md, pinOut, dataDir
+
+	// a plugin in the registry, as if added by the user
+	hs := harness.New(st)
+	if _, err := hs.Save(harness.Harness{Name: "Fake", Command: "fakecli", Install: "npm i -g fakecli"}); err != nil {
+		t.Fatal(err)
+	}
+	d.Harnesses = hs
+	d.SSHKeys = sshkeys.New(st)
+	return d, md, pinOut, st
 }
 
-func seedProject(t *testing.T, dataDir, id string) {
+func seedProject(t *testing.T, st *state.Store, id string) {
 	t.Helper()
-	if err := project.Open(dataDir).Create(id, project.Project{Name: "x"}); err != nil {
+	if err := project.Open(st).Create(id, project.Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -76,8 +89,11 @@ func TestCreateSessionLifecycle(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc", []string{"tmux", "has-session", "-t", "work"}, false).
+		Return(docker.ExecResult{ExitCode: 1}, nil).Once() // ensure: no such session yet
 	md.EXPECT().Exec(mock.Anything, "sps-abc",
-		[]string{"tmux", "new-session", "-d", "-s", "work", "-c", "/workspace"}, false).
+		append([]string{"tmux", "new-session", "-d", "-s", "work", "-c", "/workspace",
+			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
 
 	h := New(d)
@@ -98,15 +114,14 @@ func TestCreateSessionLifecycle(t *testing.T) {
 		t.Fatalf("invalid name: %d, want 400", rec.Code)
 	}
 
-	// duplicate name is success for an ensure call (200), with the engine
-	// detail hidden
+	// an existing session is ensure-success (200) without creating anything
 	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc", mock.Anything, false).
-		Return(docker.ExecResult{ExitCode: 1, Output: "duplicate session: work"}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc", []string{"tmux", "has-session", "-t", "work"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil) // ensure: already there
 	rec = authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"work"}`)
 	want = "{\"name\":\"work\"}\n"
 	if rec.Code != http.StatusOK || rec.Body.String() != want {
-		t.Fatalf("duplicate: got %d %q, want 200 %q", rec.Code, rec.Body, want)
+		t.Fatalf("ensure existing: got %d %q, want 200 %q", rec.Code, rec.Body, want)
 	}
 }
 
@@ -199,8 +214,10 @@ func TestTerminalRoundTrip(t *testing.T) {
 			resized <- [2]int{rows, cols}
 			return nil
 		})
+	wantAttach := append([]string{"env", "TERM=xterm-256color", "COLORTERM=truecolor", "tmux"}, session.ThemeArgs()...)
+	wantAttach = append(wantAttach, ";", "attach", "-t", "main")
 	md.EXPECT().Attach(mock.Anything, "sps-abc",
-		[]string{"tmux", "attach", "-t", "main"},
+		wantAttach,
 		mock.Anything, mock.Anything, mock.Anything, true).
 		RunAndReturn(func(ctx context.Context, _ string, _ []string, stdin io.Reader, stdout, stderr io.Writer, _ bool) (string, <-chan docker.ExecDone, error) {
 			done := make(chan docker.ExecDone, 1)
@@ -392,4 +409,659 @@ func hasEventType(d Deps, typ string) bool {
 		}
 	}
 	return false
+}
+
+// expectLaunch pins the exec chain LaunchNamed performs for the fake plugin
+// against container "sps-<id>", session <name>.
+func expectLaunch(md *dockermocks.MockClient, id, name string) {
+	list := []string{"tmux", "list-sessions", "-F", "#{session_name}"}
+	md.EXPECT().Exec(mock.Anything, "sps-"+id, list, mock.Anything).
+		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
+	probe := []string{"test", "-d", "/workspace/repo/.git"}
+	lookup := []string{"bash", "-lc", "command -v fakecli"}
+	validate := []string{"bash", "-lc", "fakecli --version || fakecli --help"}
+	create := append([]string{"tmux", "new-session", "-d", "-s", name, "-c", "/workspace",
+		"bash", "-lc", `fakecli || echo "[fakecli exited: $?]"`,
+		";", "set-option", "remain-on-exit", "on",
+		";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...)
+	md.EXPECT().Exec(mock.Anything, "sps-"+id, probe, mock.Anything).
+		Return(docker.ExecResult{ExitCode: 1}, nil).Once()
+	md.EXPECT().Exec(mock.Anything, "sps-"+id, lookup, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "/usr/bin/fakecli\n"}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-"+id, validate, true).
+		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli 1.0\n"}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-"+id, create, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
+}
+
+func TestCreateHarnessSession(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	expectLaunch(md, "abc", "fake-1")
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"harnessId":"fake"}`)
+	want := "{\"harness\":\"fake\",\"name\":\"fake-1\"}\n"
+	if rec.Code != http.StatusCreated || rec.Body.String() != want {
+		t.Fatalf("got %d %q, want 201 %q", rec.Code, rec.Body, want)
+	}
+
+	evs, _ := d.Events.Read(0, 0)
+	var sawLaunch bool
+	for _, e := range evs {
+		if e.Type == "harness.launch" && e.Data["session"] == "fake-1" && e.Data["harness"] == "fake" {
+			sawLaunch = true
+		}
+	}
+	if !sawLaunch {
+		t.Fatalf("no harness.launch event in %+v", evs)
+	}
+}
+
+func TestCreateHarnessSessionUnknownHarness404(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"harnessId":"ghost"}`)
+	want := `{"error":"no such harness \"ghost\""}`
+	if rec.Code != http.StatusNotFound || strings.TrimSpace(rec.Body.String()) != want {
+		t.Fatalf("got %d %q, want 404 %q", rec.Code, rec.Body, want)
+	}
+}
+
+func TestCreateHarnessSessionNotACLI422(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	// a command that exists but prints nothing and exits: not a CLI
+	if _, err := d.Harnesses.Save(harness.Harness{Name: "Broken", Command: "sleepy"}); err != nil {
+		t.Fatal(err)
+	}
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"test", "-d", "/workspace/repo/.git"}, false).
+		Return(docker.ExecResult{ExitCode: 1}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"bash", "-lc", "command -v sleepy"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "/usr/bin/sleepy\n"}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc", mock.Anything, true).
+		Return(docker.ExecResult{ExitCode: 0, Output: ""}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"harnessId":"broken"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(body.Error, "not a CLI — it looks like it wants a display") {
+		t.Fatalf("error = %q, want the exact PRD message prefix", body.Error)
+	}
+	waitForEvent(t, d, "validation.failed")
+}
+
+// Regression: a plain shell named "opencode" (any harness id) used to be
+// accepted, so the real harness launch became "opencode-1" and the picker
+// showed a bogus pair — a bash "opencode" next to the true "opencode-1".
+// Harness namespaces (bare id and <id>-<n>) are now reserved at create, and
+// restart treats a bare name as the shell it is, never a harness relaunch.
+func TestCreateSessionRejectsHarnessNamespaceNames(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+	// Only Inspect + the has-session ensure probe may run: a reserved-name
+	// create must be refused before any tmux exec, and mockery fails the
+	// test on any unexpected Exec.
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	// has-session: missing for the three refused creates, then existing for
+	// the final ensure call
+	probes := 0
+	md.EXPECT().Exec(mock.Anything, "sps-abc", mock.MatchedBy(func(cmd []string) bool {
+		return len(cmd) == 4 && cmd[0] == "tmux" && cmd[1] == "has-session"
+	}), false).RunAndReturn(func(context.Context, string, []string, bool) (docker.ExecResult, error) {
+		probes++
+		if probes <= 3 {
+			return docker.ExecResult{ExitCode: 1}, nil
+		}
+		return docker.ExecResult{ExitCode: 0}, nil
+	})
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	for _, name := range []string{"fake", "fake-1", "fake-2"} {
+		rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"`+name+`"}`)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("create %q: got %d %q, want 400", name, rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), "reserved") {
+			t.Fatalf("create %q: error %q should say the name is reserved", name, rec.Body)
+		}
+	}
+
+	// BUT attaching to a harness-named session that already exists is the
+	// terminal tab's ensure call and must succeed — this is exactly how the
+	// picker re-attaches to a live "opencode-1".
+	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"fake-1"}`)
+	want := "{\"name\":\"fake-1\"}\n"
+	if rec.Code != http.StatusOK || rec.Body.String() != want {
+		t.Fatalf("ensure existing harness-named session: got %d %q, want 200 %q", rec.Code, rec.Body, want)
+	}
+}
+
+func TestRestartBareHarnessNameRestartsPlainShell(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	// A shell squatting the bare harness id "fake": restart must recreate a
+	// plain shell under the same name. If it misclassifies and relaunches
+	// the harness, LaunchNamed's unexpected execs fail the mock.
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "kill-session", "-t", "fake"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		append([]string{"tmux", "new-session", "-d", "-s", "fake", "-c", "/workspace",
+			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions/fake/restart", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "{\"name\":\"fake\"}\n" {
+		t.Fatalf("restart bare harness-named shell: got %d %q, want 200 {\"name\":\"fake\"}", rec.Code, rec.Body)
+	}
+}
+
+// TestCreateThenListSessions pins the user-visible flow: after creating a
+// shell session and launching a harness session, the picker's list contains
+// exactly the expected names.
+func TestCreateThenListSessions(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+
+	md.EXPECT().Exec(mock.Anything, "sps-abc", []string{"tmux", "has-session", "-t", "work"}, false).
+		Return(docker.ExecResult{ExitCode: 1}, nil).Once() // ensure: not there yet
+	shellCreate := append([]string{"tmux", "new-session", "-d", "-s", "work", "-c", "/workspace",
+		";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...)
+	md.EXPECT().Exec(mock.Anything, "sps-abc", shellCreate, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
+	expectLaunch(md, "abc", "fake-1")
+
+	// the list the picker renders: the shell the user named plus the
+	// auto-numbered harness session, nothing else
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "fake-1\nwork\n"}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	if rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"work"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("shell create: got %d %q, want 201", rec.Code, rec.Body)
+	}
+	if rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"harnessId":"fake"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("harness create: got %d %q, want 201", rec.Code, rec.Body)
+	}
+
+	rec := authedGet(t, h, cookie, "/api/projects/abc/sessions")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: got %d %q, want 200", rec.Code, rec.Body)
+	}
+	var body struct {
+		Sessions []session.Entry `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(body.Sessions))
+	for _, s := range body.Sessions {
+		got = append(got, s.Name)
+	}
+	want := []string{"fake-1", "work"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sessions after create = %v, want %v", got, want)
+	}
+}
+
+// TestInstallHarnessEndpoint drives POST /api/harnesses/{id}/install with an
+// explicit project selection: only chosen projects are touched (the mock
+// fails on any unexpected exec, so zero calls for "def" proves selectivity),
+// running containers get the full install+validate chain, and per-project
+// results come back to the UI.
+func TestInstallHarnessEndpoint(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+	if err := project.Open(dataDir).Create("def", project.Project{Name: "stopped-one"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// only "abc" is selected: nothing may run against "def"
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+
+	// running project: lookup (miss) → install → re-lookup (hit) → validate
+	lookup := []string{"bash", "-lc", "command -v fakecli"}
+	install := []string{"bash", "-lc", "npm i -g fakecli"}
+	validate := []string{"bash", "-lc", "fakecli --version || fakecli --help"}
+	// misses: InstallHarness's initial probe; the post-install re-check hits
+	lookups := 0
+	md.EXPECT().Exec(mock.Anything, "sps-abc", lookup, false).
+		RunAndReturn(func(context.Context, string, []string, bool) (docker.ExecResult, error) {
+			lookups++
+			if lookups < 2 {
+				return docker.ExecResult{ExitCode: 1}, nil
+			}
+			return docker.ExecResult{ExitCode: 0, Output: "/usr/bin/fakecli"}, nil
+		})
+	md.EXPECT().Exec(mock.Anything, "sps-abc", install, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "added 1 package\n"}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc", validate, true).
+		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli 1.0\n"}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedPost(t, h, cookie, "/api/harnesses/fake/install", `{"projectIds":["abc"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("install: got %d %q, want 200", rec.Code, rec.Body)
+	}
+	var body struct {
+		Results []struct {
+			Project string `json:"project"`
+			Status  string `json:"status"`
+			Detail  string `json:"detail"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Results) != 1 || body.Results[0].Project != "x" || body.Results[0].Status != "ok" {
+		t.Fatalf("results = %+v, want exactly the selected project ok", body.Results)
+	}
+	waitForEvent(t, d, "harness.install")
+
+	// empty selection is refused before touching anything
+	if rec := authedPost(t, h, cookie, "/api/harnesses/fake/install", `{"projectIds":[]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty selection: got %d, want 400", rec.Code)
+	}
+}
+
+// TestExecCommandEndpoint covers the generic "run in projects" endpoint:
+// arbitrary commands run synchronously in exactly the selected projects,
+// output comes back, and a failing command surfaces its exit code and
+// output while the other project still reports success.
+func TestExecCommandEndpoint(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+	if err := project.Open(dataDir).Create("def", project.Project{Name: "second"}); err != nil {
+		t.Fatal(err)
+	}
+
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Inspect(mock.Anything, "sps-def").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"bash", "-lc", "echo hi"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "hi\n"}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-def",
+		[]string{"bash", "-lc", "echo hi"}, false).
+		Return(docker.ExecResult{ExitCode: 3, Output: "boom\n"}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedPost(t, h, cookie, "/api/projects/exec", `{"projectIds":["abc","def"],"command":"echo hi"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("exec: got %d %q, want 200", rec.Code, rec.Body)
+	}
+	var body struct {
+		Results []struct {
+			Project string `json:"project"`
+			Status  string `json:"status"`
+			Detail  string `json:"detail"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	byProject := map[string][2]string{}
+	for _, r := range body.Results {
+		byProject[r.Project] = [2]string{r.Status, r.Detail}
+	}
+	if got := byProject["x"]; got[0] != "ok" || got[1] != "hi" { // seededProject names "abc" as "x"
+		t.Fatalf(`abc = %+v, want ok/"hi"`, got)
+	}
+	if got := byProject["second"]; got[0] != "error" || !strings.Contains(got[1], "exit 3") || !strings.Contains(got[1], "boom") {
+		t.Fatalf(`def = %+v, want error surfacing exit 3 + output`, got)
+	}
+	waitForEvent(t, d, "projects.exec")
+
+	// missing command / empty selection are refused
+	if rec := authedPost(t, h, cookie, "/api/projects/exec", `{"projectIds":["abc"]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("no command: got %d, want 400", rec.Code)
+	}
+	if rec := authedPost(t, h, cookie, "/api/projects/exec", `{"command":"echo hi"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("no selection: got %d, want 400", rec.Code)
+	}
+}
+
+func TestKillAndRestartSessions(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	killed := 0
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "kill-session", "-t", "main"}, false).
+		RunAndReturn(func(context.Context, string, []string, bool) (docker.ExecResult, error) {
+			killed++
+			return docker.ExecResult{ExitCode: 0}, nil
+		})
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	// kill
+	rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc/sessions/main")
+	if rec.Code != http.StatusOK || rec.Body.String() != "{\"ok\":true}\n" {
+		t.Fatalf("kill: got %d %q", rec.Code, rec.Body)
+	}
+	waitForEvent(t, d, "session.exit")
+
+	// restart resolves "main": no such plugin → plain shell recreation
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		append([]string{"tmux", "new-session", "-d", "-s", "main", "-c", "/workspace",
+			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	rec = authedPost(t, h, cookie, "/api/projects/abc/sessions/main/restart", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "{\"name\":\"main\"}\n" {
+		t.Fatalf("restart shell: got %d %q", rec.Code, rec.Body)
+	}
+	if killed != 2 {
+		t.Fatalf("kill called %d times, want 2 (explicit delete + restart's pre-kill)", killed)
+	}
+}
+
+func TestRestartHarnessSessionSameName(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "kill-session", "-t", "fake-1"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	expectLaunchNamed(md, "abc", "fake-1")
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions/fake-1/restart", "")
+	want := "{\"name\":\"fake-1\"}\n"
+	if rec.Code != http.StatusOK || rec.Body.String() != want {
+		t.Fatalf("restart harness: got %d %q, want 200 %q", rec.Code, rec.Body, want)
+	}
+}
+
+// expectLaunchNamed is expectLaunch without the list-sessions numbering step.
+func expectLaunchNamed(md *dockermocks.MockClient, id, name string) {
+	md.EXPECT().Exec(mock.Anything, "sps-"+id,
+		[]string{"test", "-d", "/workspace/repo/.git"}, false).
+		Return(docker.ExecResult{ExitCode: 1}, nil).Once()
+	md.EXPECT().Exec(mock.Anything, "sps-"+id,
+		[]string{"bash", "-lc", "command -v fakecli"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "/usr/bin/fakecli\n"}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-"+id, mock.Anything, true).
+		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli 1.0\n"}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-"+id,
+		append([]string{"tmux", "new-session", "-d", "-s", name, "-c", "/workspace",
+			"bash", "-lc", `fakecli || echo "[fakecli exited: $?]"`,
+			";", "set-option", "remain-on-exit", "on",
+			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
+		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
+}
+
+func TestHarnessRegistryAPI(t *testing.T) {
+	d, _, pinOut, dataDir := newSessionDeps(t)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	// seeded plugin is listed with its file-derived id
+	rec := authedGet(t, h, cookie, "/api/harnesses")
+	var list struct {
+		Harnesses []harness.Harness `json:"harnesses"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list.Harnesses) != 1 || list.Harnesses[0].ID != "fake" {
+		t.Fatalf("list = %+v err=%v", list, err)
+	}
+
+	// add-harness form writes a real plugin file
+	rec = authedPost(t, h, cookie, "/api/harnesses", `{"name":"My Agent","command":"my-agent","install":"npm i -g my-agent"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create harness: %d %q", rec.Code, rec.Body)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	if created.ID != "my-agent" {
+		t.Fatalf("id = %q, want my-agent", created.ID)
+	}
+
+	// duplicate name → refused (the registry already has that slug)
+	rec = authedPost(t, h, cookie, "/api/harnesses", `{"name":"My Agent","command":"other"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate: %d %q, want 400", rec.Code, rec.Body)
+	}
+	// the refused write changed nothing: exactly the seeded + added plugins
+	statetest.AssertSection(t, dataDir.Path(), "harnesses", map[string]any{
+		"fake":     map[string]any{"id": "fake", "name": "Fake", "command": "fakecli", "install": "npm i -g fakecli"},
+		"my-agent": map[string]any{"id": "my-agent", "name": "My Agent", "command": "my-agent", "install": "npm i -g my-agent"},
+	})
+}
+
+// TestDeleteHarnessEndpoint: DELETE /api/harnesses/{id} removes exactly the
+// named plugin from the state file, leaves every other section byte-for-byte
+// intact, and deleting an unknown id is idempotent success.
+func TestDeleteHarnessEndpoint(t *testing.T) {
+	d, _, pinOut, dataDir := newSessionDeps(t)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	// add a second plugin so the delete provably spares the neighbors
+	rec := authedPost(t, h, cookie, "/api/harnesses", `{"name":"Temp","command":"tempcli"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("add: %d %q", rec.Code, rec.Body)
+	}
+
+	rec = authedRequest(t, h, cookie, http.MethodDelete, "/api/harnesses/temp")
+	if rec.Code != http.StatusOK || rec.Body.String() != "{\"ok\":true}\n" {
+		t.Fatalf("delete: %d %q", rec.Code, rec.Body)
+	}
+	// exactly the seeded plugin remains, untouched
+	statetest.AssertSection(t, dataDir.Path(), "harnesses", map[string]any{
+		"fake": map[string]any{"id": "fake", "name": "Fake", "command": "fakecli", "install": "npm i -g fakecli"},
+	})
+
+	// deleting an unknown harness is idempotent success and changes nothing
+	rec = authedRequest(t, h, cookie, http.MethodDelete, "/api/harnesses/ghost")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete unknown: %d %q, want 200", rec.Code, rec.Body)
+	}
+	statetest.AssertSection(t, dataDir.Path(), "harnesses", map[string]any{
+		"fake": map[string]any{"id": "fake", "name": "Fake", "command": "fakecli", "install": "npm i -g fakecli"},
+	})
+	waitForEvent(t, d, "harness.deleted")
+}
+
+func TestProjectHarnessesShowsInstalled(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+	// second plugin whose command is missing from the container, plus one
+	// whose command carries arguments (the probe targets the binary only)
+	if _, err := d.Harnesses.Save(harness.Harness{Name: "Ghosty", Command: "ghosty"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Harnesses.Save(harness.Harness{Name: "Shelly", Command: "vi hello.txt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"bash", "-lc", `for c in fakecli ghosty vi; do command -v "$c" >/dev/null && echo "$c"; done`}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli\nvi\n"}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedGet(t, h, cookie, "/api/projects/abc/harnesses")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body)
+	}
+	var body struct {
+		Harnesses []struct {
+			ID        string `json:"id"`
+			Installed bool   `json:"installed"`
+		} `json:"harnesses"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Harnesses) != 3 {
+		t.Fatalf("got %d harnesses, want 3", len(body.Harnesses))
+	}
+	installedByID := map[string]bool{}
+	for _, x := range body.Harnesses {
+		installedByID[x.ID] = x.Installed
+	}
+	if !installedByID["fake"] || installedByID["ghosty"] || !installedByID["shelly"] {
+		t.Fatalf("installed flags wrong: %+v", installedByID)
+	}
+
+	// stopped container → 409 (EnsureContainer sees exited and leaves it)
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: false, Status: "exited"}, nil).Once()
+	rec = authedGet(t, h, cookie, "/api/projects/abc/harnesses")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stopped container: %d, want 409", rec.Code)
+	}
+}
+
+func TestSSHKeysAPI(t *testing.T) {
+	d, _, pinOut, dataDir := newSessionDeps(t)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	// initially empty
+	rec := authedGet(t, h, cookie, "/api/ssh-keys")
+	var list struct {
+		Keys []struct{} `json:"keys"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list.Keys) != 0 {
+		t.Fatalf("list empty: %d %v err=%v", rec.Code, rec.Body, err)
+	}
+
+	// add a key
+	rec = authedPost(t, h, cookie, "/api/ssh-keys",
+		`{"publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGITest","label":"test"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body)
+	}
+	var added struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &added)
+	if added.Fingerprint == "" {
+		t.Fatal("no fingerprint returned")
+	}
+
+	// list shows one key
+	rec = authedGet(t, h, cookie, "/api/ssh-keys")
+	_ = json.Unmarshal(rec.Body.Bytes(), &list)
+	if len(list.Keys) != 1 {
+		t.Fatalf("list after add: %d %v", rec.Code, rec.Body)
+	}
+	// and the state file carries exactly that key, exactly these fields
+	statetest.AssertSection(t, dataDir.Path(), "sshKeys", []any{map[string]any{
+		"fingerprint": added.Fingerprint,
+		"publicKey":   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGITest",
+		"label":       "test",
+		"email":       "me@example.com",
+	}})
+
+	// duplicate rejected
+	rec = authedPost(t, h, cookie, "/api/ssh-keys",
+		`{"publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGITest"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate: %d, want 400", rec.Code)
+	}
+
+	// invalid key rejected
+	rec = authedPost(t, h, cookie, "/api/ssh-keys",
+		`{"publicKey":"not-a-key"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid key: %d, want 400", rec.Code)
+	}
+
+	// delete
+	rec = authedRequest(t, h, cookie, http.MethodDelete, "/api/ssh-keys/"+added.Fingerprint)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body)
+	}
+
+	// back to empty — and the section is gone from the state file entirely
+	rec = authedGet(t, h, cookie, "/api/ssh-keys")
+	_ = json.Unmarshal(rec.Body.Bytes(), &list)
+	if len(list.Keys) != 0 {
+		t.Fatalf("list after delete: %d %v", rec.Code, rec.Body)
+	}
+	statetest.AssertSection(t, dataDir.Path(), "harnesses", map[string]any{
+		"fake": map[string]any{"id": "fake", "name": "Fake", "command": "fakecli", "install": "npm i -g fakecli"},
+	})
+}
+
+// TestLazyReconciliationViaSessionHandler proves the disk-is-truth
+// guarantee: when a container is missing but the project exists on disk,
+// EnsureContainer inside the handler recreates it.
+func TestLazyReconciliationViaSessionHandler(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	// first call: container missing → triggers reconciliation
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
+	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
+	md.EXPECT().InspectImage(mock.Anything, project.SandboxImage).Return(nil)
+	md.EXPECT().Run(mock.Anything, mock.Anything).Return("new-cid", nil)
+	// EnsureContainer re-inspects after reconciling: now running
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	// after reconciliation, the session list uses the container NAME (not cid)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
+		Return(docker.ExecResult{ExitCode: 1, Output: "no server running"}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedGet(t, h, cookie, "/api/projects/abc/sessions")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list sessions after reconcile: %d %s", rec.Code, rec.Body)
+	}
+	// the reconcile event should have been emitted
+	evs, _ := d.Events.Read(0, 0)
+	found := false
+	for _, e := range evs {
+		if e.Type == "project.reconcile" && e.Data["id"] == "abc" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no project.reconcile event after lazy reconciliation")
+	}
 }

@@ -1,0 +1,22 @@
+#!/bin/sh
+# sps-update-runtime — bring this sandbox's runtimes up to the latest
+# stable versions: node + npm (NodeSource current LTS) and python3 + pip.
+# Run it in any terminal of the project; it needs no arguments.
+set -eu
+
+echo "==> updating node/npm to latest stable LTS"
+curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+apt-get install -y nodejs
+
+echo "==> updating python3/pip"
+apt-get update
+apt-get install -y --only-upgrade python3 python3-pip || apt-get install -y python3 python3-pip
+python3 -m pip install --upgrade --break-system-packages pip
+
+echo "==> npm to latest"
+npm install -g npm@latest
+
+echo "runtime now:"
+node --version
+npm --version
+python3 --version

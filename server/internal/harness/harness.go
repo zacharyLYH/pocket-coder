@@ -1,119 +1,175 @@
-// Package harness loads harness plugins from $DATA_DIR/harnesses/*.json.
-// Builtins are seeded as real editable files, so builtins and user plugins
-// share one code path.
+// Package harness manages harness plugins: CLI tools launchable as tmux
+// sessions. The registry lives in the central state file (internal/state);
+// builtins are seeded into it as real, editable entries, so builtins and
+// user plugins share one code path.
 package harness
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
+
+	"sps/internal/state"
 )
 
 // Harness is a CLI plugin: a global entry in "+ New Session".
-type Harness struct {
-	Name    string `json:"name"`
-	Command string `json:"command"`
-	Install string `json:"install,omitempty"`
-	Auth    Auth   `json:"auth,omitempty"`
+type Harness = state.Harness
+
+// Binary is the executable the Command runs: its first word. Probing
+// (installed checks, CLI validation) targets this; the rest of Command is
+// arguments (e.g. "vi hello.txt" probes "vi").
+func Binary(h Harness) string {
+	return strings.Fields(h.Command)[0]
 }
 
-// Auth describes how a harness gets its credentials.
-type Auth struct {
-	Env        []string `json:"env,omitempty"`        // env vars that carry API keys
-	DeviceFlow bool     `json:"deviceFlow,omitempty"` // CLI prints a URL + code to log in
-	Upload     bool     `json:"upload,omitempty"`     // needs a credential file uploaded
+// Store reads and writes the plugin registry in the central state file.
+type Store struct {
+	st *state.Store
 }
 
-// Loader lists the available harness plugins. Defined as an interface so
-// consumers can be tested with a mock instead of real plugin files.
-type Loader interface {
-	List() ([]Harness, error)
+// New returns a plugin store backed by st.
+func New(st *state.Store) *Store {
+	return &Store{st: st}
 }
 
-// DirLoader scans a directory of harness plugin files.
-type DirLoader struct {
-	dir string
-}
-
-// New returns a DirLoader for dir (normally $DATA_DIR/harnesses).
-func New(dir string) *DirLoader {
-	return &DirLoader{dir: dir}
-}
-
-// List returns every plugin in the directory, sorted by name. A plugin that
-// fails validation fails the whole list: a broken plugin should be visible,
-// not silently dropped.
-func (l *DirLoader) List() ([]Harness, error) {
-	entries, err := os.ReadDir(l.dir)
-	if err != nil {
-		return nil, fmt.Errorf("read harnesses dir: %w", err)
-	}
-	var out []Harness
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
+// List returns every plugin, sorted by name, IDs synced from their map keys.
+func (l *Store) List() ([]Harness, error) {
+	out := []Harness{}
+	l.st.View(func(doc *state.Document) {
+		for id, h := range doc.Harnesses {
+			h.ID = id
+			out = append(out, h)
 		}
-		h, err := loadFile(filepath.Join(l.dir, e.Name()))
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", e.Name(), err)
-		}
-		out = append(out, h)
-	}
+	})
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
-func loadFile(path string) (Harness, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return Harness{}, err
+// Get returns one plugin by id.
+func (l *Store) Get(id string) (Harness, error) {
+	var (
+		h  Harness
+		ok bool
+	)
+	l.st.View(func(doc *state.Document) {
+		h, ok = doc.Harnesses[id]
+	})
+	if !ok {
+		return Harness{}, fmt.Errorf("no such harness %q", id)
 	}
-	var h Harness
-	if err := json.Unmarshal(raw, &h); err != nil {
-		return Harness{}, fmt.Errorf("invalid JSON: %w", err)
-	}
-	if strings.TrimSpace(h.Name) == "" || strings.TrimSpace(h.Command) == "" {
-		return Harness{}, fmt.Errorf("name and command are required")
-	}
+	h.ID = id
 	return h, nil
 }
 
-// Builtins seeded into a fresh harnesses dir. Real, editable files;
-// install/auth are best-effort defaults the user can change.
-var builtins = []Harness{
-	{Name: "Terminal", Command: "bash"},
-	{Name: "OpenCode", Command: "opencode", Install: "npm i -g opencode-ai", Auth: Auth{Env: []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"}}},
-	{Name: "Freebuff", Command: "freebuff", Install: "npm i -g freebuff", Auth: Auth{Env: []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"}}},
-	{Name: "Aider", Command: "aider", Install: "python3 -m pip install -U aider-chat", Auth: Auth{Env: []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"}}},
+// Save stores h under the slug of its name; an existing entry with that
+// slug is refused. It returns the id the plugin was saved under.
+func (l *Store) Save(h Harness) (string, error) {
+	id := Slug(h.Name)
+	if id == "" {
+		return "", fmt.Errorf("name %q has no usable characters for an id", h.Name)
+	}
+	if strings.TrimSpace(h.Name) == "" || strings.TrimSpace(h.Command) == "" {
+		return "", fmt.Errorf("name and command are required")
+	}
+	err := l.st.Mutate(func(doc *state.Document) error {
+		if _, exists := doc.Harnesses[id]; exists {
+			return fmt.Errorf("harness %q already exists", id)
+		}
+		if doc.Harnesses == nil {
+			doc.Harnesses = map[string]Harness{}
+		}
+		h.ID = id
+		doc.Harnesses[id] = h
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
-// SeedBuiltins writes the builtin plugin files, never overwriting existing
-// files (the user may have edited them). Returns the names written.
-func SeedBuiltins(dir string) ([]string, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create harnesses dir: %w", err)
-	}
+// Remove deletes a harness from the registry. Deleting an unknown id is
+// idempotent success (delete is idempotent everywhere else in the app).
+func (l *Store) Remove(id string) error {
+	return l.st.Mutate(func(doc *state.Document) error {
+		delete(doc.Harnesses, id)
+		return nil
+	})
+}
+
+// EnsureBuiltins adds any missing builtin plugins to the registry, never
+// overwriting existing entries (the user may have edited them). Returns the
+// names written. Replaces the old seed-files-on-boot behavior: builtins are
+// state now, seeded once and edited like any other plugin.
+func (l *Store) EnsureBuiltins() ([]string, error) {
 	var written []string
-	for _, b := range builtins {
-		path := filepath.Join(dir, pluginFile(b))
-		if _, err := os.Stat(path); err == nil {
-			continue // already there (possibly user-edited) — leave it alone
+	err := l.st.Mutate(func(doc *state.Document) error {
+		written = nil
+		for _, b := range builtins {
+			id := Slug(b.Name)
+			if _, exists := doc.Harnesses[id]; exists {
+				continue
+			}
+			if doc.Harnesses == nil {
+				doc.Harnesses = map[string]Harness{}
+			}
+			b.ID = id
+			doc.Harnesses[id] = b
+			written = append(written, b.Name)
 		}
-		raw, err := json.MarshalIndent(b, "", "  ")
-		if err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
-			return nil, fmt.Errorf("seed %s: %w", b.Name, err)
-		}
-		written = append(written, b.Name)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return written, nil
 }
 
-func pluginFile(h Harness) string {
-	return strings.ToLower(h.Name) + ".json"
+// Slug maps a harness name to a safe plugin/session id: lowercase, runs of
+// anything outside [a-z0-9] collapsed to one dash, no leading/trailing dash.
+func Slug(name string) string {
+	var b strings.Builder
+	lastDash := true // collapses runs and drops a leading dash
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		case !lastDash:
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.TrimSuffix(b.String(), "-")
 }
+
+// Builtins seeded into a fresh registry. Real, editable entries;
+// install/auth are best-effort defaults the user can change.
+//
+// Runtime requirements (visible failure with a hint comes free: the CLI
+// validation probe reports the missing interpreter): node and python3 ship
+// in the sandbox image; the `sps-update-runtime` script inside every
+// sandbox brings them to the latest stable when run in a terminal.
+//
+// Where each records usage in its container's home volume (harvested by the
+// observability page, read by the secretary later): opencode → its storage
+// dir under ~/.local/share/opencode; aider → ~/.aider* history/chat logs;
+// freebuff → its own state dir under ~. Terminal/bash records nothing.
+// Credentials live in each CLI's native config file: users paste their
+// config (configPath + config on the plugin, or edit it later) once.
+//
+// The two demo plugins exist so the platform's stories are visible from the
+// "+ New Session" picker with zero setup: Vi Demo is a real full-screen TUI;
+// Crasher Demo installs a CLI that validates fine, then exits 9 two seconds
+// in — showing the `[crasher exited: 9]` failure line.
+var builtins = []Harness{
+	{Name: "Terminal", Command: "bash"},
+	{Name: "OpenCode", Command: "opencode", Install: "npm i -g opencode-ai"},
+	{Name: "Freebuff", Command: "freebuff", Install: "npm i -g freebuff && freebuff --version || true"},
+	{Name: "Aider", Command: "aider", Install: "python3 -m pip install -U aider-chat"},
+	{Name: "Vi Demo", Command: "vi notes.txt"},
+	{Name: "Crasher Demo", Command: "crasher", Install: demoCrasherInstall},
+}
+
+// demoCrasherInstall writes the fake CLI the Crasher Demo harness runs.
+const demoCrasherInstall = `printf '#!/bin/sh\nif [ $# -gt 0 ]; then echo "crasher 1.0"; exit 0; fi\necho "about to crash"\nsleep 2\nexit 9\n' > /usr/local/bin/crasher && chmod +x /usr/local/bin/crasher`

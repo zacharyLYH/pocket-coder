@@ -14,7 +14,6 @@ import (
 
 	"sps/internal/auth"
 	"sps/internal/events"
-	httpapimocks "sps/mocks/httpapi"
 )
 
 const testSecret = "0123456789abcdef0123456789abcdef"
@@ -273,9 +272,25 @@ func TestEventsAPI(t *testing.T) {
 	}
 }
 
-// TestEventsAPIWithMockEventLog proves the generated mock substitutes for the
-// real event log: the handler reads events from the mock, not from disk.
-func TestEventsAPIWithMockEventLog(t *testing.T) {
+// fakeEventLog is a minimal in-memory EventLog for handler tests.
+type fakeEventLog struct {
+	gotAfter int64
+	gotLimit int
+	out      []events.Event
+}
+
+func (f *fakeEventLog) Read(after int64, limit int) ([]events.Event, error) {
+	f.gotAfter, f.gotLimit = after, limit
+	return f.out, nil
+}
+
+func (f *fakeEventLog) Append(typ string, data map[string]any) (events.Event, error) {
+	return events.Event{}, nil
+}
+
+// TestEventsAPIWithFakeEventLog proves the handler reads events from the
+// injected EventLog, not from disk.
+func TestEventsAPIWithFakeEventLog(t *testing.T) {
 	d, pinOut := newTestDeps(t)
 
 	// mint a session cookie through the service directly (no HTTP, no events)
@@ -289,15 +304,16 @@ func TestEventsAPIWithMockEventLog(t *testing.T) {
 	}
 	cookie := &http.Cookie{Name: auth.CookieName, Value: token}
 
-	m := httpapimocks.NewMockEventLog(t)
-	m.EXPECT().Read(int64(3), 100).Return([]events.Event{
-		{ID: 4, Type: "test", Time: time.Now().UTC()},
-	}, nil)
-	d.Events = m
+	want := []events.Event{{ID: 4, Type: "test", Time: time.Now().UTC()}}
+	fake := &fakeEventLog{out: want}
+	d.Events = fake
 
 	rec := authedGet(t, New(d), cookie, "/api/events?after=3")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if fake.gotAfter != 3 || fake.gotLimit != 100 {
+		t.Fatalf("handler read(after=%d, limit=%d), want (3, 100)", fake.gotAfter, fake.gotLimit)
 	}
 	var body struct {
 		Events []events.Event `json:"events"`

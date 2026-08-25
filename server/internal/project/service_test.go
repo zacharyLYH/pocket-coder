@@ -3,7 +3,6 @@ package project
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -13,18 +12,21 @@ import (
 
 	"sps/internal/docker"
 	"sps/internal/events"
+	"sps/internal/sshkeys"
+	"sps/internal/state"
 	dockermocks "sps/mocks/docker"
 )
 
 const testRepo = "https://github.com/x/hello.git"
 
-// newService builds a Service over a real temp store + event log and a
+// newService builds a Service over a real temp state file + event log and a
 // mocked Docker client, so pipeline behavior is exercised end to end
 // without an engine.
-func newService(t *testing.T) (*Service, *dockermocks.MockClient, string) {
+func newService(t *testing.T) (*Service, *dockermocks.MockClient, *state.Store, string) {
 	t.Helper()
 	dataDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dataDir, "projects"), 0o700); err != nil {
+	st, err := state.Open(dataDir, state.Bootstrap{})
+	if err != nil {
 		t.Fatal(err)
 	}
 	ev, err := events.Open(filepath.Join(dataDir, "events.log"))
@@ -33,7 +35,7 @@ func newService(t *testing.T) (*Service, *dockermocks.MockClient, string) {
 	}
 	t.Cleanup(func() { ev.Close() })
 	d := dockermocks.NewMockClient(t)
-	return NewService(Open(dataDir), d, ev), d, dataDir
+	return NewService(Open(st), d, ev), d, st, dataDir
 }
 
 func expectSandboxReady(d *dockermocks.MockClient, id *string) {
@@ -68,18 +70,18 @@ func types(evs []events.Event) []string {
 }
 
 func TestCreateBlank(t *testing.T) {
-	s, d, _ := newService(t)
+	s, d, _, _ := newService(t)
 	var name string
 	expectSandboxReady(d, &name)
 
-	id, p, err := s.Create(t.Context(), "", "")
+	id, p, err := s.Create(t.Context(), "", "", "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if len(id) != 8 {
 		t.Fatalf("id = %q, want 8 hex chars", id)
 	}
-	want := Project{Name: "untitled", Repo: "", Branch: ""}
+	want := Project{Name: "untitled", Repo: "", Branch: "", CloneMethod: "http"}
 	if !reflect.DeepEqual(p, want) {
 		t.Fatalf("project = %+v, want %+v", p, want)
 	}
@@ -94,7 +96,7 @@ func TestCreateBlank(t *testing.T) {
 
 func TestCreateClonesInsideContainer(t *testing.T) {
 	for _, tc := range []struct{ branch string }{{""}, {"main"}} {
-		s, d, _ := newService(t)
+		s, d, _, _ := newService(t)
 		var cid string
 		expectSandboxReady(d, &cid)
 
@@ -106,12 +108,12 @@ func TestCreateClonesInsideContainer(t *testing.T) {
 		d.EXPECT().Exec(mock.Anything, "cid123", wantArgs, false).
 			Return(docker.ExecResult{ExitCode: 0}, nil)
 
-		id, p, err := s.Create(t.Context(), testRepo, tc.branch)
+		id, p, err := s.Create(t.Context(), testRepo, tc.branch, "")
 		if err != nil {
 			t.Fatalf("create: %v", err)
 		}
 		wantBranch := tc.branch
-		want := Project{Name: "hello", Repo: testRepo, Branch: wantBranch}
+		want := Project{Name: "hello", Repo: testRepo, Branch: wantBranch, CloneMethod: "http"}
 		if !reflect.DeepEqual(p, want) {
 			t.Fatalf("project = %+v, want %+v", p, want)
 		}
@@ -126,13 +128,13 @@ func TestCreateClonesInsideContainer(t *testing.T) {
 }
 
 func TestCreateCloneFailureKeepsSandbox(t *testing.T) {
-	s, d, _ := newService(t)
+	s, d, _, _ := newService(t)
 	var cname string
 	expectSandboxReady(d, &cname)
 	d.EXPECT().Exec(mock.Anything, "cid123", []string{"git", "clone", testRepo, repoTarget + "/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 128, Output: "fatal: repository not found"}, nil)
 
-	_, _, err := s.Create(t.Context(), testRepo, "")
+	_, _, err := s.Create(t.Context(), testRepo, "", "")
 	want := "clone " + testRepo + ": fatal: repository not found"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
@@ -153,7 +155,7 @@ func TestCreateCloneFailureKeepsSandbox(t *testing.T) {
 }
 
 func TestCreateBuildsMissingSandboxImage(t *testing.T) {
-	s, d, _ := newService(t)
+	s, d, _, _ := newService(t)
 	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
 	d.EXPECT().InspectImage(mock.Anything, SandboxImage).
 		Return(fmt.Errorf("inspect: %w", docker.ErrNotFound))
@@ -162,18 +164,18 @@ func TestCreateBuildsMissingSandboxImage(t *testing.T) {
 	}), mock.Anything).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
 
-	if _, _, err := s.Create(t.Context(), "", ""); err != nil {
+	if _, _, err := s.Create(t.Context(), "", "", ""); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 }
 
 func TestCreateRunFailureCleansUpMetadata(t *testing.T) {
-	s, d, _ := newService(t)
+	s, d, _, _ := newService(t)
 	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
 	d.EXPECT().InspectImage(mock.Anything, SandboxImage).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.Anything).Return("", errors.New("engine on fire"))
 
-	if _, _, err := s.Create(t.Context(), "", ""); err == nil {
+	if _, _, err := s.Create(t.Context(), "", "", ""); err == nil {
 		t.Fatal("expected run failure")
 	}
 	if entries, _ := s.List(); len(entries) != 0 {
@@ -182,9 +184,9 @@ func TestCreateRunFailureCleansUpMetadata(t *testing.T) {
 }
 
 func TestCreateRejectsOptionInjection(t *testing.T) {
-	s, _, _ := newService(t)
+	s, _, _, _ := newService(t)
 	for _, bad := range [][2]string{{"--upload-pack=evil", ""}, {"", "-oProxyCommand=x"}} {
-		_, _, err := s.Create(t.Context(), bad[0], bad[1])
+		_, _, err := s.Create(t.Context(), bad[0], bad[1], "")
 		want := "invalid input: repo url and branch must not start with \"-\""
 		if err == nil || err.Error() != want {
 			t.Fatalf("Create(%+v) err = %v, want %q", bad, err, want)
@@ -193,10 +195,10 @@ func TestCreateRejectsOptionInjection(t *testing.T) {
 }
 
 func TestStartStopRestartEvents(t *testing.T) {
-	s, d, _ := newService(t)
+	s, d, _, _ := newService(t)
 	var cname string
 	expectSandboxReady(d, &cname)
-	id, _, err := s.Create(t.Context(), "", "")
+	id, _, err := s.Create(t.Context(), "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +219,7 @@ func TestStartStopRestartEvents(t *testing.T) {
 }
 
 func TestStopToleratesMissingContainer(t *testing.T) {
-	s, d, _ := newService(t)
+	s, d, _, _ := newService(t)
 	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +245,7 @@ func TestDeleteScopes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.scope), func(t *testing.T) {
-			s, d, _ := newService(t)
+			s, d, _, _ := newService(t)
 			if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
 				t.Fatal(err)
 			}
@@ -277,7 +279,7 @@ func TestDeleteScopes(t *testing.T) {
 }
 
 func TestDeleteValidation(t *testing.T) {
-	s, _, _ := newService(t)
+	s, _, _, _ := newService(t)
 	if err := s.Delete(t.Context(), "abc", "nope"); !errors.Is(err, ErrInvalidScope) {
 		t.Fatalf("err = %v, want ErrInvalidScope", err)
 	}
@@ -304,25 +306,14 @@ func TestDefaultName(t *testing.T) {
 	}
 }
 
-func TestTail(t *testing.T) {
-	long := strings.Repeat("x", 400)
-	if got := tail(long); len(got) != 300 {
-		t.Fatalf("tail length = %d, want 300", len(got))
-	}
-	multi := "a\nb\nc\nd\ne\nf\ng"
-	if got := tail(multi); !strings.Contains(got, "g") || strings.Contains(got, "a\n") {
-		t.Fatalf("tail should keep the last lines: %q", got)
-	}
-}
-
 func TestCreateCloneExecErrorSurfaces(t *testing.T) {
-	s, d, _ := newService(t)
+	s, d, _, _ := newService(t)
 	var cname string
 	expectSandboxReady(d, &cname)
 	d.EXPECT().Exec(mock.Anything, "cid123", mock.Anything, false).
 		Return(docker.ExecResult{}, errors.New("exec infra exploded"))
 
-	_, _, err := s.Create(t.Context(), testRepo, "")
+	_, _, err := s.Create(t.Context(), testRepo, "", "")
 	want := "clone " + testRepo + ": exec infra exploded"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
@@ -330,7 +321,7 @@ func TestCreateCloneExecErrorSurfaces(t *testing.T) {
 }
 
 func TestStartMissingContainerPropagates(t *testing.T) {
-	s, d, _ := newService(t)
+	s, d, _, _ := newService(t)
 	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +342,7 @@ func TestStartMissingContainerPropagates(t *testing.T) {
 }
 
 func TestDeletePartialFailureReportsFirstError(t *testing.T) {
-	s, d, _ := newService(t)
+	s, d, _, _ := newService(t)
 	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
@@ -373,5 +364,120 @@ func TestDeletePartialFailureReportsFirstError(t *testing.T) {
 	}
 	if deleteEvents != 0 {
 		t.Fatalf("got %d project.delete events, want 0", deleteEvents)
+	}
+}
+
+func TestEnsureContainerRunningIsNoop(t *testing.T) {
+	s, d, _, _ := newService(t)
+	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureContainerMissingReconciles(t *testing.T) {
+	s, d, _, _ := newService(t)
+	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	// first Inspect: missing → triggers reconciliation
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
+	// reconciliation recreates the container
+	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
+	d.EXPECT().InspectImage(mock.Anything, SandboxImage).Return(nil)
+	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
+	// second Inspect: report the reconciled container as running
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	if st, err := s.EnsureContainer(t.Context(), "abc"); err != nil || st.State != StateRunning {
+		t.Fatalf("st=%+v err=%v", st, err)
+	}
+}
+
+func TestEnsureContainerExitedIsNoop(t *testing.T) {
+	s, d, _, _ := newService(t)
+	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: false, Status: "exited"}, nil)
+	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureContainerNotFoundReturnsErrNotFound(t *testing.T) {
+	s, _, _, _ := newService(t)
+	_, err := s.EnsureContainer(t.Context(), "ghost")
+	if err == nil || !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestEnsureContainerReconcileEvent(t *testing.T) {
+	s, d, _, _ := newService(t)
+	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
+	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
+	d.EXPECT().InspectImage(mock.Anything, SandboxImage).Return(nil)
+	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
+		t.Fatal(err)
+	}
+	evs := eventsOf(t, s)
+	found := false
+	for _, e := range evs {
+		if e.Type == "project.reconcile" && e.Data["id"] == "abc" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no project.reconcile event")
+	}
+}
+
+func TestCreateCloneMethodSSH(t *testing.T) {
+	s, d, st, _ := newService(t)
+	var cid string
+	expectSandboxReady(d, &cid)
+
+	// set up ssh key store so injectSSHKeys writes authorized_keys
+	s.sshKeys = sshkeys.New(st)
+	if _, err := s.sshKeys.Add("me@example.com", "ssh-ed25519 AAAA-testkey", "test"); err != nil {
+		t.Fatal(err)
+	}
+	// injectSSHKeys runs mkdir -p /root/.ssh + chmod + write authorized_keys
+	d.EXPECT().Exec(mock.Anything, "cid123",
+		[]string{"sh", "-c", "mkdir -p /root/.ssh && chmod 700 /root/.ssh"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	d.EXPECT().WriteFile(mock.Anything, "cid123", "/root/.ssh/authorized_keys",
+		[]byte("ssh-ed25519 AAAA-testkey\n")).Return(nil)
+	// git clone
+	d.EXPECT().Exec(mock.Anything, "cid123",
+		[]string{"git", "clone", testRepo, repoTarget + "/repo"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+
+	id, p, err := s.Create(t.Context(), testRepo, "", "ssh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.CloneMethod != "ssh" {
+		t.Fatalf("CloneMethod = %q, want ssh", p.CloneMethod)
+	}
+	d.EXPECT().Inspect(mock.Anything, "sps-"+id).Return(docker.Container{Running: true}, nil)
+	if _, status, err := s.Get(t.Context(), id); err != nil || status.State != "running" {
+		t.Fatalf("get: %v %+v", err, status)
+	}
+}
+
+func TestCreateCloneMethodInvalid(t *testing.T) {
+	s, _, _, _ := newService(t)
+	_, _, err := s.Create(t.Context(), testRepo, "", "ftp")
+	if err == nil {
+		t.Fatal("expected error for invalid cloneMethod")
 	}
 }

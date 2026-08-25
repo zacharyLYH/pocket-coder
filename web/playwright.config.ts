@@ -1,27 +1,46 @@
 import { defineConfig } from '@playwright/test'
 
-// Two layers live here:
-//
-// 1. Behavioral tests (app.spec.ts, terminal.visual.spec.ts): API/WS mocked
-//    at the network layer (page.route / page.routeWebSocket), no backend.
-//    They need no Go toolchain and no Docker — this is what plain
-//    `npx playwright test` runs.
-//
-// 2. The full-stack test (terminal.stack.spec.ts) boots the real Go server
-//    as a second webServer — login included, nothing mocked; the PIN is read
-//    from the console-mailer output redirected into test-results/sps-stack-
-//    server.log. It needs the Go toolchain and a running Docker engine, owns
-//    port 8080, and only starts when SPS_STACK=1 is set:
-//
-//      SPS_STACK=1 npx playwright test terminal.stack
-//
-const stack = process.env.SPS_STACK === '1'
-const dataDir = 'test-results/sps-stack-data'
-const serverLog = 'test-results/sps-stack-server.log'
+import { API_PORT, AUTH_STATE, DATA_DIR, RUN_DIR, SERVER_LOG, WEB_PORT } from './e2e/env'
 
+// One real backend for every test. Each Playwright process boots its own Go
+// server + Vite dev server as webServers (needs the Go toolchain + a running
+// Docker engine) and every spec — behavioral, visual, and full-stack
+// journeys — exercises them with NOTHING mocked. The PIN comes from the
+// console-mailer output redirected into $RUN_DIR/sps-stack-server.log.
+//
+// Determinism comes from two resets:
+//   1. Per run: the stack data dir is wiped before the server boots, so
+//      projects/keys/events from a previous run can never leak into this
+//      one's screenshots.
+//   2. Per test: specs that create state delete it again in `finally`
+//      (deleteAllProjects / deleteAllSSHKeys in e2e/helpers.ts), so test
+//      order within a run does not matter.
+//
+// Login happens once per process in the `login` project (auth.setup.ts);
+// every other test reuses the saved session via storageState. Tests that
+// need the logged-OUT screen opt out with an empty storageState.
+//
+// Workers are pinned to 1 within a process: the process's backend is
+// shared, and parallel tests would race on the projects/keys lists (and on
+// screenshots of them). PARALLELISM comes from running several processes,
+// one per test type — see e2e-parallel.sh, which gives each its own ports
+// and run dir via E2E_API_PORT / E2E_WEB_PORT / E2E_RUN_ID.
+//
+// The stack is self-contained on dedicated ports (8081 backend, 5174 web by
+// default): it must NEVER run against the dev processes on 8080/5173 — the
+// tests wipe projects and keys, which would destroy real data.
+// reuseExistingServer is false for both servers for the same reason.
+//
+// Leftover containers from a crashed run are NOT auto-removed (a name-based
+// docker cleanup could destroy real projects on a shared engine). If a run
+// is killed mid-test, remove strays by hand:
+//   docker rm -f $(docker ps -aq --filter name=sps-) && \
+//     docker volume rm $(docker volume ls -q --filter name=sps-)
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
+  workers: 1,
+  outputDir: RUN_DIR,
   // One baseline per shot, no browser/platform suffix — the same PNGs serve
   // local macOS runs and Linux CI. maxDiffPixelRatio absorbs cross-OS font
   // rasterization noise; the visual suite guards responsive layout, not
@@ -37,31 +56,42 @@ export default defineConfig({
     // Locally use the installed Chrome (no browser download); in CI use
     // Playwright's bundled Chromium (npx playwright install chromium).
     channel: process.env.CI ? 'chromium' : 'chrome',
-    baseURL: 'http://localhost:5173',
+    baseURL: `http://localhost:${WEB_PORT}`,
+    storageState: AUTH_STATE,
   },
-  webServer: [
-    ...(stack
-      ? [
-          {
-            command:
-              `mkdir -p ${dataDir} && SPS_BIND=127.0.0.1:8080 ` +
-              `SPS_LOGIN_EMAIL=me@example.com SPS_DATA_DIR=$PWD/${dataDir} ` +
-              // empty-but-present shadows the repo-root .env, forcing the
-              // console mailer so the test can read the PIN from its log
-              `SMTP_USER= SMTP_PASSWORD= ` +
-              `go -C ../server run ./cmd/server 2> ${serverLog}`,
-            url: 'http://localhost:8080/health',
-            reuseExistingServer: false,
-            timeout: 60_000,
-            stdout: 'ignore' as const,
-            stderr: 'pipe' as const,
-          },
-        ]
-      : []),
+  projects: [
     {
-      command: 'npm run dev',
-      url: 'http://localhost:5173',
-      reuseExistingServer: true,
+      name: 'login',
+      testMatch: /auth\.setup\.ts/,
+      use: { storageState: { cookies: [], origins: [] } },
+    },
+    {
+      name: 'app',
+      testIgnore: /auth\.setup\.ts/,
+      dependencies: ['login'],
+    },
+  ],
+  webServer: [
+    {
+      command:
+        // fresh backend state every run — the data dir is e2e-only
+        `rm -rf ${DATA_DIR} ${SERVER_LOG} && mkdir -p ${DATA_DIR} && ` +
+        `env SPS_BIND=127.0.0.1:${API_PORT} ` +
+        `SPS_LOGIN_EMAIL=me@example.com SPS_DATA_DIR=$PWD/${DATA_DIR} ` +
+        // empty-but-present shadows the repo-root .env, forcing the
+        // console mailer so tests can read the PIN from the log
+        `SMTP_USER= SMTP_PASSWORD= ` +
+        `go -C ../server run ./cmd/server 2> ${SERVER_LOG}`,
+      url: `http://localhost:${API_PORT}/health`,
+      reuseExistingServer: false,
+      timeout: 60_000,
+      stdout: 'ignore' as const,
+      stderr: 'pipe' as const,
+    },
+    {
+      command: `SPS_SERVER_URL=http://127.0.0.1:${API_PORT} npm run dev -- --port ${WEB_PORT} --strictPort`,
+      url: `http://localhost:${WEB_PORT}`,
+      reuseExistingServer: false,
       timeout: 60_000,
     },
   ],

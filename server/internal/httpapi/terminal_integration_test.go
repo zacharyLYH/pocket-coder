@@ -27,6 +27,7 @@ func TestTerminalLiveLifecycle(t *testing.T) {
 		t.Fatalf("create project: %d %v", code, body)
 	}
 	id := body["id"].(string)
+	deleteProjectAll(t, h, cookie, id)
 	waitForStatus(t, h, cookie, id, "running")
 
 	// create → 201 + event; duplicate → 409; list → [main]
@@ -116,7 +117,4 @@ func TestTerminalLiveLifecycle(t *testing.T) {
 	}
 
 	// cleanup
-	if code, _ := doJSON(t, h, cookie, http.MethodDelete, "/api/projects/"+id+"?scope=all", ""); code != http.StatusOK {
-		t.Fatal("cleanup failed")
-	}
 }
