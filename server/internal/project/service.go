@@ -113,22 +113,8 @@ func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod strin
 		slog.Warn("ssh key injection", "id", id, "err", err)
 	}
 
-	if repoURL != "" {
-		args := []string{"git", "clone"}
-		if branch != "" {
-			args = append(args, "--branch", branch, "--single-branch")
-		}
-		args = append(args, repoURL, repoTarget+"/repo")
-		res, err := s.dkr.Exec(ctx, cid, args, false)
-		if err != nil || res.ExitCode != 0 {
-			detail := textutil.Tail(res.Output)
-			if err != nil {
-				detail = err.Error()
-			}
-			s.ev.Append("error", map[string]any{"op": "project.clone", "id": id, "detail": detail})
-			return "", Project{}, fmt.Errorf("clone %s: %s", repoURL, detail)
-		}
-		s.ev.Append("project.clone", map[string]any{"id": id, "branch": branch})
+	if err := s.cloneRepo(ctx, id, cid, p); err != nil {
+		return "", Project{}, err
 	}
 	s.ev.Append("project.ready", map[string]any{"id": id})
 	return id, p, nil
@@ -218,11 +204,15 @@ func (s *Service) Get(ctx context.Context, id string) (Project, Status, error) {
 // EnsureContainer makes sure a project's container exists, returning its
 // current state. If the container is missing but the project's volumes
 // persist (the disk is the source of truth), it recreates the container
-// reusing those volumes. This is the lazy reconciliation that closes the
-// disk/Docker drift gap. Exited/paused containers are left alone (the user
-// can Start explicitly); callers check State themselves.
+// reusing those volumes. If the repo volume is gone too (fresh engine —
+// state.json copied to a new machine), the repo is re-cloned: state.json
+// is desired state, so recovery restores the code with it. This is the
+// lazy reconciliation that closes the disk/Docker drift gap. Exited/paused
+// containers are left alone (the user can Start explicitly); callers check
+// State themselves.
 func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error) {
-	if _, err := s.store.Get(id); err != nil {
+	p, err := s.store.Get(id)
+	if err != nil {
 		return Status{}, s.wrapNotFound(err)
 	}
 	st, err := ContainerStatus(ctx, s.dkr, ContainerName(id))
@@ -244,10 +234,59 @@ func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error
 		if err := s.injectSSHKeys(ctx, cid); err != nil {
 			slog.Warn("ssh key injection after reconcile", "id", id, "err", err)
 		}
+		// Fresh engine: the repo volume doesn't exist yet, so nothing was
+		// recovered by recreating the container — re-clone from the repo
+		// URL. Like Create, a clone failure keeps the sandbox running.
+		if p.Repo != "" {
+			if empty, err := s.repoVolumeEmpty(ctx, cid); err != nil {
+				slog.Warn("repo volume check after reconcile", "id", id, "err", err)
+			} else if empty {
+				if err := s.cloneRepo(ctx, id, cid, p); err != nil {
+					slog.Warn("repo re-clone after reconcile", "id", id, "err", err)
+				}
+			}
+		}
 		return ContainerStatus(ctx, s.dkr, ContainerName(id))
 	default:
 		return st, nil
 	}
+}
+
+// repoVolumeEmpty reports whether the sandbox's repo volume has no visible
+// content (a fresh volume — nothing was recovered from disk).
+func (s *Service) repoVolumeEmpty(ctx context.Context, cid string) (bool, error) {
+	res, err := s.dkr.Exec(ctx, cid, []string{"ls", "-A", repoTarget}, false)
+	if err != nil {
+		return false, err
+	}
+	if res.ExitCode != 0 {
+		return false, fmt.Errorf("ls %s: %s", repoTarget, textutil.Tail(res.Output))
+	}
+	return strings.TrimSpace(res.Output) == "", nil
+}
+
+// cloneRepo clones the project's repo into the sandbox's repo volume.
+// Shared by Create and post-reconcile recovery.
+func (s *Service) cloneRepo(ctx context.Context, id, cid string, p Project) error {
+	if p.Repo == "" {
+		return nil
+	}
+	args := []string{"git", "clone"}
+	if p.Branch != "" {
+		args = append(args, "--branch", p.Branch, "--single-branch")
+	}
+	args = append(args, p.Repo, repoTarget+"/repo")
+	res, err := s.dkr.Exec(ctx, cid, args, false)
+	if err != nil || res.ExitCode != 0 {
+		detail := textutil.Tail(res.Output)
+		if err != nil {
+			detail = err.Error()
+		}
+		s.ev.Append("error", map[string]any{"op": "project.clone", "id": id, "detail": detail})
+		return fmt.Errorf("clone %s: %s", p.Repo, detail)
+	}
+	s.ev.Append("project.clone", map[string]any{"id": id, "branch": p.Branch})
+	return nil
 }
 
 // List returns the projects index without touching Docker.

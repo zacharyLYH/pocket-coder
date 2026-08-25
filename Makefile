@@ -1,14 +1,24 @@
 BIN    := bin/sps
 VERSION ?= dev
 
-# Load local env (.env holds SPS_LOGIN_EMAIL and SMTP_* credentials) for host runs.
+# Load local env (server/.env holds SPS_LOGIN_EMAIL and SMTP_* credentials)
+# for host runs. The server itself loads the same file via config.Load.
 -include .env
+-include server/.env
 export SPS_LOGIN_EMAIL SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD SMTP_FROM
 
-.PHONY: dev test docker-test build check lint e2e generate web-install web-test clean
+.PHONY: dev dev-seed test docker-test build check lint e2e generate web-install web-test clean
 
 dev: ## Run the server on the host (Go toolchain; web dev server runs separately)
 	go -C server run ./cmd/server
+
+dev-seed: ## Reset server/data from server/dev/state.mock.json (real repo + harness registry; login email = SPS_LOGIN_EMAIL from server/.env)
+	@test -n "$(SPS_LOGIN_EMAIL)" || { echo 'SPS_LOGIN_EMAIL missing — set it in server/.env'; exit 1; }
+	@rm -rf server/data
+	@mkdir -p server/data
+	@sed "s/dev@example.com/$(SPS_LOGIN_EMAIL)/" server/dev/state.mock.json > server/data/state.json
+	@chmod 600 server/data/state.json
+	@echo "seeded server/data/state.json — login as $(SPS_LOGIN_EMAIL) (PIN by email when SMTP_* is set in server/.env, else the server log)"
 
 test: ## Run Go unit tests
 	go -C server test ./...

@@ -32,11 +32,12 @@ Placement: a top-level item on the home screen, outside any project — the syst
 | 6 | Project create pipeline | sandbox container per project, clone inside, ready in seconds | fixture repo → "Ready" via curl |
 | 7 | Terminal transport | WS ↔ tmux via exec hijack + resize + reconnect | typed into a browser terminal |
 | 8 | Harnesses & sessions | session CRUD, CLI validation, builtins, launch/restart | fake CLI harness session |
-| 9 | Preview & diff | port detect + reverse proxy + ports panel; git diff API+UI | http.server in container → URL |
-| 10 | Env editor & persistence | masked env, login-shell injection, volume survival | `$VAR` after restart |
-| 11 | Frontend completion & buttons | full UI, action buttons, creature-comfort keys, mobile | litmus test on a phone |
-| 12 | Packaging & self-hosting + observability | server image, compose, quickstart, observability page | fresh box via `docker compose up` |
-| 13 | The secretary (v1) | chat, system guide, tools, confirm-diff, wire-key/switch-model | the 4 v1 abilities on a fixture |
+| 9 | In-container app preview | published port slots at creation + reverse proxy + iframe UI | http.server in container → URL |
+| 10 | Code review: reader & agent feedback | diff polling, phone-first code reader, inline comments → tmux paste into the right CLI | comment a line, watch it land in a fake CLI's pane |
+| 11 | Env editor & persistence | masked env, login-shell injection, volume survival | `$VAR` after restart |
+| 12 | Frontend completion & buttons | full UI, action buttons, creature-comfort keys, mobile | litmus test on a phone |
+| 13 | Packaging & self-hosting + observability | server image, compose, quickstart, observability page | fresh box via `docker compose up` |
+| 14 | The secretary (v1) | chat, system guide, tools, confirm-diff, wire-key/switch-model | the 4 v1 abilities on a fixture |
 
 ---
 
@@ -209,22 +210,55 @@ Placement: a top-level item on the home screen, outside any project — the syst
 
 ---
 
-## Phase 9 — Preview & diff
+## Phase 9 — In-container app preview
 
-**Goal.** `http://localhost:3000` on the box becomes a clickable URL in the browser; changed files are a list.
+**Goal.** When the user's project runs a web app, they open it from the platform and their own browser renders it — same origin, same login, no new exposed surface.
+
+**The model.** A web server inside a container listens on a door in that container's private network universe; nothing outside can reach it by default. Publishing ports installs roads: Docker binds doors on the host and forwards into the container. The Go server stays a plain HTTP client of `localhost:<hostPort>`; the user's browser does all rendering inside an iframe fed through an authenticated reverse proxy. No browser runs anywhere on our side.
 
 **Scope.**
-- Port detection inside the container (`ss -tlnp`), probe (`GET /` on the detected port), per-project auto port from a pool with manual override.
-- Authenticated reverse proxy (cookie in front), stream flush for SSE/WS (`FlushInterval`), no path rewriting — app served at origin root.
-- Preview UI: ports panel (port, URL, state), one-tap open.
-- Diff: `git status --porcelain -uno`, `git diff --numstat` → `{path, added, deleted}`, raw diff per file; "untracked: N files" note. Diff UI list + plain view.
-- Emit `preview.detected` / `preview.failed` events on port probes.
+- Creation-time configuration: each project declares a preview slot count (default 4, min 1, max configurable). The sandbox spec publishes exactly that many slots mapped to the conventional internal range (3000..3000+N-1) with host-side auto-assignment (`-p` empty host port). Ports are fixed for a container's lifetime — growing later requires recreate, which kills sessions — so the cap is surfaced honestly at creation instead of discovered as a wall later.
+- Slot bookkeeping: after create/reconcile, read the assigned host ports from the Docker API once and store them in the project record. The proxy looks up per project; nothing hardcoded.
+- Authenticated reverse proxy: `httputil.ReverseProxy` at `/api/projects/{id}/preview/{slot}/…`, session cookie required, `FlushInterval` for SSE/streaming, websocket upgrade passthrough for hot reload. Absolute-path assets are the known sharp edge: apps that assume origin root get a documented limitation plus base-path env guidance for common dev servers (Vite/Next); no silent HTML rewriting.
+- Live slot status in the terminal page header ("Previews 2/4"): probe listening ports inside the container (`ss -tlnp` via exec) to show which slots are live, one-tap open per live slot.
+- Emit `preview.detected` / `preview.failed` events.
 
-**Gate.** Start `python3 -m http.server 8000` inside a project (via a button or terminal), see it in the ports panel, open the proxied URL from a phone over LAN. Make a change to the fixture repo and see it in Diff.
+**Gate.** Start `python3 -m http.server 3000` inside a project via terminal, see slot 1 light up in the header, open the proxied URL from a phone over LAN and click around. Run a second app on 3001, see slot 2. Explain-the-cap check: the UI states why the slot count exists and how to change it.
 
 ---
 
-## Phase 10 — Env editor & persistence
+## Phase 10 — Code review: diff reader & agent feedback
+
+**Goal.** The user reviews their agents' work from a phone without losing the thread across 19 changed files, taps any weird line to comment, and delivers those comments into the exact CLI conversation that made the change.
+
+**Shape.** A review service polls the project repo continuously; the terminal header carries a review button (badge when unread changes exist) and a send button (when undelivered comments exist). Reading code comes first; summaries never replace it.
+
+**Scope — review service & data.**
+- Poll loop per project: exec `git status --porcelain`, hash it, recompute the full diff only when the hash moves. Nearly free while idle.
+- Comments stored in `state.json`: `{file, line, side, anchorText, body, targetSession, status(draft|sent|resolved), round}`. `anchorText` re-finds the line when the agent shifts it before delivery.
+- Targetable sessions are derived, not stored: live tmux sessions bound to a registered harness with a command other than `bash`. Depends on `docs/rfc-session-names.md` (session names become identifiers, harness binding becomes attached data); until that lands, the binding is derived from the legacy `<harnessID>-<n>` naming convention.
+- Round tags: "done reviewing" tags the tree (`sps-review-N`). Next visit defaults to delta-since-tag, switchable to full diff.
+
+**Scope — reader UX (code first, noise control second).**
+- Brief screen before any diff: files grouped (source, tests, config, deleted), each row with numstat, ordered by directory so related changes sit adjacent.
+- Default view is the current file with change gutters and enclosing-function anchors; raw unified hunks stay one toggle away. Unified only, wrapped lines, word-level highlight inside changed pairs. No split view; it cannot win on a phone.
+- Per-file position memory and reviewed checkboxes, persisted server-side; sticky "12/19 reviewed" progress header.
+- Context collapsed to 3 lines, expandable; whitespace-only hunks hidden behind a toggle.
+
+**Scope — inline comments & delivery.**
+- Tap a changed line anywhere in the reader, write, park. Composer shows a target chip (which coding session this belongs to), defaulting to last used, one tap to change. Undelivered-comment badge lives in the terminal header.
+- Send sheet groups drafts by target session. Delivery never fires from the review page: it switches to the target session's actual terminal view, live pane visible, confirmation sheet naming the session and showing the compiled markdown prompt.
+- Busy assist without vendor detection: sample `tmux capture-pane` twice a few seconds apart; identical output means parked at its prompt, changing output means working. Presented as "this session appears to be working", advisory only; the human looking at the pane decides.
+- Injection is `tmux load-buffer` + `paste-buffer` into the named pane: atomic, bracket-pasted, works identically for every TUI CLI we will ever support. One session's outbox cannot touch another pane, so parallel agents stay independent.
+- After send: comments flip to `sent`, `review.sent` event records count and target, deep-link opens that terminal. Next round, sent comments render beside the delta view until the user marks them resolved.
+
+**Explicitly deferred.** AI file summaries and walkthroughs ride on Phase 14 (secretary) as an optional table-of-contents layer; they never substitute for reading code.
+
+**Gate.** Using a fake CLI harness that echoes its input: have it modify three fixture files, open the reviewer from the terminal header, read the brief, review two files marking them viewed, tap a line in the third, comment, retarget the chip, deliver from the fake CLI's terminal view with the confirmation sheet, and see the prompt appear in the captured pane. Tag the round, change another file, reopen: delta view shows only the new change, sent comments listed for resolution.
+
+---
+
+## Phase 11 — Env editor & persistence
 
 **Goal.** Secrets are a file, masked, and survive restarts.
 
@@ -239,7 +273,7 @@ Placement: a top-level item on the home screen, outside any project — the syst
 
 ---
 
-## Phase 11 — Frontend completion & buttons
+## Phase 12 — Frontend completion & buttons
 
 **Goal.** The litmus test is smooth on a phone.
 
@@ -247,14 +281,14 @@ Placement: a top-level item on the home screen, outside any project — the syst
 - Full React UI: login, projects list, project page with tabs (Sessions, Terminal, Preview, Diff, Env), "＋ New Session", empty-state "Clone a repo →".
 - Action buttons: detected defaults (`package.json` scripts, Makefile, `go.mod`), custom `actions` (project file), "＋ Add" two-field form writing the file. Run in a session, stream output to terminal.
 - Emit `action.run` events for every button tap (harness name, command, exit code).
-- Full creature-comfort key strip (↑, Ctrl-C, Ctrl-L, Tab, Esc, ←/→), copy/paste, desktop-width mode, resize on keyboard open/rotation.
+- Full creature-comfort key strip (↑, Ctrl-C, Ctrl-L, Tab, Esc, ←/→), copy/paste (see `docs/rfc-terminal-copy-paste.md`; e2e gates live there), desktop-width mode, resize on keyboard open/rotation.
 - Mobile pass: portrait/landscape, safe-areas, touch targets.
 
 **Gate.** The PRD litmus on a real phone over LAN: open Go project → tap Run tests → tap Freebuff/conversation → close phone → come back → Diff → handed to OpenCode → Preview → push. List what broke on mobile; fix.
 
 ---
 
-## Phase 12 — Packaging & self-hosting
+## Phase 13 — Packaging & self-hosting
 
 **Goal.** A fresh box becomes a working instance with one command.
 
@@ -263,13 +297,13 @@ Placement: a top-level item on the home screen, outside any project — the syst
 - `docker-compose.yml` (self-host): socket mount, data volume, ports `8080` + preview pool, `SMTP_*`, `LOGIN_EMAIL`.
 - Quickstart doc: one command to first project.
 - Observability page (PRD §12) over all three collection mechanisms: live state (containers/sessions/stats via Docker), usage aggregates from `events.log` plus best-effort harness-native records read from the home volume, server + per-container log tails, errors list, auth status, health (disk/version/uptime). Server log tail via a bounded file reader; container log tail via `docker logs`. Placed as a top-level entry on the home screen, outside any project.
-- `make e2e`: runs the Phase 6–11 flow against the compose stack, verifying the "image ships images" path exactly as prod does.
+- `make e2e`: runs the Phase 6–12 flow against the compose stack, verifying the "image ships images" path exactly as prod does.
 
 **Gate.** Fresh box (or `docker run` on a laptop), `docker compose up`, create + open a project from a phone using real SMTP. Observability shows live state + a populated `events.log` + an error you deliberately caused. `make e2e` green.
 
 ---
 
-## Phase 13 — The secretary (v1 subset)
+## Phase 14 — The secretary (v1 subset)
 
 **Goal.** PRD §11, bounded: rides authed CLI credentials, confirm-diff only, no repo writes.
 
@@ -290,6 +324,6 @@ Deferred per PRD §13: import/export (repeatable-experience substrate), harness 
 
 ## Ordering rationale (waterfall gates)
 
-1→2→3 stack the primitives before any user-facing path exists. 4 (login) gates everything exposed. 5 stands up the real box + HTTPS + CI/CD early so every step after is verified against live connectivity, not just compose. 6 gives the 80% path bare; 7 makes it interactive; 8 adds agents; 9 adds seeing+diffing; 10 hardens state; 11 is the mobile polish pass on the now-complete loop; 12 ships; 13 is the deliberately last, highest-scope feature so it cannot block the core loop.
+1→2→3 stack the primitives before any user-facing path exists. 4 (login) gates everything exposed. 5 stands up the real box + HTTPS + CI/CD early so every step after is verified against live connectivity, not just compose. 6 gives the 80% path bare; 7 makes it interactive; 8 adds agents; 9 adds seeing the app; 10 adds reviewing what the agents wrote; 11 hardens state; 12 is the mobile polish pass on the now-complete loop; 13 ships; 14 is the deliberately last, highest-scope feature so it cannot block the core loop.
 
-Observability is threaded through all of it, not bolted on at 12: the log is born in 2, every phase 4–11 emits into it and exercises it in its gate, 12 merely paints the page over data that already exists, and 13 lets the secretary read the same sources for debugging.
+Observability is threaded through all of it, not bolted on at 13: the log is born in 2, every phase 4–12 emits into it and exercises it in its gate, 13 merely paints the page over data that already exists, and 14 lets the secretary read the same sources for debugging.

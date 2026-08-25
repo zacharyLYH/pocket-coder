@@ -440,6 +440,41 @@ func TestEnsureContainerReconcileEvent(t *testing.T) {
 	}
 }
 
+func TestEnsureContainerReconcileReclonesEmptyVolume(t *testing.T) {
+	s, d, _, _ := newService(t)
+	if err := s.store.Create("abc", Project{Name: "hello", Repo: testRepo}); err != nil {
+		t.Fatal(err)
+	}
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
+	var cid string
+	expectSandboxReady(d, &cid)
+	// fresh engine: the repo volume came up empty...
+	d.EXPECT().Exec(mock.Anything, "cid123", []string{"ls", "-A", repoTarget}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	// ...so recovery re-clones the repo from state.json
+	d.EXPECT().Exec(mock.Anything, "cid123",
+		[]string{"git", "clone", testRepo, repoTarget + "/repo"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+
+	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
+		t.Fatal(err)
+	}
+	evs := eventsOf(t, s)
+	var reconciled, cloned bool
+	for _, e := range evs {
+		if e.Type == "project.reconcile" && e.Data["id"] == "abc" {
+			reconciled = true
+		}
+		if e.Type == "project.clone" && e.Data["id"] == "abc" {
+			cloned = true
+		}
+	}
+	if !reconciled || !cloned {
+		t.Fatalf("events: reconcile=%v clone=%v", reconciled, cloned)
+	}
+}
+
 func TestCreateCloneMethodSSH(t *testing.T) {
 	s, d, st, _ := newService(t)
 	var cid string
