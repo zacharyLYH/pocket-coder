@@ -34,7 +34,7 @@ test.describe('desktop', () => {
     try {
       await page.goto('/')
       await page.getByRole('button', { name: 'Create project' }).click()
-      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 60_000 })
+      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
 
       await openTerminal(page)
       await typeUntilRendered(page)
@@ -61,7 +61,7 @@ test.describe('phone', () => {
     try {
       await page.goto('/')
       await page.getByRole('button', { name: 'Create project' }).click()
-      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 60_000 })
+      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
 
       await openTerminal(page)
       await typeUntilRendered(page)

@@ -95,8 +95,8 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
           />
           {repoUrl.trim() && (
             <div className="flex items-center gap-2 text-sm">
-              <label className="text-muted-foreground">Clone via:</label>
-              <div className="flex rounded-md border">
+              <label className="shrink-0 whitespace-nowrap text-muted-foreground">Clone via:</label>
+              <div className="flex shrink-0 rounded-md border">
                 <button
                   type="button"
                   className={`px-3 py-1 text-xs ${cloneMethod === 'http' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}

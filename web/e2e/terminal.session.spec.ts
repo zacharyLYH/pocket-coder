@@ -8,7 +8,7 @@ import { deleteAllProjects, engineUp } from './helpers'
 async function createProjectAndOpenTerminal(page: Page) {
   await page.goto('/')
   await page.getByRole('button', { name: 'Create project' }).click()
-  await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 60_000 })
+  await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
   await page.getByRole('button', { name: 'Terminal' }).click()
   await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })

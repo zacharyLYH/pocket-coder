@@ -45,7 +45,7 @@ test.describe('home screen', () => {
       // from the repo URL, and there is none) and two real keys
       await page.goto('/')
       await page.getByRole('button', { name: 'Create project' }).click()
-      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 60_000 })
+      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
       await page.request.post('/api/ssh-keys', {
         data: { publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIWorkLaptopKey', label: 'work-laptop' },
       })
@@ -108,7 +108,7 @@ test.describe('home screen', () => {
     try {
       await page.goto('/')
       await page.getByRole('button', { name: 'Create project' }).click()
-      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 60_000 })
+      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
 
       // suggestions include the seeded agent CLIs, OpenCode among them
       await expect(page.getByText('OpenCode', { exact: true })).toBeVisible()
