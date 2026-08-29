@@ -377,7 +377,8 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 					writeJSON(w, http.StatusOK, map[string]any{"name": restarted})
 					return
 				}
-				// Not a harness — recreate as a plain shell.
+				// Harness gone — fall back to plain shell and clear stale metadata.
+				_ = d.Projects.RemoveSession(id, body.Name)
 				createShellSession(d, w, r.Context(), id, body.Name, false)
 				return
 			}
@@ -402,6 +403,8 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 					writeJSON(w, http.StatusOK, map[string]any{"name": restarted})
 					return
 				}
+				// Harness gone from registry — clear stale metadata.
+				_ = d.Projects.RemoveSession(id, body.Name)
 			}
 			createShellSession(d, w, r.Context(), id, body.Name, false)
 			return
@@ -464,6 +467,10 @@ func createShellSession(d Deps, w http.ResponseWriter, ctx context.Context, id, 
 		writeSessionErr(w, d, id, name, err)
 		return
 	}
+	// Record as a plain shell in state.json so restart/re-entry don't
+	// fall back to the ParseBase heuristic and accidentally relaunch a
+	// harness the user never chose.
+	_ = d.Projects.RecordSession(id, name, "")
 	event := map[string]any{"id": id, "name": name}
 	status := http.StatusCreated
 	if restart {

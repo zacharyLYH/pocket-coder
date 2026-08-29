@@ -47,7 +47,9 @@ export function TerminalView({ projectId, initialSession, onBack }: {
 
   // ─── actions ────────────────────────────────────────────────────────
   function switchSession(name: string) {
-    if (name === current) return
+    // Allow re-entering the same session after kill (status === 'ended')
+    // so the ensure path can relaunch a killed harness.
+    if (name === current && status !== 'ended') return
     setCurrent(name)
     setError(null)
     // redial triggers the pane effect

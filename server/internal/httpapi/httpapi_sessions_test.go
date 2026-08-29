@@ -307,6 +307,101 @@ func TestEnsureRelaunchesDeadHarnessSession(t *testing.T) {
 	waitForEvent(t, d, "harness.launch")
 }
 
+// TestEnsureFallsBackToShellWhenHarnessGone proves that when a harness
+// session's metadata points to a harness that was deleted from the registry,
+// the ensure path falls back to a plain shell AND clears the stale metadata.
+// Without the fix, stale metadata causes every subsequent re-entry to try
+// (and fail) to relaunch the missing harness.
+func TestEnsureFallsBackToShellWhenHarnessGone(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	// Record a session that uses the "fake" harness
+	_ = d.Projects.RecordInstall("abc", "fake")
+	_ = d.Projects.RecordSession("abc", "gone-1", "fake")
+
+	// Now delete the harness from the registry
+	_ = d.Harnesses.Remove("fake")
+
+	// Session not in tmux — ensure call should fall back to plain shell
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "has-session", "-t", "gone-1"}, false).
+		Return(docker.ExecResult{ExitCode: 1}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		append([]string{"tmux", "new-session", "-d", "-s", "gone-1", "-c", "/workspace",
+			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"gone-1"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("ensure fallback: got %d %q, want 201", rec.Code, rec.Body)
+	}
+
+	// Metadata should be cleared — next re-entry must NOT try to launch fake
+	sess, ok := d.Projects.GetSession("abc", "gone-1")
+	if ok && sess.Harness != "" {
+		t.Fatalf("stale metadata: harness=%q, want empty", sess.Harness)
+	}
+}
+
+// TestRestartPlainShellDoesNotLaunchHarness proves the business logic:
+// a plain shell named "opencode-1" must restart as a plain shell, not
+// relaunch the opencode harness. Without recording empty-harness metadata
+// in state.json, the restart path falls back to ParseBase and guesses wrong.
+func TestRestartPlainShellDoesNotLaunchHarness(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	// Create a plain shell named "opencode-1" — this must record empty
+	// harness metadata in state.json so restart doesn't use ParseBase.
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "has-session", "-t", "opencode-1"}, false).
+		Return(docker.ExecResult{ExitCode: 1}, nil).Once()
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		append([]string{"tmux", "new-session", "-d", "-s", "opencode-1", "-c", "/workspace",
+			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	// Create the plain shell
+	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"opencode-1"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create shell: got %d %q, want 201", rec.Code, rec.Body)
+	}
+
+	// Verify metadata was recorded as plain shell
+	sess, ok := d.Projects.GetSession("abc", "opencode-1")
+	if !ok {
+		t.Fatal("session metadata not recorded")
+	}
+	if sess.Harness != "" {
+		t.Fatalf("harness = %q, want empty for plain shell", sess.Harness)
+	}
+
+	// Now restart — should create a plain shell, NOT launch opencode
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "kill-session", "-t", "opencode-1"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		append([]string{"tmux", "new-session", "-d", "-s", "opencode-1", "-c", "/workspace",
+			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+
+	rec = authedPost(t, h, cookie, "/api/projects/abc/sessions/opencode-1/restart", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restart: got %d %q, want 200", rec.Code, rec.Body)
+	}
+	// The mock will fail if any harness-related execs (command -v, etc.)
+	// are called — plain shell restart must not touch the harness path.
+}
+
 // fakePty echoes every line back; a line containing "quit" ends the attach
 // with exit code 3. Deterministic stand-in for tmux in unit tests.
 func fakePty(stdin io.Reader, stdout io.Writer, done chan<- docker.ExecDone) {

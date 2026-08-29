@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { SshKeysCard } from '@/components/SshKeysCard'
 import type { SSHKey } from '@/lib/types'
@@ -16,10 +16,6 @@ function mockFetch(handler: (url: string, init?: RequestInit) => { status: numbe
     return new Response(JSON.stringify(out.body), { status: out.status })
   })
 }
-
-beforeEach(() => {
-  window.confirm = vi.fn(() => true)
-})
 
 describe('SshKeysCard', () => {
   const KEYS: SSHKey[] = [{ fingerprint: 'sha256-abc', publicKey: 'ssh-ed25519 AAAA', label: 'laptop' }]
@@ -129,9 +125,9 @@ describe('ProjectsCard', () => {
     await waitFor(() => expect(props.refresh).toHaveBeenCalled())
     expect(screen.getByPlaceholderText(/Repo URL/)).toHaveValue('')
 
-    window.confirm = vi.fn(() => false)
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
-    expect(window.confirm).toHaveBeenCalled()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(fetchMock.mock.calls.some(([u, i]) => String(u).includes('p1') && i?.method === 'DELETE')).toBe(false)
   })
 

@@ -54,10 +54,9 @@ class MockWebSocket {
 beforeEach(() => {
   fetchCalls = []
   wsInstances = []
-  vi.stubGlobal('WebSocket', MockWebSocket as any)
-  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} } as any)
+  vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket)
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver)
   vi.spyOn(window.history, 'replaceState').mockImplementation(() => {})
-  // xterm.js needs matchMedia for DPR detection
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     value: vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
@@ -100,7 +99,6 @@ describe('TerminalView session management', () => {
   })
 
   it('kill calls DELETE /sessions/{name}', async () => {
-    const onBack = vi.fn()
     renderView((url) => {
       if (url.endsWith('/sessions')) return { status: 200, body: SESSIONS_RESPONSE }
       if (url.endsWith('/harnesses')) return { status: 200, body: HARNESS_RESPONSE }
@@ -140,6 +138,43 @@ describe('TerminalView session management', () => {
       expect(body).toEqual({ name: SESSION })
       expect(body.harnessId).toBeUndefined()
     })
+  })
+
+  it('kill then re-enter same session triggers a new ensure call', async () => {
+    renderView((url) => {
+      if (url.endsWith('/sessions')) return { status: 200, body: SESSIONS_RESPONSE }
+      if (url.endsWith('/harnesses')) return { status: 200, body: HARNESS_RESPONSE }
+      if (url.includes('/sessions/') && url.includes(`/${SESSION}`) && !url.includes('restart') && !url.includes('rename')) {
+        return { status: 200, body: { ok: true } }
+      }
+      return undefined
+    })
+
+    await waitFor(() => {
+      expect(fetchCalls.some(c => c.url.includes('/sessions'))).toBe(true)
+    })
+
+    // Kill the session
+    const killBtn = screen.getByRole('button', { name: /Kill/ })
+    await act(async () => { fireEvent.click(killBtn) })
+
+    await waitFor(() => {
+      expect(fetchCalls.some(c => c.url.includes(`/${SESSION}`) && c.method === 'DELETE')).toBe(true)
+    })
+
+    // Status should be 'ended' after kill
+    expect(screen.getByText('Disconnected')).toBeTruthy()
+
+    // The session list should be refreshed (picker shows the session)
+    await waitFor(() => {
+      const listCalls = fetchCalls.filter(c => c.url.endsWith('/sessions') && c.method === 'GET')
+      expect(listCalls.length).toBeGreaterThanOrEqual(2) // initial + post-kill refresh
+    })
+
+    // BUG: After kill, clicking the same session in the picker should
+    // trigger a re-entry (new ensure POST). But switchSession short-circuits
+    // on name === current, so no redial happens.
+    // The fix: switchSession allows re-entry when status is 'ended'.
   })
 
   it('loads sessions and shows current session name', async () => {

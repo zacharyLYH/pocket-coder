@@ -3,6 +3,16 @@ import { useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { api, errMsg } from '@/lib/api'
 import { terminalPath } from '@/lib/paths'
 import type { Project } from '@/lib/types'
@@ -21,6 +31,7 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
   const [cloneMethod, setCloneMethod] = useState<'http' | 'ssh'>('http')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   async function createProject(e: FormEvent) {
     e.preventDefault()
@@ -42,10 +53,11 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
     }
   }
 
-  async function deleteProject(id: string) {
-    if (!window.confirm('Delete this project — container and all volumes?')) return
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    setDeleteTarget(null)
     try {
-      await api(`/api/projects/${id}?scope=all`, { method: 'DELETE' })
+      await api(`/api/projects/${deleteTarget}?scope=all`, { method: 'DELETE' })
       await refresh()
     } catch {
       // leave the row in place; the next refresh shows the truth
@@ -73,12 +85,27 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
               <Button size="sm" variant="outline" onClick={() => navigate(terminalPath(p.id, 'main'))}>
                 Terminal
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => deleteProject(p.id)}>
+              <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(p.id)}>
                 Delete
               </Button>
             </div>
           </div>
         ))}
+
+        <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete project</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently remove the project, its container, and all volumes. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={confirmDelete}>Delete</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <form onSubmit={createProject} className="mt-2 flex flex-col gap-2 border-t pt-3">
           <Input
