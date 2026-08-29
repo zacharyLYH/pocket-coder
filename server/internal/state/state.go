@@ -46,11 +46,19 @@ type SMTP struct {
 // Project is one sandbox project. Only what cannot be defaulted; the
 // container/volumes are derived from the id and reconciled from here.
 type Project struct {
-	Name        string   `json:"name"`
-	Repo        string   `json:"repo"`
-	Branch      string   `json:"branch,omitempty"`
-	CloneMethod string   `json:"cloneMethod,omitempty"` // "ssh" or "http" (default)
-	Harnesses   []string `json:"harnesses,omitempty"`   // installed harness ids, ordered by install
+	Name        string              `json:"name"`
+	Repo        string              `json:"repo"`
+	Branch      string              `json:"branch,omitempty"`
+	CloneMethod string              `json:"cloneMethod,omitempty"` // "ssh" or "http" (default)
+	Harnesses   []string            `json:"harnesses,omitempty"`   // installed harness ids, ordered by install
+	Sessions    map[string]Session  `json:"sessions,omitempty"`    // keyed by session name
+}
+
+// Session is high-level metadata about a tmux session. Stored in
+// state.json so restart/re-entry can look up which harness a session
+// was launched with, regardless of the user-given name.
+type Session struct {
+	Harness string `json:"harness,omitempty"` // harness ID, empty for plain shell
 }
 
 // Harness is a CLI plugin: a global entry in "+ New Session". The map key

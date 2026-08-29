@@ -30,6 +30,9 @@ type Store interface {
 	Delete(id string) error
 	List() ([]Entry, error)
 	RecordInstall(projectID, harnessID string) error
+	RecordSession(projectID, name, harnessID string) error
+	GetSession(projectID, name string) (state.Session, bool)
+	RemoveSession(projectID, name string) error
 }
 
 // StateStore implements Store over the central state file.
@@ -127,4 +130,53 @@ func (s *StateStore) List() ([]Entry, error) {
 		return out[i].ID < out[j].ID
 	})
 	return out, nil
+}
+
+// RecordSession saves session metadata (which harness it runs) in the
+// project's state.json entry. Called when a harness session is created or
+// relaunched so restart/re-entry can look it up by name.
+func (s *StateStore) RecordSession(projectID, name, harnessID string) error {
+	return s.st.Mutate(func(doc *state.Document) error {
+		p, ok := doc.Projects[projectID]
+		if !ok {
+			return fmt.Errorf("project %s: %w", projectID, os.ErrNotExist)
+		}
+		if p.Sessions == nil {
+			p.Sessions = map[string]state.Session{}
+		}
+		p.Sessions[name] = state.Session{Harness: harnessID}
+		doc.Projects[projectID] = p
+		return nil
+	})
+}
+
+// GetSession returns the session metadata for the given name. ok is false
+// when the session has no metadata in state.json.
+func (s *StateStore) GetSession(projectID, name string) (state.Session, bool) {
+	var (
+		sess state.Session
+		ok   bool
+	)
+	s.st.View(func(doc *state.Document) {
+		p, exists := doc.Projects[projectID]
+		if !exists {
+			return
+		}
+		sess, ok = p.Sessions[name]
+	})
+	return sess, ok
+}
+
+// RemoveSession deletes session metadata from state.json. Idempotent:
+// removing a nonexistent session is not an error.
+func (s *StateStore) RemoveSession(projectID, name string) error {
+	return s.st.Mutate(func(doc *state.Document) error {
+		p, ok := doc.Projects[projectID]
+		if !ok {
+			return nil
+		}
+		delete(p.Sessions, name)
+		doc.Projects[projectID] = p
+		return nil
+	})
 }

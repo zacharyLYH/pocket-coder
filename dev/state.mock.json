@@ -7,7 +7,11 @@
       "name": "hello-world",
       "repo": "https://github.com/octocat/Hello-World.git",
       "branch": "master",
-      "cloneMethod": "http"
+      "cloneMethod": "http",
+      "harnesses": ["opencode"],
+      "sessions": {
+        "oc1": { "harness": "opencode" }
+      }
     }
   },
   "harnesses": {

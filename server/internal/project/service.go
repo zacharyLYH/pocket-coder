@@ -15,6 +15,7 @@ import (
 	"sps/internal/docker"
 	"sps/internal/events"
 	"sps/internal/sshkeys"
+	"sps/internal/state"
 	"sps/internal/textutil"
 )
 
@@ -87,6 +88,22 @@ func (s *Service) RecordInstall(projectID, harnessID string) error {
 		return s.wrapNotFound(err)
 	}
 	return nil
+}
+
+// RecordSession saves session metadata (name → harness) in state.json.
+func (s *Service) RecordSession(projectID, name, harnessID string) error {
+	return s.wrapNotFound(s.store.RecordSession(projectID, name, harnessID))
+}
+
+// GetSession returns session metadata from state.json. ok is false when
+// the session has no recorded metadata.
+func (s *Service) GetSession(projectID, name string) (state.Session, bool) {
+	return s.store.GetSession(projectID, name)
+}
+
+// RemoveSession deletes session metadata from state.json.
+func (s *Service) RemoveSession(projectID, name string) error {
+	return s.store.RemoveSession(projectID, name)
 }
 
 // ContainerName is the docker container backing project id.
@@ -425,4 +442,38 @@ func newID() (string, error) {
 		return "", fmt.Errorf("generate id: %w", err)
 	}
 	return hex.EncodeToString(b[:]), nil
+}
+
+// ReconcileState syncs every running container to match state.json.
+// Called once at startup so the live Docker state aligns with persisted
+// desired state: missing harnesses are reinstalled, state.json is the
+// single source of truth. This replaces per-handler workarounds for the
+// split-brain between container probes and state.json records.
+func (s *Service) ReconcileState(ctx context.Context) {
+	entries, err := s.store.List()
+	if err != nil {
+		slog.Warn("reconcile: list projects", "err", err)
+		return
+	}
+	for _, e := range entries {
+		st, err := ContainerStatus(ctx, s.dkr, ContainerName(e.ID))
+		if err != nil || st.State != StateRunning {
+			continue
+		}
+		p, err := s.store.Get(e.ID)
+		if err != nil || len(p.Harnesses) == 0 {
+			continue
+		}
+		for _, hid := range p.Harnesses {
+			if s.installer == nil {
+				break
+			}
+			if err := s.installer.InstallHarness(ctx, ContainerName(e.ID), hid); err != nil {
+				if strings.Contains(err.Error(), "no such harness") {
+					continue
+				}
+				slog.Warn("reconcile harness", "id", e.ID, "harness", hid, "err", err)
+			}
+		}
+	}
 }

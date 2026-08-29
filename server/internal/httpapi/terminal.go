@@ -17,6 +17,7 @@ import (
 
 	"sps/internal/project"
 	"sps/internal/session"
+	"sps/internal/state"
 )
 
 // wsIn is a browser→server frame. input carries raw keystrokes; resize
@@ -81,14 +82,39 @@ func handleTerminal(d Deps) http.HandlerFunc {
 		if id, ok = ensureProject(d, w, r); !ok {
 			return
 		}
-		exists, err := d.Sessions.Exists(ctx, project.ContainerName(id), name)
+		container := project.ContainerName(id)
+		exists, err := d.Sessions.Exists(ctx, container, name)
 		if err != nil {
 			writeInternalErr(w, "terminal", err)
 			return
 		}
 		if !exists {
-			writeErr(w, http.StatusNotFound, "no such session")
-			return
+			// Session not in tmux. If state.json knows this was a harness
+			// session, relaunch it so the WebSocket can attach.
+			sess, hasMeta := d.Projects.GetSession(id, name)
+			if hasMeta {
+				if sess.Harness != "" {
+					// Harness session — relaunch it so the WebSocket can attach.
+					if h, herr := d.Harnesses.Get(sess.Harness); herr == nil {
+						if _, lerr := d.Sessions.LaunchNamed(ctx, container, name, h); lerr != nil {
+							if !errors.Is(lerr, session.ErrDuplicate) {
+								writeLaunchErr(w, d, id, sess.Harness, lerr)
+								return
+							}
+						}
+					} else {
+						// Harness no longer registered — create a plain shell.
+						_ = d.Sessions.Create(ctx, container, name)
+					}
+				} else {
+					// Plain shell recorded in state — recreate it.
+					_ = d.Sessions.Create(ctx, container, name)
+				}
+			} else {
+				// No state.json metadata — session truly doesn't exist.
+				writeErr(w, http.StatusNotFound, "no such session")
+				return
+			}
 		}
 
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -275,24 +301,25 @@ func handleListSessions(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "terminal", err)
 			return
 		}
+		// Merge state.json sessions that aren't in tmux yet (e.g. after
+		// container rebuild or tmux crash). These appear in the picker so
+		// the user can re-enter and the ensure path relaunches them.
+		seen := make(map[string]bool, len(sessions))
+		for _, s := range sessions {
+			seen[s.Name] = true
+		}
+		// Read session metadata directly from state.json (no Docker call).
+		var proj state.Project
+		d.State.View(func(doc *state.Document) { proj = doc.Projects[id] })
+		for name := range proj.Sessions {
+			if !seen[name] {
+				sessions = append(sessions, session.Entry{Name: name})
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 	}
 }
 
-// harnessNameConflict reports whether name falls inside a harness's
-// namespace: the bare id ("opencode") or a numbered session ("opencode-2").
-func harnessNameConflict(d Deps, name string) (string, bool) {
-	hs, err := d.Harnesses.List()
-	if err != nil {
-		return "", false // don't block creates on a harness-list failure
-	}
-	for _, h := range hs {
-		if name == h.ID || session.HarnessSuffixed(name, h.ID) {
-			return h.ID, true
-		}
-	}
-	return "", false
-}
 
 func handleCreateSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -315,22 +342,66 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 				writeErr(w, http.StatusBadRequest, "invalid session name")
 				return
 			}
-			// Ensure semantics first: attaching to a session that already
-			// exists (e.g. a live harness session "opencode-1") is success,
-			// no matter what it is named. The reservation below only stops
-			// NEW shells from squatting a harness namespace.
-			if exists, _ := d.Sessions.Exists(r.Context(), project.ContainerName(id), body.Name); exists {
-				writeJSON(w, http.StatusOK, map[string]any{"name": body.Name})
+			container := project.ContainerName(id)
+			exists, _ := d.Sessions.Exists(r.Context(), container, body.Name)
+			if exists {
+				// Session exists in tmux — but is it alive? A dead session
+				// (command exited, remain-on-exit) means the harness crashed
+				// or the user exited it. Kill the corpse and relaunch.
+				alive, _ := d.Sessions.IsAlive(r.Context(), container, body.Name)
+				if alive {
+					writeJSON(w, http.StatusOK, map[string]any{"name": body.Name})
+					return
+				}
+				// Dead session — kill it, then relaunch as the harness it was.
+				_ = d.Sessions.Kill(r.Context(), container, body.Name)
+				sess, hasMeta := d.Projects.GetSession(id, body.Name)
+				harnessID := sess.Harness
+				if harnessID == "" && hasMeta {
+					// Recorded as a plain shell — recreate as shell.
+					createShellSession(d, w, r.Context(), id, body.Name, false)
+					return
+				}
+				if harnessID == "" {
+					// No metadata — try the old ParseBase heuristic.
+					harnessID = session.ParseBase(body.Name)
+				}
+				if h, herr := d.Harnesses.Get(harnessID); herr == nil {
+					restarted, lerr := d.Sessions.LaunchNamed(r.Context(), container, body.Name, h)
+					if lerr != nil {
+						writeLaunchErr(w, d, id, harnessID, lerr)
+						return
+					}
+					_ = d.Projects.RecordSession(id, restarted, harnessID)
+					_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": restarted, "harness": harnessID})
+					writeJSON(w, http.StatusOK, map[string]any{"name": restarted})
+					return
+				}
+				// Not a harness — recreate as a plain shell.
+				createShellSession(d, w, r.Context(), id, body.Name, false)
 				return
 			}
-			// A shell squatting a harness's namespace ("opencode",
-			// "opencode-1") shadows the real harness sessions in the picker
-			// and confuses restart — reserve it.
-			if hid, taken := harnessNameConflict(d, body.Name); taken {
-				writeJSON(w, http.StatusBadRequest, map[string]string{
-					"error": fmt.Sprintf("%q is reserved for the %q harness sessions; pick another name", body.Name, hid),
-				})
-				return
+			// Session not in tmux. If state.json knows this was a harness
+			// session, relaunch it. Otherwise create a plain shell.
+			sess, hasMeta := d.Projects.GetSession(id, body.Name)
+			if hasMeta && sess.Harness != "" {
+				if h, herr := d.Harnesses.Get(sess.Harness); herr == nil {
+					container := project.ContainerName(id)
+					restarted, lerr := d.Sessions.LaunchNamed(r.Context(), container, body.Name, h)
+					if lerr != nil {
+						if errors.Is(lerr, session.ErrDuplicate) {
+							// Session exists despite tmux check — attach to it.
+							writeJSON(w, http.StatusOK, map[string]any{"name": body.Name})
+							return
+						}
+						writeLaunchErr(w, d, id, sess.Harness, lerr)
+						return
+					}
+					_ = d.Projects.RecordSession(id, restarted, sess.Harness)
+					_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": restarted, "harness": sess.Harness})
+					writeJSON(w, http.StatusOK, map[string]any{"name": restarted})
+					return
+				}
 			}
 			createShellSession(d, w, r.Context(), id, body.Name, false)
 			return
@@ -362,6 +433,7 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 				writeLaunchErr(w, d, id, h.ID, lerr)
 				return
 			}
+			_ = d.Projects.RecordSession(id, name, h.ID)
 			_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": name, "harness": h.ID})
 			_, _ = d.Events.Append("session.create", map[string]any{"id": id, "name": name, "harness": h.ID})
 			writeJSON(w, http.StatusCreated, map[string]any{"name": name, "harness": h.ID})
@@ -376,6 +448,7 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 			writeLaunchErr(w, d, id, h.ID, err)
 			return
 		}
+		_ = d.Projects.RecordSession(id, name, h.ID)
 		_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": name, "harness": h.ID})
 		_, _ = d.Events.Append("session.create", map[string]any{"id": id, "name": name, "harness": h.ID})
 		writeJSON(w, http.StatusCreated, map[string]any{"name": name, "harness": h.ID})
@@ -480,6 +553,11 @@ func handleRenameSession(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "rename session", err)
 			return
 		}
+		// Move session metadata under the new name.
+		if sess, ok := d.Projects.GetSession(id, oldName); ok {
+			_ = d.Projects.RecordSession(id, body.Name, sess.Harness)
+			_ = d.Projects.RemoveSession(id, oldName)
+		}
 		_, _ = d.Events.Append("session.rename", map[string]any{"id": id, "from": oldName, "to": body.Name})
 		writeJSON(w, http.StatusOK, map[string]any{"name": body.Name})
 	}
@@ -498,6 +576,8 @@ func handleKillSession(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "kill session", err)
 			return
 		}
+		// Session metadata in state.json persists across kills so re-entry
+		// can detect this was a harness session and relaunch it.
 		_, _ = d.Events.Append("session.exit", map[string]any{"id": id, "name": name})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
@@ -517,25 +597,36 @@ func handleRestartSession(d Deps) http.HandlerFunc {
 
 		_ = d.Sessions.Kill(ctx, container, name) // already-gone is fine
 
-		// resolve kind from the name: <harnessID>-<n> where harnessID is an
-		// existing plugin; otherwise it is (or becomes) a plain shell. The
-		// numeric suffix is required — a bare shell named like a harness id
-		// ("opencode") must restart as the shell it is.
-		base := session.ParseBase(name)
-		h, herr := d.Harnesses.Get(base)
+		// Resolve kind from state.json: the session's metadata records which
+		// harness (if any) it was launched with. Falls back to ParseBase for
+		// sessions created before state tracking was added.
+		sess, hasMeta := d.Projects.GetSession(id, name)
+		harnessID := sess.Harness
+		if harnessID == "" && hasMeta {
+			// Session was recorded as a plain shell — restart as shell.
+			createShellSession(d, w, ctx, id, name, true)
+			return
+		}
+		if harnessID == "" {
+			// No metadata — try the old ParseBase heuristic.
+			harnessID = session.ParseBase(name)
+		}
 
-		if herr != nil || !session.HarnessSuffixed(name, base) {
-			// plain shell restart under the same name
+		h, herr := d.Harnesses.Get(harnessID)
+		if herr != nil {
+			// No matching harness — plain shell restart under the same name.
 			createShellSession(d, w, ctx, id, name, true)
 			return
 		}
 
 		restarted, err := d.Sessions.LaunchNamed(ctx, container, name, h)
 		if err != nil {
-			writeLaunchErr(w, d, id, base, err)
+			writeLaunchErr(w, d, id, harnessID, err)
 			return
 		}
-		_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": restarted, "harness": base, "restart": true})
+		// Re-record the session with the same harness.
+		_ = d.Projects.RecordSession(id, restarted, harnessID)
+		_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": restarted, "harness": harnessID, "restart": true})
 		writeJSON(w, http.StatusOK, map[string]any{"name": restarted})
 	}
 }

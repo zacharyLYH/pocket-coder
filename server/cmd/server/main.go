@@ -90,6 +90,13 @@ func main() {
 	sessions := session.New(dkr)
 	svc.SetInstaller(&harnessInstaller{harnesses: harnesses, sessions: sessions})
 
+	// Sync running containers to match state.json (harness installs,
+	// etc.). state.json is the source of truth; this one-pass reconcile
+	// at boot replaces per-handler workarounds for container/state drift.
+	if err := dkr.Ping(context.Background()); err == nil {
+		svc.ReconcileState(context.Background())
+	}
+
 	ev.Append("boot", map[string]any{"version": version})
 	if len(seeded) > 0 {
 		ev.Append("harness.seed", map[string]any{"written": seeded})

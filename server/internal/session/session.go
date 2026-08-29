@@ -134,6 +134,20 @@ func (s *Service) List(ctx context.Context, container string) ([]Entry, error) {
 	return out, nil
 }
 
+// IsAlive reports whether a tmux session's command is still running.
+// `tmux has-session` returns 0 for both live and dead (remain-on-exit)
+// sessions, so we check whether the pane's initial process is alive.
+func (s *Service) IsAlive(ctx context.Context, container, name string) (bool, error) {
+	chk, err := s.dkr.Exec(ctx, container, []string{
+		"bash", "-lc",
+		fmt.Sprintf(`tmux has-session -t %s 2>/dev/null && pid=$(tmux list-panes -t %s -F '#{pane_pid}' 2>/dev/null | head -1) && kill -0 "$pid" 2>/dev/null`, name, name),
+	}, false)
+	if err != nil {
+		return false, err
+	}
+	return chk.ExitCode == 0, nil
+}
+
 // Exists reports whether the named session exists (`tmux has-session`,
 // exit 1 = no).
 func (s *Service) Exists(ctx context.Context, container, name string) (bool, error) {

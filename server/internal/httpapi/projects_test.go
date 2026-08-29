@@ -31,6 +31,7 @@ func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer,
 		t.Fatal(err)
 	}
 	d.Projects = project.NewService(project.Open(st), md, d.Events)
+	d.State = st
 	return d, md, pinOut, st
 }
 

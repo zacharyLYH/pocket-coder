@@ -118,6 +118,9 @@ func TestCreateSessionLifecycle(t *testing.T) {
 	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "sps-abc", []string{"tmux", "has-session", "-t", "work"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil) // ensure: already there
+	md.EXPECT().Exec(mock.Anything, "sps-abc", mock.MatchedBy(func(cmd []string) bool {
+		return len(cmd) == 3 && cmd[0] == "bash" && cmd[1] == "-lc"
+	}), false).Return(docker.ExecResult{ExitCode: 0}, nil) // IsAlive: session is live
 	rec = authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"work"}`)
 	want = "{\"name\":\"work\"}\n"
 	if rec.Code != http.StatusOK || rec.Body.String() != want {
@@ -174,6 +177,134 @@ func TestTerminalPreflight(t *testing.T) {
 	if strings.Contains(rec.Header().Get("Upgrade"), "websocket") {
 		t.Fatal("must not upgrade when the session is missing")
 	}
+}
+
+// TestTerminalRelaunchesHarnessFromState proves the WebSocket pre-flight
+// relaunches a harness session from state.json when it's missing from tmux
+// (e.g. after container rebuild). The session must exist in tmux before
+// the upgrade proceeds.
+func TestTerminalRelaunchesHarnessFromState(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	// Register the harness as installed in this project
+	_ = d.Projects.RecordInstall("abc", "fake")
+	// Record session metadata: "helper-1" runs the "fake" harness.
+	_ = d.Projects.RecordSession("abc", "helper-1", "fake")
+
+	// has-session: not in tmux → triggers the state.json relaunch path
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "has-session", "-t", "helper-1"}, false).
+		Return(docker.ExecResult{ExitCode: 1}, nil)
+
+	// expectLaunchNamed sets up the full harness launch chain
+	expectLaunchNamed(md, "abc", "helper-1")
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	// The wsGet helper won't work here because LaunchNamed does a WebSocket
+	// attach prep that needs more mocking. Instead verify the HTTP response
+	// is NOT 404 (which was the old behavior).
+	req := httptest.NewRequest(http.MethodGet, "/ws/projects/abc/sessions/helper-1", nil)
+	req.Header.Set("Upgrade", "websocket")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	// Should NOT be 404 — the session was relaunched from state.json
+	if rec.Code == http.StatusNotFound {
+		t.Fatalf("session relaunched from state.json should not 404, got 404")
+	}
+}
+
+// TestListSessionsIncludesStateJSONEntries proves the session picker shows
+// sessions from state.json that aren't in tmux (e.g. after container rebuild
+// or tmux crash). The user can see them and re-enter to trigger relaunch.
+func TestListSessionsIncludesStateJSONEntries(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	// Record a harness session in state.json that's NOT in tmux
+	_ = d.Projects.RecordSession("abc", "oc-1", "fake")
+
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	// tmux only has one session — "live-session"
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "live-session\n"}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedGet(t, h, cookie, "/api/projects/abc/sessions")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: got %d %q, want 200", rec.Code, rec.Body)
+	}
+	var body struct {
+		Sessions []session.Entry `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]bool)
+	for _, s := range body.Sessions {
+		got[s.Name] = true
+	}
+	if !got["live-session"] {
+		t.Fatal("tmux session live-session missing from list")
+	}
+	if !got["oc-1"] {
+		t.Fatal("state.json session oc-1 missing from list")
+	}
+}
+
+// TestEnsureRelaunchesDeadHarnessSession proves the ensure endpoint
+// (POST /sessions with just a name) detects a dead tmux session and
+// relaunches the harness it was running.
+func TestEnsureRelaunchesDeadHarnessSession(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	// Register the harness as installed in this project
+	_ = d.Projects.RecordInstall("abc", "fake")
+	// Record session metadata: "fake-1" runs the "fake" harness
+	_ = d.Projects.RecordSession("abc", "fake-1", "fake")
+
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	// has-session: session exists in tmux
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "has-session", "-t", "fake-1"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	// IsAlive: session is dead (pane_pid check fails)
+	md.EXPECT().Exec(mock.Anything, "sps-abc", mock.MatchedBy(func(cmd []string) bool {
+		return len(cmd) == 3 && cmd[0] == "bash" && cmd[1] == "-lc" &&
+			strings.Contains(cmd[2], "kill -0")
+	}), false).Return(docker.ExecResult{ExitCode: 1}, nil) // kill -0 failed → dead
+	// kill the dead session
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "kill-session", "-t", "fake-1"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	// relaunch the harness
+	expectLaunchNamed(md, "abc", "fake-1")
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"fake-1"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ensure dead harness: got %d %q, want 200", rec.Code, rec.Body)
+	}
+	var resp struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Name != "fake-1" {
+		t.Fatalf("name = %q, want fake-1", resp.Name)
+	}
+	waitForEvent(t, d, "harness.launch")
 }
 
 // fakePty echoes every line back; a line containing "quit" ends the attach
@@ -516,64 +647,17 @@ func TestCreateHarnessSessionNotACLI422(t *testing.T) {
 }
 
 // Regression: a plain shell named "opencode" (any harness id) used to be
-// accepted, so the real harness launch became "opencode-1" and the picker
-// showed a bogus pair — a bash "opencode" next to the true "opencode-1".
-// Harness namespaces (bare id and <id>-<n>) are now reserved at create, and
-// restart treats a bare name as the shell it is, never a harness relaunch.
-func TestCreateSessionRejectsHarnessNamespaceNames(t *testing.T) {
+// TestHarnessNamedSessionsAreValidShellSessions verifies that harness-named
+// sessions (e.g. "fake", "fake-1") can be created as plain shells. Session
+// metadata in state.json distinguishes them from actual harness sessions.
+func TestHarnessNamedSessionsAreValidShellSessions(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
-	// Only Inspect + the has-session ensure probe may run: a reserved-name
-	// create must be refused before any tmux exec, and mockery fails the
-	// test on any unexpected Exec.
 	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	// has-session: missing for the three refused creates, then existing for
-	// the final ensure call
-	probes := 0
+	// Three new creates: has-session returns not-found, then tmux new-session
 	md.EXPECT().Exec(mock.Anything, "sps-abc", mock.MatchedBy(func(cmd []string) bool {
 		return len(cmd) == 4 && cmd[0] == "tmux" && cmd[1] == "has-session"
-	}), false).RunAndReturn(func(context.Context, string, []string, bool) (docker.ExecResult, error) {
-		probes++
-		if probes <= 3 {
-			return docker.ExecResult{ExitCode: 1}, nil
-		}
-		return docker.ExecResult{ExitCode: 0}, nil
-	})
-
-	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
-
-	for _, name := range []string{"fake", "fake-1", "fake-2"} {
-		rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"`+name+`"}`)
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("create %q: got %d %q, want 400", name, rec.Code, rec.Body)
-		}
-		if !strings.Contains(rec.Body.String(), "reserved") {
-			t.Fatalf("create %q: error %q should say the name is reserved", name, rec.Body)
-		}
-	}
-
-	// BUT attaching to a harness-named session that already exists is the
-	// terminal tab's ensure call and must succeed — this is exactly how the
-	// picker re-attaches to a live "opencode-1".
-	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"fake-1"}`)
-	want := "{\"name\":\"fake-1\"}\n"
-	if rec.Code != http.StatusOK || rec.Body.String() != want {
-		t.Fatalf("ensure existing harness-named session: got %d %q, want 200 %q", rec.Code, rec.Body, want)
-	}
-}
-
-func TestRestartBareHarnessNameRestartsPlainShell(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
-	seedProject(t, dataDir, "abc")
-
-	// A shell squatting the bare harness id "fake": restart must recreate a
-	// plain shell under the same name. If it misclassifies and relaunches
-	// the harness, LaunchNamed's unexpected execs fail the mock.
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
-		[]string{"tmux", "kill-session", "-t", "fake"}, false).
-		Return(docker.ExecResult{ExitCode: 0}, nil)
+	}), false).Return(docker.ExecResult{ExitCode: 1}, nil)
 	md.EXPECT().Exec(mock.Anything, "sps-abc",
 		append([]string{"tmux", "new-session", "-d", "-s", "fake", "-c", "/workspace",
 			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
@@ -581,9 +665,31 @@ func TestRestartBareHarnessNameRestartsPlainShell(t *testing.T) {
 
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
+
+	// A harness-named session can be created as a plain shell.
+	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"fake"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create harness-named shell: got %d %q, want 201", rec.Code, rec.Body)
+	}
+}
+
+func TestRestartBareHarnessNameRelaunchesHarness(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	// A session named after the bare harness id "fake" (no -<n> suffix):
+	// restart must relaunch the harness, not create a plain shell.
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "kill-session", "-t", "fake"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	expectLaunchNamed(md, "abc", "fake")
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions/fake/restart", "")
 	if rec.Code != http.StatusOK || rec.Body.String() != "{\"name\":\"fake\"}\n" {
-		t.Fatalf("restart bare harness-named shell: got %d %q, want 200 {\"name\":\"fake\"}", rec.Code, rec.Body)
+		t.Fatalf("restart bare harness name: got %d %q, want 200 {\"name\":\"fake\"}", rec.Code, rec.Body)
 	}
 }
 

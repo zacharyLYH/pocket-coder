@@ -1,6 +1,7 @@
 package project
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -473,6 +474,101 @@ func TestEnsureContainerReconcileReclonesEmptyVolume(t *testing.T) {
 	if !reconciled || !cloned {
 		t.Fatalf("events: reconcile=%v clone=%v", reconciled, cloned)
 	}
+}
+
+// fakeInstaller records which harnesses were installed. Implements Installer.
+type fakeInstaller struct {
+	installed []string
+}
+
+func (f *fakeInstaller) InstallHarness(ctx context.Context, _ string, harnessID string) error {
+	f.installed = append(f.installed, harnessID)
+	return nil
+}
+
+func TestEnsureContainerReinstallsHarnesses(t *testing.T) {
+	s, d, _, _ := newService(t)
+	// Project with two installed harnesses
+	if err := s.store.Create("abc", Project{
+		Name:      "x",
+		Harnesses: []string{"opencode", "freebuff"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Container is missing → triggers reconciliation
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
+	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
+	d.EXPECT().InspectImage(mock.Anything, SandboxImage).Return(nil)
+	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+
+	inst := &fakeInstaller{}
+	s.SetInstaller(inst)
+
+	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
+		t.Fatal(err)
+	}
+	if len(inst.installed) != 2 {
+		t.Fatalf("installed %d harnesses, want 2: %v", len(inst.installed), inst.installed)
+	}
+	if inst.installed[0] != "opencode" || inst.installed[1] != "freebuff" {
+		t.Fatalf("installed = %v, want [opencode freebuff]", inst.installed)
+	}
+}
+
+func TestReconcileStateInstallsMissingHarnesses(t *testing.T) {
+	s, d, _, _ := newService(t)
+	// Project with two installed harnesses
+	if err := s.store.Create("abc", Project{
+		Name:      "x",
+		Harnesses: []string{"opencode", "freebuff"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Second project with no harnesses — should be skipped
+	if err := s.store.Create("def", Project{Name: "y"}); err != nil {
+		t.Fatal(err)
+	}
+	// Third project — container is missing, should be skipped
+	if err := s.store.Create("ghi", Project{
+		Name:      "z",
+		Harnesses: []string{"opencode"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	inst := &fakeInstaller{}
+	s.SetInstaller(inst)
+
+	// abc: running → reconcile
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	// def: running but no harnesses → skip (no Inspect call expected)
+	d.EXPECT().Inspect(mock.Anything, "sps-def").Return(docker.Container{Running: true}, nil).Once()
+	// ghi: missing → skip
+	d.EXPECT().Inspect(mock.Anything, "sps-ghi").Return(docker.Container{}, docker.ErrNotFound).Once()
+
+	s.ReconcileState(t.Context())
+
+	if len(inst.installed) != 2 {
+		t.Fatalf("installed %d harnesses, want 2: %v", len(inst.installed), inst.installed)
+	}
+	if inst.installed[0] != "opencode" || inst.installed[1] != "freebuff" {
+		t.Fatalf("installed = %v, want [opencode freebuff]", inst.installed)
+	}
+}
+
+func TestReconcileStateSkipsWithoutInstaller(t *testing.T) {
+	s, d, _, _ := newService(t)
+	if err := s.store.Create("abc", Project{
+		Name:      "x",
+		Harnesses: []string{"opencode"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// No installer set — should not panic
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	s.ReconcileState(t.Context())
+	// No crash = pass
 }
 
 func TestCreateCloneMethodSSH(t *testing.T) {

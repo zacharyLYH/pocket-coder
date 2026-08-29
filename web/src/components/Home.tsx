@@ -35,8 +35,9 @@ export function Home({ email, onLogout, navigate }: {
     try {
       await api('/api/auth/logout', { method: 'POST' })
     } catch {
-      onLogout()
+      // still sign out client-side
     }
+    onLogout()
   }
 
   return (

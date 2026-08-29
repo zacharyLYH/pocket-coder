@@ -234,7 +234,7 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 			map[string]any{"fingerprint": "sha256-_r_26MQJIPO1QjdZEfShlg", "publicKey": "ssh-ed25519 AAAA-key-two", "email": "me@example.com"},
 		},
 		"projects": map[string]any{
-			idA: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http", "harnesses": []any{"my-agent"}},
+			idA: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http", "harnesses": []any{"my-agent"}, "sessions": map[string]any{"fake-1": map[string]any{"harness": "fake"}}},
 			// scope=repo removed the container, the record survives (install record stays even though harness was deleted)
 			idC: map[string]any{"name": "private", "repo": "git@github.com:me/private.git", "cloneMethod": "ssh", "harnesses": []any{"my-agent"}},
 			// the failed-clone project survives too (retryable sandbox)
