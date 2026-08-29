@@ -81,7 +81,7 @@ test.describe('harness installs are desired state', () => {
       await expect(page.getByText('projAlpha')).toBeVisible()
       await expect(page.getByText('projBeta')).toBeVisible()
       await expect(page.getByText('untitled')).toBeVisible()
-      await gateShot(page, 'gate0-home-empty')
+      await gateShot(page, 'gate0-home-no-harnesses')
 
       const getOrder = async () => {
         const res = await request.get('/api/projects')
@@ -153,6 +153,7 @@ test.describe('harness installs are desired state', () => {
       await expect(dialog.getByRole('button', { name: 'Create & Attach' })).toBeDisabled()
       await expect(dialog).toHaveScreenshot('harness-dialog-requires-name-desktop.png')
       await page.setViewportSize({ width: 390, height: 844 })
+      await page.waitForTimeout(300)
       await expect(dialog).toHaveScreenshot('harness-dialog-requires-name-mobile.png')
       await page.setViewportSize({ width: 1280, height: 720 })
       await dialog.getByRole('button', { name: 'Cancel' }).click()
@@ -170,7 +171,7 @@ test.describe('harness installs are desired state', () => {
       const bSessions1 = await request.get(`/api/projects/${idBeta}/sessions`)
       const bBody1 = (await bSessions1.json()) as { sessions: { name: string }[] }
       expect(bBody1.sessions.map((s) => s.name)).not.toContain('shared-name')
-      await gateShot(page, 'gate3-shell-created')
+      await gateShot(page, 'gate3-shell-session')
 
       await page.getByRole('button', { name: '+ New Session' }).click()
       const d2 = page.getByRole('dialog')
@@ -187,7 +188,7 @@ test.describe('harness installs are desired state', () => {
       await expect(d2).not.toBeVisible({ timeout: 15_000 })
       await expect(sessionButton).toContainText('my-crasher', { timeout: 10_000 })
       await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
-      await gateShot(page, 'gate3-harness-launched')
+      await gateShot(page, 'gate3-harness-session')
 
       await page.getByRole('button', { name: '+ New Session' }).click()
       const dHelper = page.getByRole('dialog')
