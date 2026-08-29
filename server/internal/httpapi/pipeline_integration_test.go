@@ -3,7 +3,7 @@
 // The create pipeline against a live engine: create from a real local
 // fixture repo (git daemon), reach Running with the clone present,
 // stop/restart with volumes intact, delete every scope, plus the
-// blank-sandbox path. Run with:
+// blank-project path. Run with:
 // go test -tags=integration -count=1 ./internal/httpapi/.
 package httpapi
 
@@ -109,7 +109,7 @@ func doJSON(t *testing.T, h http.Handler, cookie *http.Cookie, method, path, bod
 }
 
 // deleteProjectAll registers scope=all deletion as test cleanup, so a failed
-// assertion can never leak a sandbox container (and its volumes) on the
+// assertion can never leak a project (and its volumes) on the
 // engine. Safe to call even when the test itself deletes the project: the
 // final cleanup delete is a no-op 404.
 func deleteProjectAll(t *testing.T, h http.Handler, cookie *http.Cookie, id string) {
@@ -255,7 +255,7 @@ func TestProjectPipelineLifecycle(t *testing.T) {
 	}
 }
 
-func TestBlankSandboxLifecycle(t *testing.T) {
+func TestBlankProjectLifecycle(t *testing.T) {
 	h, dkr, _, pinOut, _, _ := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
 
@@ -275,7 +275,7 @@ func TestBlankSandboxLifecycle(t *testing.T) {
 	res, err := dkr.Exec(ctx, "sps-"+id,
 		[]string{"sh", "-c", "command -v git && command -v tmux && command -v ss"}, false)
 	if err != nil || res.ExitCode != 0 {
-		t.Fatalf("sandbox missing essentials: %+v err=%v", res, err)
+		t.Fatalf("project missing essentials: %+v err=%v", res, err)
 	}
 	for i, tool := range []string{"git", "tmux", "ss"} {
 		line := strings.Split(strings.TrimSpace(res.Output), "\n")
@@ -284,7 +284,7 @@ func TestBlankSandboxLifecycle(t *testing.T) {
 		}
 	}
 
-	// blank sandboxes are named "untitled"; make sure list works too
+	// blank projects are named "untitled"; make sure list works too
 	code, body = doJSON(t, h, cookie, http.MethodGet, "/api/projects", "")
 	wantList := map[string]any{"projects": []any{map[string]any{"id": id, "name": "untitled"}}}
 	if code != http.StatusOK || !reflect.DeepEqual(body, wantList) {
@@ -337,7 +337,7 @@ func TestProjectBranchPinning(t *testing.T) {
 	_, _ = doJSON(t, h, cookie, http.MethodDelete, "/api/projects/"+id, "")
 }
 
-func TestCloneFailureLiveKeepsSandboxAndLogsError(t *testing.T) {
+func TestCloneFailureLiveKeepsProjectAndLogsError(t *testing.T) {
 	h, _, svc, pinOut, ev, _ := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
 
@@ -351,11 +351,11 @@ func TestCloneFailureLiveKeepsSandboxAndLogsError(t *testing.T) {
 	}
 	entries, listErr := svc.List()
 	if listErr != nil || len(entries) != 1 {
-		t.Fatalf("sandbox must survive failed clone: %+v err=%v", entries, listErr)
+		t.Fatalf("project must survive failed clone: %+v err=%v", entries, listErr)
 	}
 	wantEntries := []project.Entry{{ID: entries[0].ID, Name: "nope"}}
 	if !reflect.DeepEqual(entries, wantEntries) {
-		t.Fatalf("sandbox must survive failed clone as %+v: %+v", wantEntries, entries)
+		t.Fatalf("project must survive failed clone as %+v: %+v", wantEntries, entries)
 	}
 	id := entries[0].ID
 	deleteProjectAll(t, h, cookie, id)
@@ -399,7 +399,7 @@ func TestCreateRejectsBadInputBeforeDocker(t *testing.T) {
 	}
 }
 
-func TestSandboxIsolationAndRestartSurvival(t *testing.T) {
+func TestProjectIsolationAndRestartSurvival(t *testing.T) {
 	h, _, _, pinOut, ev, st := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
 

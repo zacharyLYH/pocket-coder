@@ -16,7 +16,7 @@ import {
 import { api, errMsg } from '@/lib/api'
 import { terminalPath } from '@/lib/paths'
 import type { Project } from '@/lib/types'
-// Projects card: the sandbox list plus the create form (repo URL, branch,
+// Projects card: the project list plus the create form (repo URL, branch,
 // clone method). Deleting and creating are explicit and confirmed.
 export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, navigate }: {
   projects: Project[]
@@ -97,7 +97,7 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
             <AlertDialogHeader>
               <AlertDialogTitle>Delete project</AlertDialogTitle>
               <AlertDialogDescription>
-                This will permanently remove the project, its container, and all volumes. This action cannot be undone.
+                This will permanently remove the project and all volumes. This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -110,7 +110,7 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
         <form onSubmit={createProject} className="mt-2 flex flex-col gap-2 border-t pt-3">
           <Input
             type="text"
-            placeholder="Repo URL (optional — blank = plain sandbox)"
+            placeholder="Repo URL (optional — blank = plain project)"
             value={repoUrl}
             onChange={(e) => setRepoUrl(e.target.value)}
           />

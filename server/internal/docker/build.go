@@ -14,7 +14,7 @@ type BuildOptions struct {
 	ContextDir string // build context directory ("" when InputStream is set)
 	Dockerfile string // path relative to ContextDir ("" = Dockerfile)
 	// InputStream, when set, is a tar stream used as the build context
-	// instead of ContextDir (e.g. the embedded sandbox definition).
+	// instead of ContextDir (e.g. the embedded project definition).
 	InputStream io.Reader
 }
 

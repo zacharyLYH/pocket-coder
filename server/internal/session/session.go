@@ -1,4 +1,4 @@
-// Package session manages tmux sessions inside a project's container:
+// Package session manages tmux sessions inside a project:
 // plain-shell sessions, and harness launches — install-on-demand, CLI
 // validation, and the `|| echo` failure story (PRD §5).
 package session
@@ -283,7 +283,7 @@ func (s *Service) Installed(ctx context.Context, container string, cmds []string
 }
 
 // repoTarget picks /workspace/repo when a clone lives there, else /workspace
-// for blank sandboxes.
+// for blank projects.
 func (s *Service) repoTarget(ctx context.Context, container string) (string, error) {
 	res, err := s.dkr.Exec(ctx, container, []string{"test", "-d", repoDir + "/.git"}, false)
 	if err != nil {

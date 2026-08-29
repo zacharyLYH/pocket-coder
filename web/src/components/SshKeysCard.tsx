@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { api, errMsg } from '@/lib/api'
 import type { SSHKey } from '@/lib/types'
 
-// SSH keys card: register public keys so project sandboxes can clone
+// SSH keys card: register public keys so projects can clone
 // private repos over SSH. The key list is owned by Home (the project form
 // counts it); this card renders it and handles add/delete.
 export function SshKeysCard({ keys, onChanged }: {
@@ -50,7 +50,7 @@ export function SshKeysCard({ keys, onChanged }: {
     <Card className="mt-4">
       <CardHeader>
         <CardTitle className="text-base">SSH Keys</CardTitle>
-        <CardDescription>Register public keys to clone private repos via SSH into your sandboxes.</CardDescription>
+        <CardDescription>Register public keys to clone private repos via SSH into your projects.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {keys.length === 0 && (

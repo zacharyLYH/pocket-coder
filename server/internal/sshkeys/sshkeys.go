@@ -1,6 +1,6 @@
 // Package sshkeys stores registered SSH public keys in the central state
 // file (internal/state). Users paste their public key once; the platform
-// injects it into every sandbox container so git SSH clones work.
+// injects it into every project so git SSH clones work.
 package sshkeys
 
 import (

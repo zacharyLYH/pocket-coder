@@ -164,7 +164,7 @@ func TestEnsureBuiltinsIdempotent(t *testing.T) {
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": ""},
 		"harnesses": map[string]any{
-			"aider":        map[string]any{"id": "aider", "name": "Aider", "command": "aider", "install": "python3 -m pip install -U aider-chat"},
+			"cline":        map[string]any{"id": "cline", "name": "Cline", "command": "cline", "install": "npm i -g cline"},
 			"crasher-demo": map[string]any{"id": "crasher-demo", "name": "Crasher Demo", "command": "crasher", "install": `printf '#!/bin/sh\nif [ $# -gt 0 ]; then echo "crasher 1.0"; exit 0; fi\necho "about to crash"\nsleep 2\nexit 9\n' > /usr/local/bin/crasher && chmod +x /usr/local/bin/crasher`},
 			"freebuff":     map[string]any{"id": "freebuff", "name": "Freebuff", "command": "freebuff", "install": "npm i -g freebuff && freebuff --version || true"},
 			"opencode":     map[string]any{"id": "opencode", "name": "OpenCode", "command": "opencode", "install": "npm i -g opencode-ai"},
@@ -194,7 +194,7 @@ func TestEnsureBuiltinsDoesNotOverwriteUserEdits(t *testing.T) {
 		"terminal":     map[string]any{"id": "terminal", "name": "Terminal", "command": "zsh"},
 		"opencode":     map[string]any{"id": "opencode", "name": "OpenCode", "command": "opencode", "install": "npm i -g opencode-ai"},
 		"freebuff":     map[string]any{"id": "freebuff", "name": "Freebuff", "command": "freebuff", "install": "npm i -g freebuff && freebuff --version || true"},
-		"aider":        map[string]any{"id": "aider", "name": "Aider", "command": "aider", "install": "python3 -m pip install -U aider-chat"},
+		"cline":        map[string]any{"id": "cline", "name": "Cline", "command": "cline", "install": "npm i -g cline"},
 		"vi-demo":      map[string]any{"id": "vi-demo", "name": "Vi Demo", "command": "vi notes.txt"},
 		"crasher-demo": map[string]any{"id": "crasher-demo", "name": "Crasher Demo", "command": "crasher", "install": `printf '#!/bin/sh\nif [ $# -gt 0 ]; then echo "crasher 1.0"; exit 0; fi\necho "about to crash"\nsleep 2\nexit 9\n' > /usr/local/bin/crasher && chmod +x /usr/local/bin/crasher`},
 	})
@@ -204,7 +204,7 @@ func TestSlug(t *testing.T) {
 	cases := map[string]string{
 		"My Agent":      "my-agent",
 		"OpenCode":      "opencode",
-		"Aider 2":       "aider-2",
+		"Cline 2":       "cline-2",
 		"  trim -- me ": "trim-me",
 		"---":           "",
 	}
@@ -219,7 +219,7 @@ func TestBinary(t *testing.T) {
 	cases := map[string]string{
 		"opencode":        "opencode",
 		"vi hello.txt":    "vi",
-		"aider --model x": "aider",
+		"cline --model x": "cline",
 	}
 	for cmd, want := range cases {
 		if got := Binary(Harness{Command: cmd}); got != want {

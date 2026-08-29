@@ -107,7 +107,7 @@ func (s *StateStore) RecordInstall(projectID, harnessID string) error {
 }
 
 // List returns every project as an entry, sorted by name then id. Name,
-// then id: blank sandboxes are all "untitled", and an unstable tiebreak
+// then id: blank projects are all "untitled", and an unstable tiebreak
 // would reorder the list between API calls (the home page's project pickers
 // must not shuffle under the user).
 func (s *StateStore) List() ([]Entry, error) {

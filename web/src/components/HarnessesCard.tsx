@@ -100,7 +100,7 @@ export function HarnessesCard({ projects, onInstalled, onBusyChange }: { project
       <CardHeader>
         <CardTitle className="text-base">Harnesses</CardTitle>
         <CardDescription>
-          Agent CLIs your sandboxes can run. Install downloads now — pick the projects, errors surface here.
+          Agent CLIs your projects can run. Install downloads now — pick the projects, errors surface here.
           New projects are never touched until you choose them.
         </CardDescription>
       </CardHeader>
@@ -150,11 +150,11 @@ export function HarnessesCard({ projects, onInstalled, onBusyChange }: { project
         ))}
 
         {/* Arbitrary commands: the same picker, any shell command — the place
-            to upgrade CLIs or run one-off maintenance across sandboxes. */}
+            to upgrade CLIs or run one-off maintenance across projects. */}
         <div className="mt-2 border-t pt-3">
           <p className="text-xs font-medium">Run a command in your projects</p>
           <p className="text-muted-foreground text-xs">
-            Upgrades, maintenance, one-offs — runs synchronously in the selected sandboxes.
+            Upgrades, maintenance, one-offs — runs synchronously in the selected projects.
           </p>
           <form onSubmit={(e) => { e.preventDefault(); void runCommand() }} className="mt-2 flex flex-col gap-2">
             <Input

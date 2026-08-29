@@ -1239,7 +1239,7 @@ func TestLazyReconciliationViaSessionHandler(t *testing.T) {
 	// first call: container missing → triggers reconciliation
 	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	md.EXPECT().InspectImage(mock.Anything, project.SandboxImage).Return(nil)
+	md.EXPECT().InspectImage(mock.Anything, project.ProjectImage).Return(nil)
 	md.EXPECT().Run(mock.Anything, mock.Anything).Return("new-cid", nil)
 	// EnsureContainer re-inspects after reconciling: now running
 	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()

@@ -41,7 +41,7 @@ test.describe('home screen', () => {
     await deleteAllSSHKeys(page.request)
     await resetHarnessRegistry(page.request)
     try {
-      // one real blank-sandbox project ("untitled" — the name is derived
+      // one real blank-project ("untitled" — the name is derived
       // from the repo URL, and there is none) and two real keys
       await page.goto('/')
       await page.getByRole('button', { name: 'Create project' }).click()

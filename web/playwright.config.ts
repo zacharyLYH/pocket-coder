@@ -31,7 +31,7 @@ import { API_PORT, AUTH_STATE, DATA_DIR, RUN_DIR, SERVER_LOG, WEB_PORT } from '.
 // tests wipe projects and keys, which would destroy real data.
 // reuseExistingServer is false for both servers for the same reason.
 //
-// Leftover containers from a crashed run are NOT auto-removed (a name-based
+  // Leftover projects from a crashed run are NOT auto-removed (a name-based
 // docker cleanup could destroy real projects on a shared engine). If a run
 // is killed mid-test, remove strays by hand:
 //   docker rm -f $(docker ps -aq --filter name=sps-) && \
@@ -41,7 +41,7 @@ export default defineConfig({
   fullyParallel: true,
   workers: 1,
   outputDir: RUN_DIR,
-  // Generous default: journeys do synchronous sandbox-image builds and real
+  // Generous default: journeys do synchronous project-image builds and real
   // npm installs, and e2e-parallel.sh stacks FOUR groups (each with its own
   // Go server, Vite, and browser) on one machine — an unrelated group's
   // docker build can stall another group's API calls past the 30s default.

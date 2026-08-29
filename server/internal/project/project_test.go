@@ -121,8 +121,8 @@ func TestFileModesAndNoTempLeftovers(t *testing.T) {
 	})
 }
 
-// A blank sandbox persists with name+repo only — no omitempty noise.
-func TestCreateBlankSandboxExactFile(t *testing.T) {
+// A blank project persists with name+repo only — no omitempty noise.
+func TestCreateBlankProjectExactFile(t *testing.T) {
 	st, s := newStore(t)
 	if err := s.Create("abc", Project{Name: "untitled"}); err != nil {
 		t.Fatal(err)

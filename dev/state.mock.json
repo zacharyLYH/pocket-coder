@@ -15,11 +15,11 @@
     }
   },
   "harnesses": {
-    "aider": {
-      "id": "aider",
-      "name": "Aider",
-      "command": "aider",
-      "install": "python3 -m pip install -U aider-chat"
+    "cline": {
+      "id": "cline",
+      "name": "Cline",
+      "command": "cline",
+      "install": "npm i -g cline"
     },
     "crasher-demo": {
       "id": "crasher-demo",

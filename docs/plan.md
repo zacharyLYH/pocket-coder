@@ -16,7 +16,7 @@ Three collection mechanisms, no metrics pipeline:
 
 1. **Event log** (`$DATA_DIR/events.log`, append-only JSONL, `GET /api/events`) — the server's own audit trail. Every phase emits what it causes: login, create/stop/delete, build, session attach/detach, action run, env change, error. Development debugging *is* reading it; the build is exercised through it.
 2. **On-demand reads** — the current state of Docker and the containers, queried at page load and polled while open: stats/inspect, `tmux list-sessions`, `docker logs`, port probes, disk/uptime. No persistence.
-3. **Harness-native records** — harnesses record their own usage (opencode's storage, aider's history, freebuff's). We read those files from the container's home volume; server-side counts are the fallback only. Phase 8 documents where each builtin records usage; Phase 12 harvests it; Phase 13's secretary reads all three sources for debugging.
+3. **Harness-native records** — harnesses record their own usage (opencode's storage, cline's history, freebuff's). We read those files from the container's home volume; server-side counts are the fallback only. Phase 8 documents where each builtin records usage; Phase 12 harvests it; Phase 13's secretary reads all three sources for debugging.
 
 Placement: a top-level item on the home screen, outside any project — the system view, not a project tab.
 
@@ -66,7 +66,7 @@ Placement: a top-level item on the home screen, outside any project — the syst
 - Bootstrap `$DATA_DIR/{projects,harnesses,ssh}` with correct perms on first boot.
 - `project.json` CRUD with atomic writes (temp + rename). Fields per PRD §8: `name/repo/branch/actions/env` — file mode `0600`.
 - Harness plugin loader: scan `$DATA_DIR/harnesses/*.json`, validate schema (`name/command/install/auth`), parse `auth` block. One code path for builtins and user files.
-- Seed builtins (terminal, opencode, freebuff, aider) on first boot as real editable files.
+- Seed builtins (terminal, opencode, freebuff, cline) on first boot as real editable files.
 - Projects index (`$DATA_DIR/projects.json`) so the list renders without container scans.
 - Append-only event log (`$DATA_DIR/events.log`, JSONL) with a typed `Event` writer and `GET /api/events?after=<id>&limit=` (tail/pagination); the UI and the secretary both read history from it.
 - Every later phase emits lines (login, project create/stop/delete, session create/exit, action run, harness launched, error) and exercises them in its gate.
@@ -164,7 +164,7 @@ Placement: a top-level item on the home screen, outside any project — the syst
 - Install-on-demand: first launch runs the plugin's `install` in the container if the `command` is missing.
 - Builtins documented with runtime requirements (node for opencode/freebuff); missing runtime ⇒ visible failure with a hint.
 - Add-harness form writes a plugin file (form + folder are the same thing).
-- Each builtin documents where it records usage in the home volume (opencode storage dir, aider history, freebuff) — the observability page harvests these in Phase 12, the secretary reads them in Phase 13.
+- Each builtin documents where it records usage in the home volume (opencode storage dir, cline history, freebuff) — the observability page harvests these in Phase 12, the secretary reads them in Phase 13.
 - Emit `session.create/exit`, `harness.launch`, `validation.failed` events.
 
 **Gate.** Launch a fake CLI harness (fixture shell script) in a real container, list/kill/restart it, verify the `|| echo` failure path surfaces. Validation probe rejects a "not-a-CLI" fixture with the exact PRD message.
@@ -192,7 +192,7 @@ Placement: a top-level item on the home screen, outside any project — the syst
    gains `configPath` + `config` (any JSON, the CLI's own portable format).
    At launch, before validation, the platform writes it into the container
    at exactly the path the CLI reads (`docker cp` primitive). Users paste
-   their existing opencode/aider config into the settings page once; keys
+   their existing opencode/cline config into the settings page once; keys
    live inside it because that is how those tools take keys — no more
    invented `auth.env` indirection. *Verify:* unit tests pin the
    write-before-validate ordering; integration test launches with a config

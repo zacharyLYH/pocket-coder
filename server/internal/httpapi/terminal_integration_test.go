@@ -21,7 +21,7 @@ func TestTerminalLiveLifecycle(t *testing.T) {
 	h, dkr, _, pinOut, _, _ := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
 
-	// blank sandbox (embedded image ships tmux)
+	// blank project (embedded image ships tmux)
 	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/projects", `{}`)
 	if code != http.StatusCreated {
 		t.Fatalf("create project: %d %v", code, body)

@@ -29,9 +29,9 @@ export async function engineUp(request: APIRequestContext): Promise<boolean> {
   return res.status() !== 500
 }
 
-// deleteAllProjects removes every project (container + volumes + metadata).
+// deleteAllProjects removes every project (data + volumes + metadata).
 // Call it before tests that need a clean slate AND in `finally`, so a
-// failed test never leaks containers into later tests or the next run.
+// failed test never leaks projects into later tests or the next run.
 export async function deleteAllProjects(request: APIRequestContext): Promise<void> {
   const res = await request.get('/api/projects')
   if (!res.ok()) return
@@ -44,7 +44,7 @@ export async function deleteAllProjects(request: APIRequestContext): Promise<voi
 // global and specs may add plugins (e.g. orchestration's combo agent), so
 // visual tests that capture the harness card pin it back to the six
 // builtins first — otherwise full-page home shots shift with registry state.
-const BUILTINS = ['terminal', 'opencode', 'freebuff', 'aider', 'vi-demo', 'crasher-demo']
+const BUILTINS = ['terminal', 'opencode', 'freebuff', 'cline', 'vi-demo', 'crasher-demo']
 
 export async function resetHarnessRegistry(request: APIRequestContext): Promise<void> {
   const res = await request.get('/api/harnesses')

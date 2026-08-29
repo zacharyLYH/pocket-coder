@@ -7,20 +7,20 @@ import (
 	"io"
 )
 
-//go:embed sandbox/Dockerfile
-var sandboxDockerfile []byte
+//go:embed image/Dockerfile
+var projectDockerfile []byte
 
-//go:embed sandbox/sps-update-runtime
-var sandboxUpdateScript []byte
+//go:embed image/sps-update-runtime
+var projectUpdateScript []byte
 
-// sandboxContext returns a tar stream of the embedded sandbox build context,
+// projectContext returns a tar stream of the embedded project build context,
 // so the image definition ships inside the binary and no path configuration
 // is needed. Writes go to a bytes.Buffer, which cannot fail, so errors are
 // ignored.
-func sandboxContext() io.Reader {
+func projectContext() io.Reader {
 	files := map[string][]byte{
-		"Dockerfile":         sandboxDockerfile,
-		"sps-update-runtime": sandboxUpdateScript,
+		"Dockerfile":         projectDockerfile,
+		"sps-update-runtime": projectUpdateScript,
 	}
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)

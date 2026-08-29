@@ -5,7 +5,7 @@
 # share nothing: separate state.json, separate PIN log, separate auth state.
 #
 # Groups start a few seconds apart so their first project creations don't
-# race each other's one-time sandbox-image build on a cold engine.
+# race each other's one-time project-image build on a cold engine.
 #
 # Usage:
 #   sh e2e-parallel.sh                 # all four groups in parallel

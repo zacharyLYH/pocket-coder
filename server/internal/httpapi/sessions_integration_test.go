@@ -1,7 +1,7 @@
 //go:build integration
 
 // Phase 8 gate against a live engine: a fake CLI harness (its install
-// writes the executable) launches in a real container, gets listed, killed,
+// writes the executable) launches in a real project, gets listed, killed,
 // and restarted; a not-a-CLI fixture is rejected with the exact PRD message.
 // Run with: go test -tags=integration -count=1 ./internal/httpapi/
 package httpapi
@@ -37,9 +37,9 @@ func writePlugin(t *testing.T, st *state.Store, name, command, install string) {
 const fakeCLIInstall = "printf '#!/bin/sh\\nif [ $# -gt 0 ]; then echo \"fakecli v1\"; exit 0; fi\\necho \"fake-cli running\"\\nsleep 2\\nexit 9\\n' > /usr/local/bin/fakecli && chmod +x /usr/local/bin/fakecli"
 const sleepyInstall = "printf '#!/bin/sh\\nexit 0\\n' > /usr/local/bin/sleepy && chmod +x /usr/local/bin/sleepy"
 
-// TestHarnessConfigLandsInContainer is the config-v2 integration check: a
+// TestHarnessConfigLandsInProject is the config-v2 integration check: a
 // plugin with configPath+config launches, and the CLI's native config file
-// exists inside the container at exactly the path the tool reads, byte for
+// exists inside the project at exactly the path the tool reads, byte for
 // byte — written before the launch command ever runs.
 func TestHarnessConfigLandsInContainer(t *testing.T) {
 	h, dkr, _, pinOut, _, st := newLiveDeps(t)
@@ -87,7 +87,7 @@ func TestHarnessConfigLandsInContainer(t *testing.T) {
 	}
 	want := `{"model":"test-model","apiKey":"k-123"}`
 	if strings.TrimSpace(cat.Output) != want {
-		t.Fatalf("config file in container = %q, want %q", cat.Output, want)
+		t.Fatalf("config file in project = %q, want %q", cat.Output, want)
 	}
 }
 
@@ -207,7 +207,7 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 }
 
 // TestRealTUIGate is the faithful transport check: a genuine full-screen TUI
-// (busybox vi, already in the sandbox image) launched as a harness, driven
+// (busybox vi, already in the project image) launched as a harness, driven
 // over the WebSocket bridge with real keystrokes. Asserts that what the
 // browser sends actually edits the file the TUI holds — the same interaction
 // pattern as coding CLIs, no downloads needed.

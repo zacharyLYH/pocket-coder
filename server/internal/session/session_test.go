@@ -252,7 +252,7 @@ func TestLaunchHappyPath(t *testing.T) {
 	d.EXPECT().Exec(mock.Anything, "c1", listCmd, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "main\n"}, nil)
 	d.EXPECT().Exec(mock.Anything, "c1", []string{"test", "-d", "/workspace/repo/.git"}, false).
-		Return(docker.ExecResult{ExitCode: 1}, nil) // blank sandbox → /workspace
+		Return(docker.ExecResult{ExitCode: 1}, nil) // blank project → /workspace
 	d.EXPECT().Exec(mock.Anything, "c1", []string{"bash", "-lc", "command -v fakecli"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "/usr/local/bin/fakecli"}, nil)
 	validateCmd := []string{"bash", "-lc", "fakecli --version || fakecli --help"}
@@ -369,7 +369,7 @@ func TestLaunchRequiresInstalledHarness(t *testing.T) {
 				case len(cmd) >= 2 && cmd[0] == "tmux" && cmd[1] == "list-sessions":
 					return docker.ExecResult{ExitCode: 0}, nil
 				case len(cmd) >= 1 && cmd[0] == "test":
-					return docker.ExecResult{ExitCode: 1}, nil // blank sandbox
+					return docker.ExecResult{ExitCode: 1}, nil // blank project
 				case len(cmd) == 3 && cmd[2] == "command -v fakecli":
 					return docker.ExecResult{ExitCode: 1}, nil // missing
 				default:

@@ -143,12 +143,12 @@ func Slug(name string) string {
 //
 // Runtime requirements (visible failure with a hint comes free: the CLI
 // validation probe reports the missing interpreter): node and python3 ship
-// in the sandbox image; the `sps-update-runtime` script inside every
-// sandbox brings them to the latest stable when run in a terminal.
+// in the project image; the `sps-update-runtime` script inside every
+// project brings them to the latest stable when run in a terminal.
 //
 // Where each records usage in its container's home volume (harvested by the
 // observability page, read by the secretary later): opencode → its storage
-// dir under ~/.local/share/opencode; aider → ~/.aider* history/chat logs;
+// dir under ~/.local/share/opencode; cline → ~/.clinerules/ history; freebuff
 // freebuff → its own state dir under ~. Terminal/bash records nothing.
 // Credentials live in each CLI's native config file: users paste their
 // config (configPath + config on the plugin, or edit it later) once.
@@ -161,7 +161,7 @@ var builtins = []Harness{
 	{Name: "Terminal", Command: "bash"},
 	{Name: "OpenCode", Command: "opencode", Install: "npm i -g opencode-ai"},
 	{Name: "Freebuff", Command: "freebuff", Install: "npm i -g freebuff && freebuff --version || true"},
-	{Name: "Aider", Command: "aider", Install: "python3 -m pip install -U aider-chat"},
+	{Name: "Cline", Command: "cline", Install: "npm i -g cline"},
 	{Name: "Vi Demo", Command: "vi notes.txt"},
 	{Name: "Crasher Demo", Command: "crasher", Install: demoCrasherInstall},
 }

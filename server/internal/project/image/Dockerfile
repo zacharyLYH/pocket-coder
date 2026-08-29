@@ -1,7 +1,7 @@
-# The shared project sandbox: everything the platform itself needs to
+# The shared project image: everything the platform itself needs to
 # function (clone, tmux sessions, port detection, private repos) plus the
 # runtimes coding CLIs expect (node, npm, python3, pip). Users install what
-# else they want inside their running sandbox.
+# else they want inside their running project.
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive

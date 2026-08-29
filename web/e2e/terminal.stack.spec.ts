@@ -30,9 +30,9 @@ test('create a project in the UI, open its terminal, type', async ({ page }) => 
     // --- create through the REAL form, exactly as a user would ---
     await page.getByPlaceholder(/Repo URL/).fill('')
     await page.getByRole('button', { name: 'Create project' }).click()
-    // create is synchronous (sandbox up before the response); done when the
+    // create is synchronous (project up before the response); done when the
     // button comes back. On a cold engine this includes building
-    // sps-sandbox — minutes on a fresh CI runner, so stay generous.
+    // sps-project — minutes on a fresh CI runner, so stay generous.
     await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({
       timeout: 300_000,
     })
@@ -62,7 +62,7 @@ test('create a project in the UI, open its terminal, type', async ({ page }) => 
     expect(log).toContain('"session.create"')
     expect(log).toContain('"terminal.attach"')
   } finally {
-    // destructor: never leak containers/volumes, even on failure
+    // destructor: never leak projects/volumes, even on failure
     await deleteAllProjects(page.request)
   }
 })

@@ -19,7 +19,7 @@ Codespaces taught the world that:
 
 This product is that pattern, with two differences:
 
-1. **No IDE.** CLI coding harnesses (opencode, freebuff, aider, anything) replace the editor. They run in persistent terminal sessions.
+1. **No IDE.** CLI coding harnesses (opencode, freebuff, cline, anything) replace the editor. They run in persistent terminal sessions.
 2. **No vendor.** Self-hosted only. Not a SaaS. Users run it on a Mac, home server, or VPS. They own all compute, repos, credentials, and data.
 
 The user flow and expectations are inherited from Codespaces. Nothing gets reinvented.
@@ -116,7 +116,7 @@ The only reason for system login is safe access to the self-hosted box over the 
 1. Create a `.env` file with the email that receives login codes plus the SMTP credentials (see the README). Then install and start the server. One command.
 2. Log in: enter the email, receive a PIN by email, enter it. The browser gets a JWT.
 3. You land on the projects screen. Empty? "Clone a repo →".
-4. Default harnesses (terminal, opencode, freebuff, aider) are already in "+ New Session". Nothing to configure first.
+4. Default harnesses (terminal, opencode, freebuff, cline) are already in "+ New Session". Nothing to configure first.
 5. Clone a repo (or start blank) → "Ready" in seconds. Open it.
 6. The first time you launch a harness that needs credentials, auth happens right then (see Harness auth). Later launches are one tap.
 
@@ -150,7 +150,7 @@ A harness is a plugin file. Our defaults and yours are the same thing.
 { "name": "My Agent", "command": "my-agent", "install": "npm i -g my-agent" }
 ```
 
-- Builtins are the same files. On first start the platform seeds `$DATA_DIR/harnesses/` with terminal, opencode, freebuff, and aider. They are real, editable files. Self-hosted means hackable.
+- Builtins are the same files. On first start the platform seeds `$DATA_DIR/harnesses/` with terminal, opencode, freebuff, and cline. They are real, editable files. Self-hosted means hackable.
 - Adding a harness is global, not per-project. Drop one file in `$DATA_DIR/harnesses/` and it appears in every project's "+ New Session".
 - The "Add harness" form (name + command + optional install) writes the file for you. The form and the folder are the same thing.
 - Optional `install` runs in the container the first time the harness is launched. A missing `command` self-heals instead of failing.
@@ -315,7 +315,7 @@ Nothing is telemetry. Each surface collects from the source that already owns th
 
 1. **Event log** — the server's own audit trail. One JSONL line per fact the server caused or detected: login, project created/stopped/deleted, image built, session attach/detach, action run, env changed, and `error` lines. `$DATA_DIR/events.log`, append-only, read API in Phase 2. Reading it *is* history.
 2. **On-demand reads** — the current state of Docker and the containers, queried when a page loads and polled while it's open: `docker stats`/inspect for live state, `tmux list-sessions` for sessions, `docker logs` for container output, port probes for preview, disk/uptime for health. No persistence — the page paints whatever the world looks like now.
-3. **The harnesses' own records** — harnesses already record usage: opencode keeps its sessions and message history in its storage; aider keeps its conversation history and commits; freebuff similar. We read those files from the container's home volume (each builtin documents where, in the system guide). Server-side counts are the fallback, never the source of truth for what an agent did.
+3. **The harnesses' own records** — harnesses already record usage: opencode keeps its sessions and message history in its storage; cline keeps its conversation history and commits; freebuff similar. We read those files from the container's home volume (each builtin documents where, in the system guide). Server-side counts are the fallback, never the source of truth for what an agent did.
 
 The page **lives at the home screen, outside any project**: a top-level item to click into, not a project tab. It is the system view.
 
