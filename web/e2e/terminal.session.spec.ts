@@ -33,8 +33,8 @@ test.describe('session switcher', () => {
     await expect(sessionButton).toBeVisible()
     await expect(sessionButton).toContainText('main')
     await sessionButton.click()
-    await expect(page.getByRole('listbox')).toBeVisible()
-    await expect(page.getByRole('option', { name: 'main' })).toBeVisible()
+    await expect(page.getByRole('menu')).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'main' })).toBeVisible()
     await expect(page).toHaveScreenshot('terminal-session-dropdown.png')
     await page.keyboard.press('Escape')
   })
@@ -108,14 +108,14 @@ test.describe('multiple sessions', () => {
       const sessionButton = page.getByRole('button', { name: 'Session', exact: true })
       await expect(sessionButton).toContainText('dev')
       await sessionButton.click()
-      await expect(page.getByRole('listbox')).toBeVisible()
-      const optionTexts = await page.getByRole('listbox').locator('[role="option"]').allTextContents()
+      await expect(page.getByRole('menu')).toBeVisible()
+      const optionTexts = await page.getByRole('menuitem').allTextContents()
       expect(optionTexts).toContain('main')
       expect(optionTexts).toContain('dev')
       await expect(page).toHaveScreenshot('terminal-multi-session-dropdown.png')
 
       // switching back to main reattaches for real — click the option while the picker is open
-      await page.getByRole('option', { name: 'main' }).click({ timeout: 10_000 })
+      await page.getByRole('menuitem', { name: 'main' }).click({ timeout: 10_000 })
       await expect(sessionButton).toContainText('main')
       await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
     } finally {

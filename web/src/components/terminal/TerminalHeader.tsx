@@ -4,13 +4,23 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import type { ConnStatus } from '@/components/terminal/TerminalPane'
 
 // The terminal header: back to projects, connection status, the session
 // picker, and the new-session / restart / rename / kill actions.
-// The session picker is a custom dropdown (not a native <select>) so its
-// open state is part of the DOM and can be captured in visual screenshots.
 export function TerminalHeader({ projectId, current, sessions, status, onBack, onSwitch, onNewSession, onRestart, onRename, onKill }: {
   projectId: string
   current: string
@@ -27,7 +37,6 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
   const [renameValue, setRenameValue] = useState('')
   const [renameBusy, setRenameBusy] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
-  const [pickerOpen, setPickerOpen] = useState(false)
 
   const statusMeta = {
     connecting: { label: 'Connecting…', dot: 'bg-amber-500' },
@@ -56,8 +65,6 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
     }
   }
 
-  const allSessions = sessions.find((s) => s.name === current) ? sessions : [...sessions, { name: current }]
-
   return (
     <>
       <header className="flex flex-wrap items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-sm">
@@ -74,67 +81,46 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
         </span>
         <span className="flex-1" />
 
-        {/* Session picker — custom dropdown so open state is visible in screenshots */}
-        <div
-          className="relative"
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setPickerOpen(false)
-          }}
-        >
-          <button
-            type="button"
-            aria-label="Session"
-            aria-expanded={pickerOpen}
-            aria-haspopup="listbox"
-            onClick={() => setPickerOpen((o) => !o)}
-            className="flex h-8 min-w-[8rem] items-center justify-between gap-2 rounded-md border border-input bg-transparent px-2 text-xs shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          >
-            <span className="truncate">{current}</span>
-            <span className="text-muted-foreground">▾</span>
-          </button>
-          {pickerOpen && (
-            <div
-              role="listbox"
-              aria-label="Session list"
-              className="absolute right-0 z-50 mt-1 max-h-60 min-w-[8rem] overflow-auto rounded-md border bg-popover p-1 shadow-md"
-            >
-              {allSessions.map((s) => (
-                <button
-                  key={s.name}
-                  type="button"
-                  role="option"
-                  aria-selected={s.name === current}
-                  onClick={() => {
-                    setPickerOpen(false)
-                    if (s.name !== current) onSwitch(s.name)
-                  }}
-                  className={`flex w-full items-center rounded-sm px-2 py-1.5 text-xs outline-none hover:bg-accent hover:text-accent-foreground ${s.name === current ? 'bg-accent text-accent-foreground' : ''}`}
-                >
-                  {s.name}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" aria-label="Session" className="min-w-[8rem] justify-between">
+              <span className="truncate">{current}</span>
+              <span className="text-muted-foreground">▾</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {sessions.map((s) => (
+              <DropdownMenuItem
+                key={s.name}
+                onSelect={() => {
+                  if (s.name !== current) onSwitch(s.name)
+                }}
+                data-current={s.name === current || undefined}
+                className={s.name === current ? 'bg-accent text-accent-foreground' : ''}
+              >
+                {s.name}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <Button
           variant="secondary"
           size="sm"
-          className="cursor-pointer"
           onClick={onNewSession}
         >
           + New Session
         </Button>
-        <Button className="cursor-pointer" variant="outline" size="sm" onClick={onRestart}>
+        <Button variant="outline" size="sm" onClick={onRestart}>
           Restart
         </Button>
-        <Button className="cursor-pointer" variant="outline" size="sm" onClick={openRename}>
+        <Button variant="outline" size="sm" onClick={openRename}>
           Rename
         </Button>
         <Button
           variant="outline"
           size="sm"
-          className="text-destructive cursor-pointer hover:bg-destructive/10 hover:text-destructive"
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
           onClick={onKill}
         >
           Kill

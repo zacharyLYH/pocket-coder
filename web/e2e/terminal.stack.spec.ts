@@ -111,9 +111,9 @@ test('real OpenCode session renders through the backend terminal bridge', async 
     // Exercise the same dropdown interaction as the reported naming bug,
     // then save the real rendered OpenCode screen for visual review.
     await sessionButton.click()
-    await expect(page.getByRole('listbox')).toBeVisible()
-    await expect(page.getByRole('option', { name: 'opencode-1' })).toBeVisible()
-    await page.getByRole('option', { name: 'opencode-1' }).click()
+    await expect(page.getByRole('menu')).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'opencode-1' })).toBeVisible()
+    await page.getByRole('menuitem', { name: 'opencode-1' }).click()
     await expect(sessionButton).toContainText('opencode-1')
     await expect
       .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 60_000 })
