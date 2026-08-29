@@ -15,7 +15,7 @@ type RowMsg = { kind: 'ok' | 'error'; text: string }
 // explicit and synchronous: pick the projects, the work happens now, and
 // per-project results (or errors) surface right here. New projects are
 // never auto-injected — they appear in the pickers and the user decides.
-export function HarnessesCard({ projects }: { projects: Project[] }) {
+export function HarnessesCard({ projects, onInstalled }: { projects: Project[]; onInstalled?: () => void }) {
   const [harnesses, setHarnesses] = useState<Harness[]>([])
   const [pickerFor, setPickerFor] = useState<string | null>(null) // harness id or 'command'
   const [picked, setPicked] = useState<Record<string, boolean>>({})
@@ -32,10 +32,18 @@ export function HarnessesCard({ projects }: { projects: Project[] }) {
 
   useEffect(() => { load() }, [])
 
+  function isInstalled(projectId: string, harnessId: string) {
+    const p = projects.find((x) => x.id === projectId)
+    return !!p?.harnesses?.includes(harnessId)
+  }
+
   function openPicker(key: string) {
-    // default to every project selected; unchecking is how users scope a run
+    // default to every project selected except those already installed for this harness
     const all: Record<string, boolean> = {}
-    for (const p of projects) all[p.id] = true
+    for (const p of projects) {
+      if (key !== 'command' && isInstalled(p.id, key)) continue
+      all[p.id] = true
+    }
     setPicked(all)
     setRowMsg((m) => ({ ...m, [key]: undefined }))
     setPickerFor((cur) => (cur === key ? null : key))
@@ -67,6 +75,7 @@ export function HarnessesCard({ projects }: { projects: Project[] }) {
       })
       summarize(key, (data.results ?? []) as ExecResult[])
       setPickerFor(null)
+      if (key !== 'command') onInstalled?.()
     } catch (err) {
       setRowMsg((m) => ({ ...m, [key]: { kind: 'error', text: errMsg(err) } }))
     } finally {
@@ -128,6 +137,7 @@ export function HarnessesCard({ projects }: { projects: Project[] }) {
                 picked={picked}
                 onToggle={(id) => setPicked((p) => ({ ...p, [id]: !p[id] }))}
                 busy={busyKey !== null}
+                installed={Object.fromEntries(projects.map((p) => [p.id, isInstalled(p.id, h.id)]))}
                 applyLabel={`Install in ${Object.values(picked).filter(Boolean).length} project(s)`}
                 onApply={() => applyToProjects(h.id, `/api/harnesses/${h.id}/install`, {})}
                 onCancel={() => setPickerFor(null)}
@@ -197,7 +207,7 @@ function RowResult({ msg }: { msg: RowMsg }) {
 // ProjectPicker is the multi-select used by harness installs and the
 // command box: check the projects a run should touch, then apply. All
 // projects start checked; unchecking is how a run gets scoped.
-export function ProjectPicker({ projects, picked, onToggle, busy, applyLabel, onApply, onCancel }: {
+export function ProjectPicker({ projects, picked, onToggle, busy, applyLabel, onApply, onCancel, installed }: {
   projects: Project[]
   picked: Record<string, boolean>
   onToggle: (id: string) => void
@@ -205,22 +215,27 @@ export function ProjectPicker({ projects, picked, onToggle, busy, applyLabel, on
   applyLabel: string
   onApply: () => void
   onCancel: () => void
+  installed?: Record<string, boolean>
 }) {
   const count = Object.values(picked).filter(Boolean).length
   return (
     <div className="mt-1 flex flex-col gap-1.5 rounded-md border bg-muted/40 p-2">
-      {projects.map((p) => (
-        <label key={p.id} className="flex cursor-pointer items-center gap-2 text-xs">
-          <input
-            type="checkbox"
-            checked={!!picked[p.id]}
-            onChange={() => onToggle(p.id)}
-            disabled={busy}
-            className="accent-primary"
-          />
-          <span>{p.name}</span>
-        </label>
-      ))}
+      {projects.map((p) => {
+        const isInstalled = !!installed?.[p.id]
+        return (
+          <label key={p.id} className="flex cursor-pointer items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={!!picked[p.id]}
+              onChange={() => onToggle(p.id)}
+              disabled={busy || isInstalled}
+              className="accent-primary"
+            />
+            <span>{p.name}</span>
+            {isInstalled && <span className="ml-auto text-muted-foreground">Installed</span>}
+          </label>
+        )
+      })}
       <div className="mt-1 flex gap-2">
         <Button type="button" size="sm" disabled={busy || count === 0} onClick={onApply}>
           {busy ? 'Working…' : applyLabel}

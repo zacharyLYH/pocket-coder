@@ -67,7 +67,7 @@ func newLiveDeps(t *testing.T) (http.Handler, *docker.Docker, *project.Service, 
 	svc := project.NewService(project.Open(st), dkr, ev)
 	svc.SetSSHKeys(sshKeyStore)
 	h := New(Deps{Events: ev, Version: "itest", Auth: authSvc, Projects: svc,
-		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore})
+		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore, State: st})
 	return h, dkr, svc, &pinOut, ev, st
 }
 

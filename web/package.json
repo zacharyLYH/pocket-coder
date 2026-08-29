@@ -8,7 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --config=playwright.config.ts",
     "test:unit": "vitest run",
     "test:e2e:parallel": "sh e2e-parallel.sh"
   },

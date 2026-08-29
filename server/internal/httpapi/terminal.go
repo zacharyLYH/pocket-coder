@@ -298,8 +298,8 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var body struct {
-			Name      string `json:"name"`      // plain-shell session (Phase 7 terminal flow)
-			HarnessID string `json:"harnessId"` // harness-driven session (<id>-<n>)
+			Name      string `json:"name"`      // plain-shell session or harness session with explicit name
+			HarnessID string `json:"harnessId"` // harness-driven session
 		}
 		if !decodeBody(w, r, &body, false) {
 			return
@@ -336,14 +336,43 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 			return
 		}
 
-		// harness-driven create: install-on-demand + CLI validation + launch
+		// harness-driven create
 		h, err := d.Harnesses.Get(body.HarnessID)
 		if err != nil {
 			writeErr(w, http.StatusNotFound, err.Error())
 			return
 		}
+		// When a name is supplied, it is required and unique (409 on collision).
+		// When absent, fall back to auto-naming <harnessID>-<n> for backward compatibility.
+		if body.Name != "" {
+			if !session.ValidName(body.Name) {
+				writeErr(w, http.StatusBadRequest, "invalid session name")
+				return
+			}
+			if exists, _ := d.Sessions.Exists(r.Context(), project.ContainerName(id), body.Name); exists {
+				writeErr(w, http.StatusConflict, "session name already exists")
+				return
+			}
+			name, lerr := d.Sessions.LaunchNamed(r.Context(), project.ContainerName(id), body.Name, h)
+			if lerr != nil {
+				if errors.Is(lerr, session.ErrDuplicate) {
+					writeErr(w, http.StatusConflict, lerr.Error())
+					return
+				}
+				writeLaunchErr(w, d, id, h.ID, lerr)
+				return
+			}
+			_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": name, "harness": h.ID})
+			_, _ = d.Events.Append("session.create", map[string]any{"id": id, "name": name, "harness": h.ID})
+			writeJSON(w, http.StatusCreated, map[string]any{"name": name, "harness": h.ID})
+			return
+		}
 		name, err := d.Sessions.Launch(r.Context(), project.ContainerName(id), h)
 		if err != nil {
+			if errors.Is(err, session.ErrDuplicate) {
+				writeErr(w, http.StatusConflict, err.Error())
+				return
+			}
 			writeLaunchErr(w, d, id, h.ID, err)
 			return
 		}
@@ -397,6 +426,63 @@ func writeLaunchErr(w http.ResponseWriter, d Deps, id, harnessID string, err err
 		return
 	}
 	writeInternalErr(w, "launch session", err)
+}
+
+func handleRenameSession(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, oldName := r.PathValue("id"), r.PathValue("name")
+		var body struct {
+			Name string `json:"name"`
+		}
+		if !decodeBody(w, r, &body, false) {
+			return
+		}
+		if !session.ValidName(body.Name) {
+			writeErr(w, http.StatusBadRequest, "invalid session name")
+			return
+		}
+		if !session.ValidName(oldName) {
+			writeErr(w, http.StatusBadRequest, "invalid session name")
+			return
+		}
+		var ok bool
+		if id, ok = ensureProject(d, w, r); !ok {
+			return
+		}
+		container := project.ContainerName(id)
+		if exists, err := d.Sessions.Exists(r.Context(), container, oldName); err != nil {
+			writeInternalErr(w, "rename session", err)
+			return
+		} else if !exists {
+			writeErr(w, http.StatusNotFound, "no such session")
+			return
+		}
+		if exists, err := d.Sessions.Exists(r.Context(), container, body.Name); err != nil {
+			writeInternalErr(w, "rename session", err)
+			return
+		} else if exists {
+			writeErr(w, http.StatusConflict, "session name already exists")
+			return
+		}
+		if err := d.Sessions.Rename(r.Context(), container, oldName, body.Name); err != nil {
+			if errors.Is(err, session.ErrInvalidName) {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if errors.Is(err, session.ErrDuplicate) {
+				writeErr(w, http.StatusConflict, err.Error())
+				return
+			}
+			if err.Error() == fmt.Sprintf("no such session %q", oldName) {
+				writeErr(w, http.StatusNotFound, "no such session")
+				return
+			}
+			writeInternalErr(w, "rename session", err)
+			return
+		}
+		_, _ = d.Events.Append("session.rename", map[string]any{"id": id, "from": oldName, "to": body.Name})
+		writeJSON(w, http.StatusOK, map[string]any{"name": body.Name})
+	}
 }
 
 // handleKillSession removes a tmux session. Killing an already-gone session

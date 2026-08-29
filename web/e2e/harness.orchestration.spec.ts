@@ -1,40 +1,7 @@
-import { expect, test, type APIRequestContext } from '@playwright/test'
-import { deleteAllProjects, engineUp } from './helpers'
+import { expect, test } from '@playwright/test'
+import { deleteAllProjects, engineUp, resetHarnessRegistry } from './helpers'
 
-// Multi-project orchestration end states, against the real backend and real
-// containers. The UI-level picking flows live in harness.inject.spec.ts;
-// this spec drives combinations through the same HTTP surface the UI uses
-// and asserts EXACT final state after each step:
-//
-//   1. three projects; nothing pre-installed anywhere
-//   2. adding a harness to the REGISTRY touches NO project — it shows up
-//      everywhere as "not installed"
-//   3. installing into a subset flips exactly those projects
-//   4. a batch command runs in every selected running container; its output
-//      comes back per project
-//   5. a stopped container is SKIPPED by batch runs, not errored
-//   6. deleting one project leaves the others byte-for-byte intact
-//
-// The vehicle is a purpose-made "combo agent": instant local install, so
-// the whole flow runs in seconds while still going through the real
-// install+validate+exec pipeline.
-
-type HarnessRow = { id: string; installed: boolean }
-
-async function createProject(request: APIRequestContext): Promise<string> {
-  const res = await request.post('/api/projects', { data: {} })
-  expect(res.ok()).toBeTruthy()
-  return ((await res.json()) as { id: string }).id
-}
-
-async function harnessStates(request: APIRequestContext, id: string): Promise<Record<string, boolean>> {
-  const res = await request.get(`/api/projects/${id}/harnesses`)
-  expect(res.ok()).toBeTruthy()
-  const body = (await res.json()) as { harnesses: HarnessRow[] }
-  return Object.fromEntries(body.harnesses.map((h) => [h.id, h.installed]))
-}
-
-async function waitForRunning(request: APIRequestContext, id: string): Promise<void> {
+async function waitForRunning(request: any, id: string) {
   for (let i = 0; i < 60; i++) {
     const res = await request.get(`/api/projects/${id}`)
     if (res.ok() && ((await res.json()) as { status: string }).status === 'running') return
@@ -43,106 +10,267 @@ async function waitForRunning(request: APIRequestContext, id: string): Promise<v
   throw new Error(`project ${id} never reached running`)
 }
 
-test.describe('multi-project orchestration end states', () => {
+async function fetchState(request: any) {
+  const res = await request.get('/api/state')
+  expect(res.ok()).toBeTruthy()
+  return (await res.json()) as {
+    projects: Record<string, { name: string; harnesses?: string[] }>
+    harnesses: Record<string, { name: string }>
+  }
+}
+
+async function gateShot(page: any, gate: string) {
+  await expect(page).toHaveScreenshot(`harness-orchestration-${gate}-desktop.png`, { fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page).toHaveScreenshot(`harness-orchestration-${gate}-mobile.png`, { fullPage: true })
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.waitForTimeout(300)
+}
+
+async function createProjectViaUI(page: any, request: any, repoUrl: string, expectedName: string) {
+  await page.getByPlaceholder(/Repo URL/).fill(repoUrl)
+  await page.getByRole('button', { name: 'Create project' }).click()
+  await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 30_000 })
+  await page.reload()
+  await expect(page.getByText(expectedName)).toBeVisible({ timeout: 10_000 })
+  const orderRes = await request.get('/api/projects')
+  const orderBody = (await orderRes.json()) as { projects: { id: string; name: string }[] }
+  const created = orderBody.projects.find((p) => p.name === expectedName)
+  if (!created) throw new Error(`project ${expectedName} not found after create`)
+  await waitForRunning(request, created.id)
+  return created.id
+}
+
+test.describe('harness installs are desired state', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
-  test('registry vs installs vs batch commands across projects', async ({ request }) => {
-    test.setTimeout(180_000) // three sandboxes, an install, several execs
-    test.skip(!(await engineUp(request)), 'Docker engine unavailable')
+  test('install 2 per project → picker → named launch → rename → restart (frontend, isolated)', async ({
+    page,
+    request,
+  }) => {
+    test.setTimeout(240_000)
+    if (!(await engineUp(request))) {
+      test.skip(true, 'Docker engine unavailable — e2e skipped')
+      return
+    }
     await deleteAllProjects(request)
+    await resetHarnessRegistry(request)
+
+    const helperInstall =
+      `printf '#!/bin/sh\\nif [ $# -gt 0 ]; then echo "helper 1.0"; exit 0; fi\\nexec bash\\n' > /usr/local/bin/helper && chmod +x /usr/local/bin/helper`
+    const addRes = await request.post('/api/harnesses', {
+      data: { name: 'Helper', command: 'helper', install: helperInstall },
+    })
+    expect(addRes.status()).toBe(201)
+
     try {
-      // --- 1. three fresh projects; builtins exist but nothing is installed ---
-      const [a, b, c] = [await createProject(request), await createProject(request), await createProject(request)]
-      for (const id of [a, b, c]) await waitForRunning(request, id)
-      for (const id of [a, b, c]) expect((await harnessStates(request, id))['opencode']).toBe(false)
+      await page.goto('/')
+      await expect(page.getByText('No projects yet.')).toBeVisible()
+      const idAlpha = await createProjectViaUI(page, request, 'https://example.com/projAlpha', 'projAlpha')
+      const idBeta = await createProjectViaUI(page, request, 'https://example.com/projBeta', 'projBeta')
+      await page.getByPlaceholder(/Repo URL/).fill('')
+      await page.getByRole('button', { name: 'Create project' }).click()
+      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 30_000 })
+      await expect(page.getByText('untitled')).toBeVisible()
+      const thirdRes = await request.get('/api/projects')
+      const thirdBody = (await thirdRes.json()) as { projects: { id: string; name: string }[] }
+      const third = thirdBody.projects.find((p) => p.name === 'untitled')
+      if (!third) throw new Error('third project not found')
+      await waitForRunning(request, third.id)
 
-      // --- 2. adding to the registry does NOT install anywhere ---
-      const installScript =
-        `printf '#!/bin/sh\\nif [ $# -gt 0 ]; then echo "combo-agent 1.0"; exit 0; fi\\necho combo-agent running\\n' > /usr/local/bin/combo-agent && chmod +x /usr/local/bin/combo-agent`
-      let res = await request.post('/api/harnesses', {
-        data: { name: 'Combo Agent', command: 'combo-agent', install: installScript },
-      })
-      expect(res.status()).toBe(201)
+      await expect(page.getByText('projAlpha')).toBeVisible()
+      await expect(page.getByText('projBeta')).toBeVisible()
+      await expect(page.getByText('untitled')).toBeVisible()
+      await gateShot(page, 'gate0-home-empty')
 
-      const registry = ((await (await request.get('/api/harnesses')).json()) as { harnesses: { id: string }[] }).harnesses
-      expect(registry.map((h) => h.id)).toContain('combo-agent')
-      // the registry entry exists, but every project still sees it absent
-      for (const id of [a, b, c]) expect((await harnessStates(request, id))['combo-agent']).toBe(false)
+      const getOrder = async () => {
+        const res = await request.get('/api/projects')
+        const body = (await res.json()) as { projects: { id: string; name: string }[] }
+        body.projects.sort((a, b) => (a.name !== b.name ? a.name.localeCompare(b.name) : a.id.localeCompare(b.id)))
+        return body.projects.map((p) => p.id)
+      }
+      let order = await getOrder()
+      const idxAlpha = order.indexOf(idAlpha)
+      const idxBeta = order.indexOf(idBeta)
+      const idxThird = order.indexOf(third.id)
 
-      // --- 3. install into exactly [a, b]; c stays untouched ---
-      res = await request.post('/api/harnesses/combo-agent/install', { data: { projectIds: [a, b] } })
-      expect(res.ok()).toBeTruthy()
-      const installResults = ((await res.json()) as { results: { status: string }[] }).results
-      expect(installResults).toHaveLength(2)
-      expect(installResults.every((r) => r.status === 'ok')).toBe(true)
-      expect((await harnessStates(request, a))['combo-agent']).toBe(true)
-      expect((await harnessStates(request, b))['combo-agent']).toBe(true)
-      expect((await harnessStates(request, c))['combo-agent']).toBe(false)
-
-      // re-installing into an already-installed project is fine (idempotent
-      // download); installing into an unknown project errors without
-      // touching the known ones
-      res = await request.post('/api/harnesses/combo-agent/install', { data: { projectIds: ['ghost1234'] } })
-      expect(res.ok()).toBeTruthy()
-      expect(((await res.json()) as { results: { status: string }[] }).results).toEqual([
-        { project: 'ghost1234', status: 'error', detail: 'no such project' },
-      ])
-      expect((await harnessStates(request, a))['combo-agent']).toBe(true)
-
-      // --- 4. a batch command runs in EVERY selected container ---
-      res = await request.post('/api/projects/exec', {
-        data: { projectIds: [a, b, c], command: 'printf combo-marker > /workspace/marker.txt' },
-      })
-      expect(res.ok()).toBeTruthy()
-      const writeResults = ((await res.json()) as { results: { status: string }[] }).results
-      expect(writeResults).toHaveLength(3)
-      expect(writeResults.every((r) => r.status === 'ok')).toBe(true)
-
-      // read them back per container — the output IS the proof
-      res = await request.post('/api/projects/exec', {
-        data: { projectIds: [a, b, c], command: 'cat /workspace/marker.txt' },
-      })
-      const readResults = ((await res.json()) as { results: { project: string; status: string; detail?: string }[] }).results
-      expect(readResults).toHaveLength(3)
-      for (const r of readResults) {
-        expect(r.status).toBe('ok')
-        expect(r.detail).toBe('combo-marker')
+      for (const harnessName of ['Crasher Demo', 'Helper']) {
+        const row = page.locator('div.flex.items-center.justify-between', { hasText: harnessName })
+        await expect(row).toBeVisible()
+        await row.getByRole('button', { name: 'Install…' }).click()
+        const picker = page.locator('div.mt-1.rounded-md').first()
+        await expect(picker).toBeVisible()
+        await picker.locator('label').nth(idxThird).locator('input').uncheck()
+        await expect(picker.getByRole('button', { name: /Install in 2 project/ })).toBeVisible()
+        await picker.getByRole('button', { name: /Install in 2 project/ }).click()
+        await expect(page.getByText('Applied to 2 projects.')).toBeVisible({ timeout: 60_000 })
       }
 
-      // --- 5. a STOPPED container is skipped, not failed ---
-      expect((await request.post(`/api/projects/${c}/stop`, { data: '' })).ok()).toBeTruthy()
-      res = await request.post('/api/projects/exec', {
-        data: { projectIds: [a, c], command: 'echo hi' },
-      })
-      const mixed = ((await res.json()) as { results: { status: string; detail?: string }[] }).results
-      expect(mixed).toHaveLength(2)
-      expect(new Set(mixed.map((r) => r.status))).toEqual(new Set(['ok', 'skipped']))
+      const rowCheck = page.locator('div.flex.items-center.justify-between', { hasText: 'Crasher Demo' })
+      await rowCheck.getByRole('button', { name: 'Install…' }).click()
+      const pickerCheck = page.locator('div.mt-1.rounded-md').first()
+      await expect(pickerCheck).toBeVisible()
+      await expect(pickerCheck.getByText('Installed')).toHaveCount(2)
+      await expect(pickerCheck.locator('label').nth(idxAlpha).locator('input')).toBeDisabled()
+      await expect(pickerCheck.locator('label').nth(idxBeta).locator('input')).toBeDisabled()
+      await expect(pickerCheck.locator('label').nth(idxThird).locator('input')).toBeEnabled()
+      await gateShot(page, 'gate1-installed')
+      await pickerCheck.getByRole('button', { name: 'Cancel' }).click()
 
-      // --- 6. deleting one project leaves the others exactly intact ---
-      res = await request.delete(`/api/projects/${b}?scope=all`)
-      expect(res.ok()).toBeTruthy()
+      const helperRow = page.locator('div.flex.items-center.justify-between', { hasText: 'Helper' })
+      await helperRow.getByRole('button', { name: 'Install…' }).click()
+      const helperPicker = page.locator('div.mt-1.rounded-md').first()
+      await expect(helperPicker).toBeVisible()
+      await expect(helperPicker.getByText('Installed')).toHaveCount(2)
+      await expect(helperPicker.locator('label').nth(idxThird).locator('input')).toBeEnabled()
+      await helperPicker.getByRole('button', { name: 'Cancel' }).click()
 
-      const list = ((await request.get('/api/projects').then((r) => r.json())) as { projects: { id: string }[] }).projects
-      expect(list.map((p) => p.id).sort()).toEqual([a, c].sort())
+      const state1 = await fetchState(request)
+      expect(state1.projects[idAlpha].harnesses).toEqual(['crasher-demo', 'helper'])
+      expect(state1.projects[idBeta].harnesses).toEqual(['crasher-demo', 'helper'])
+      expect(state1.projects[third.id].harnesses ?? []).toEqual([])
+      expect(state1.harnesses['helper']).toBeTruthy()
 
-      // a's container still runs, still installed, marker file intact
-      await waitForRunning(request, a)
-      expect((await harnessStates(request, a))['combo-agent']).toBe(true)
-      const marker = await request.post('/api/projects/exec', {
-        data: { projectIds: [a], command: 'cat /workspace/marker.txt' },
-      })
-      expect(((await marker.json()) as { results: { detail?: string }[] }).results[0].detail).toBe('combo-marker')
+      await page.getByRole('button', { name: 'Terminal' }).nth(idxAlpha).click()
+      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
+      await gateShot(page, 'gate2-terminal-open')
 
-      // c restarts cleanly too — volumes survived the stop, still no combo-agent
-      expect((await request.post(`/api/projects/${c}/start`, { data: '' })).ok()).toBeTruthy()
-      await waitForRunning(request, c)
-      expect((await harnessStates(request, c))['combo-agent']).toBe(false)
+      await page.getByRole('button', { name: '+ New Session' }).click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toBeVisible()
+      const nameInput = dialog.getByPlaceholder(/Session name/)
+      await expect(nameInput).toBeVisible()
+      await expect(nameInput).toHaveAttribute('required', '')
 
-      // registry untouched by everything above
-      const finalRegistry = ((await (await request.get('/api/harnesses')).json()) as { harnesses: { id: string }[] }).harnesses
-      expect(finalRegistry.map((h) => h.id)).toContain('combo-agent')
+      const select = dialog.locator('select')
+      const options = await select.locator('option').allTextContents()
+      expect(options).toContain('Shell (bash)')
+      expect(options.some((t) => t.includes('Crasher Demo'))).toBeTruthy()
+      expect(options.some((t) => t.includes('Helper'))).toBeTruthy()
+      expect(options.some((t) => t.includes('OpenCode'))).toBeFalsy()
+      await select.selectOption('crasher-demo')
+      await expect(dialog.getByRole('button', { name: 'Create & Attach' })).toBeDisabled()
+      await expect(dialog).toHaveScreenshot('harness-dialog-requires-name-desktop.png')
+      await page.setViewportSize({ width: 390, height: 844 })
+      await expect(dialog).toHaveScreenshot('harness-dialog-requires-name-mobile.png')
+      await page.setViewportSize({ width: 1280, height: 720 })
+      await dialog.getByRole('button', { name: 'Cancel' }).click()
+      await expect(dialog).not.toBeVisible()
+
+      await page.getByRole('button', { name: '+ New Session' }).click()
+      const d1 = page.getByRole('dialog')
+      await d1.getByPlaceholder(/Session name/).fill('shared-name')
+      await d1.locator('select').selectOption('shell')
+      await d1.getByRole('button', { name: 'Create & Attach' }).click()
+      await expect(d1).not.toBeVisible({ timeout: 15_000 })
+      const sessionButton = page.getByRole('button', { name: 'Session', exact: true })
+      await expect(sessionButton).toContainText('shared-name', { timeout: 10_000 })
+
+      const bSessions1 = await request.get(`/api/projects/${idBeta}/sessions`)
+      const bBody1 = (await bSessions1.json()) as { sessions: { name: string }[] }
+      expect(bBody1.sessions.map((s) => s.name)).not.toContain('shared-name')
+      await gateShot(page, 'gate3-shell-created')
+
+      await page.getByRole('button', { name: '+ New Session' }).click()
+      const d2 = page.getByRole('dialog')
+      await d2.getByPlaceholder(/Session name/).fill('shared-name')
+      await d2.locator('select').selectOption('crasher-demo')
+      await d2.getByRole('button', { name: 'Create & Attach' }).click()
+      await expect(d2.getByText(/already exists|duplicate/i)).toBeVisible({ timeout: 10_000 })
+      await expect(d2).toBeVisible()
+      await d2.getByPlaceholder(/Session name/).fill('my-crasher')
+      const createBtn = d2.getByRole('button', { name: 'Create & Attach' })
+      await createBtn.click()
+      await expect(d2.getByText('Launching my-crasher')).toBeVisible({ timeout: 5_000 })
+      await expect(d2.getByText('Installing harness')).not.toBeVisible()
+      await expect(d2).not.toBeVisible({ timeout: 15_000 })
+      await expect(sessionButton).toContainText('my-crasher', { timeout: 10_000 })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+      await gateShot(page, 'gate3-harness-launched')
+
+      await page.getByRole('button', { name: '+ New Session' }).click()
+      const dHelper = page.getByRole('dialog')
+      await dHelper.getByPlaceholder(/Session name/).fill('my-helper')
+      await dHelper.locator('select').selectOption('helper')
+      await dHelper.getByRole('button', { name: 'Create & Attach' }).click()
+      await expect(dHelper).not.toBeVisible({ timeout: 15_000 })
+      await expect(sessionButton).toContainText('my-helper')
+      const bSessions2 = await request.get(`/api/projects/${idBeta}/sessions`)
+      const bBody2 = (await bSessions2.json()) as { sessions: { name: string }[] }
+      expect(bBody2.sessions.map((s) => s.name)).not.toContain('my-helper')
+
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+      await page.getByRole('button', { name: 'Rename' }).click()
+      const renameDialog = page.getByRole('dialog', { name: /Rename session/ })
+      await expect(renameDialog).toBeVisible()
+      const renameInput = renameDialog.getByPlaceholder('New session name')
+      await expect(renameInput).toHaveValue('my-helper')
+      await renameInput.fill('renamed')
+      await renameDialog.getByRole('button', { name: 'Rename' }).click()
+      await expect(renameDialog).not.toBeVisible()
+      await expect(sessionButton).toContainText('renamed')
+      await expect(page).toHaveURL(/\/terminal\/renamed/)
+      await sessionButton.click()
+      await expect(page.getByRole('listbox')).toBeVisible()
+      await expect(page.getByRole('option', { name: 'renamed' })).toBeVisible()
+      await expect(page.getByRole('option', { name: 'my-crasher' })).toBeVisible()
+      await expect(page.getByRole('option', { name: 'shared-name' })).toBeVisible()
+      await gateShot(page, 'gate4-renamed')
+      await page.getByRole('option', { name: 'renamed' }).click({ timeout: 10_000 })
+      await expect(sessionButton).toContainText('renamed')
+      const bSessions3 = await request.get(`/api/projects/${idBeta}/sessions`)
+      const bBody3 = (await bSessions3.json()) as { sessions: { name: string }[] }
+      expect(bBody3.sessions.map((s) => s.name)).not.toContain('renamed')
+      await expect(page.getByText('Connected')).toBeVisible()
+      await page.locator('.xterm-screen').click()
+      await page.keyboard.type('echo after-rename\n')
+      await expect
+        .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 15_000 })
+        .toContain('after-rename')
+      const state2 = await fetchState(request)
+      expect(state2.projects[idAlpha].harnesses).toEqual(['crasher-demo', 'helper'])
+      expect(state2.projects[idBeta].harnesses).toEqual(['crasher-demo', 'helper'])
+      expect(state2.projects[third.id].harnesses ?? []).toEqual([])
+
+      await page.getByRole('button', { name: 'Restart' }).click()
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
+      await expect(sessionButton).toContainText('renamed')
+      await sessionButton.click()
+      await expect(page.getByRole('listbox')).toBeVisible()
+      await expect(page.getByRole('option', { name: 'renamed' })).toBeVisible()
+      await gateShot(page, 'gate5-restarted')
+      await page.getByRole('option', { name: 'renamed' }).click({ timeout: 10_000 })
+      await expect(sessionButton).toContainText('renamed')
+      await page.waitForTimeout(1000)
+      await page.locator('.xterm-screen').click()
+      await page.keyboard.type('echo after-restart\n')
+      await expect
+        .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 30_000 })
+        .toContain('after-restart')
+      const bSessions4 = await request.get(`/api/projects/${idBeta}/sessions`)
+      const bBody4 = (await bSessions4.json()) as { sessions: { name: string }[] }
+      expect(bBody4.sessions.map((s) => s.name)).not.toContain('renamed')
+      expect(bBody4.sessions.map((s) => s.name)).not.toContain('my-crasher')
+      const thirdSessions = await request.get(`/api/projects/${third.id}/sessions`)
+      const thirdSessBody = (await thirdSessions.json()) as { sessions: { name: string }[] }
+      expect(thirdSessBody.sessions.map((s) => s.name)).not.toContain('renamed')
+
+      await page.getByRole('button', { name: '+ New Session' }).click()
+      const d3 = page.getByRole('dialog')
+      await d3.getByPlaceholder(/Session name/).fill('renamed')
+      await d3.locator('select').selectOption('crasher-demo')
+      await d3.getByRole('button', { name: 'Create & Attach' }).click()
+      await expect(d3.getByText(/already exists|duplicate/i)).toBeVisible()
+      await d3.getByRole('button', { name: 'Cancel' }).click()
+
+      const finalState = await fetchState(request)
+      expect(finalState.projects[idAlpha].harnesses).toEqual(['crasher-demo', 'helper'])
+      expect(finalState.projects[idBeta].harnesses).toEqual(['crasher-demo', 'helper'])
+      expect(finalState.projects[third.id].harnesses ?? []).toEqual([])
     } finally {
       await deleteAllProjects(request)
+      await resetHarnessRegistry(request)
     }
   })
 })

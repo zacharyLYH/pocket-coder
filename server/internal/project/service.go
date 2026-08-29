@@ -55,12 +55,19 @@ var (
 	ErrInvalidInput = errors.New("invalid input")
 )
 
+// Installer installs a harness into a project container during recovery.
+// The project package must not depend on the session package directly.
+type Installer interface {
+	InstallHarness(ctx context.Context, container string, harnessID string) error
+}
+
 // Service is the project control plane on top of the store and Docker.
 type Service struct {
-	store   Store
-	dkr     docker.Client
-	ev      Events
-	sshKeys *sshkeys.Store
+	store     Store
+	dkr       docker.Client
+	ev        Events
+	sshKeys   *sshkeys.Store
+	installer Installer
 }
 
 // NewService wires the pipeline together.
@@ -70,6 +77,17 @@ func NewService(store Store, dkr docker.Client, ev Events) *Service {
 
 // SetSSHKeys attaches an SSH key store for container key injection.
 func (s *Service) SetSSHKeys(sk *sshkeys.Store) { s.sshKeys = sk }
+
+// SetInstaller attaches a harness installer for eager recovery.
+func (s *Service) SetInstaller(ins Installer) { s.installer = ins }
+
+// RecordInstall records that harnessID is installed in projectID.
+func (s *Service) RecordInstall(projectID, harnessID string) error {
+	if err := s.store.RecordInstall(projectID, harnessID); err != nil {
+		return s.wrapNotFound(err)
+	}
+	return nil
+}
 
 // ContainerName is the docker container backing project id.
 func ContainerName(id string) string { return "sps-" + id }
@@ -243,6 +261,18 @@ func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error
 			} else if empty {
 				if err := s.cloneRepo(ctx, id, cid, p); err != nil {
 					slog.Warn("repo re-clone after reconcile", "id", id, "err", err)
+				}
+			}
+		}
+		// Eagerly reinstall recorded harnesses (state.json is desired state).
+		// InstallHarness probes when already present, so this is cheap on a healthy volume.
+		if s.installer != nil && len(p.Harnesses) > 0 {
+			for _, hid := range p.Harnesses {
+				if err := s.installer.InstallHarness(ctx, cid, hid); err != nil {
+					if strings.Contains(err.Error(), "no such harness") {
+						continue
+					}
+					slog.Warn("harness reinstall after reconcile", "id", id, "harness", hid, "err", err)
 				}
 			}
 		}

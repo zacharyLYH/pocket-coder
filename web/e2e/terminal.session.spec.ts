@@ -29,10 +29,14 @@ test.describe('session switcher', () => {
   test('session dropdown shows current session', async ({ page }) => {
     await createProjectAndOpenTerminal(page)
 
-    const sessionSelect = page.locator('select[aria-label="Session"]')
-    await expect(sessionSelect).toBeVisible()
-    await expect(sessionSelect).toHaveValue('main')
+    const sessionButton = page.getByRole('button', { name: 'Session', exact: true })
+    await expect(sessionButton).toBeVisible()
+    await expect(sessionButton).toContainText('main')
+    await sessionButton.click()
+    await expect(page.getByRole('listbox')).toBeVisible()
+    await expect(page.getByRole('option', { name: 'main' })).toBeVisible()
     await expect(page).toHaveScreenshot('terminal-session-dropdown.png')
+    await page.keyboard.press('Escape')
   })
 
   test('new session button opens dialog', async ({ page }) => {
@@ -44,28 +48,39 @@ test.describe('session switcher', () => {
     await expect(page).toHaveScreenshot('terminal-new-session-dialog.png')
   })
 
-  test('new session dialog shows harness options', async ({ page }) => {
+  test('new session dialog shows only installed harnesses', async ({ page }) => {
     await createProjectAndOpenTerminal(page)
 
     await page.getByRole('button', { name: '+ New Session' }).click()
     const dialog = page.getByRole('dialog')
     const runSelect = dialog.locator('select')
     await expect(runSelect).toBeVisible()
-    // the real harness registry lists OpenCode (options are hidden inside select)
+    // with no installs, only Shell should be listed — harnesses are installed from the home page
     const optionTexts = await runSelect.locator('option').allTextContents()
-    expect(optionTexts.some((t) => t.includes('OpenCode'))).toBeTruthy()
+    expect(optionTexts).toContain('Shell (bash)')
+    expect(optionTexts.some((t) => t.includes('OpenCode'))).toBeFalsy()
     await expect(page).toHaveScreenshot('terminal-dialog-with-harnesses.png')
   })
 
-  test('selecting an uninstalled harness shows how to get it', async ({ page }) => {
-    await createProjectAndOpenTerminal(page)
+  test('after installing, the harness appears in the new-session picker', async ({ page }) => {
+    await page.goto('/')
+    await deleteAllProjects(page.request)
+    await page.getByRole('button', { name: 'Create project' }).click()
+    await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
+    // install opencode into the new project from the home card
+    const row = page.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
+    await row.getByRole('button', { name: 'Install…' }).click()
+    await page.getByRole('button', { name: /Install in 1 project/ }).click()
+    await expect(page.getByText('Applied to 1 project.')).toBeVisible({ timeout: 300_000 })
+    await page.getByRole('button', { name: 'Terminal' }).click()
+    await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
 
     await page.getByRole('button', { name: '+ New Session' }).click()
     const dialog = page.getByRole('dialog')
     const runSelect = dialog.locator('select')
-    await runSelect.selectOption('opencode')
-    // installs are explicit and per project: the dialog says where to do it
-    await expect(page.getByText(/Not installed in this project yet/)).toBeVisible()
+    await expect(runSelect).toBeVisible()
+    const optionTexts = await runSelect.locator('option').allTextContents()
+    expect(optionTexts.some((t) => t.includes('OpenCode'))).toBeTruthy()
     await expect(page).toHaveScreenshot('terminal-dialog-harness-selected.png')
   })
 })
@@ -76,6 +91,7 @@ test.describe('multiple sessions', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('creating a shell session adds it to the dropdown', async ({ page }) => {
+    test.setTimeout(300_000)
     test.skip(!(await engineUp(page.request)), 'Docker engine unavailable')
     await deleteAllProjects(page.request)
     try {
@@ -88,16 +104,19 @@ test.describe('multiple sessions', () => {
       await dialog.getByRole('button', { name: 'Create & Attach' }).click()
       await expect(dialog).not.toBeVisible({ timeout: 15_000 })
 
-      // the app switches to the new session and both are listed
-      const sessionSelect = page.locator('select[aria-label="Session"]')
-      await expect(sessionSelect).toHaveValue('dev', { timeout: 10_000 })
-      const optionTexts = await sessionSelect.locator('option').allTextContents()
+      // the app switches to the new session and both are listed — open the picker to prove it
+      const sessionButton = page.getByRole('button', { name: 'Session', exact: true })
+      await expect(sessionButton).toContainText('dev')
+      await sessionButton.click()
+      await expect(page.getByRole('listbox')).toBeVisible()
+      const optionTexts = await page.getByRole('listbox').locator('[role="option"]').allTextContents()
       expect(optionTexts).toContain('main')
       expect(optionTexts).toContain('dev')
+      await expect(page).toHaveScreenshot('terminal-multi-session-dropdown.png')
 
-      // switching back to main reattaches for real
-      await sessionSelect.selectOption('main')
-      await expect(sessionSelect).toHaveValue('main')
+      // switching back to main reattaches for real — click the option while the picker is open
+      await page.getByRole('option', { name: 'main' }).click({ timeout: 10_000 })
+      await expect(sessionButton).toContainText('main')
       await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
     } finally {
       await deleteAllProjects(page.request)

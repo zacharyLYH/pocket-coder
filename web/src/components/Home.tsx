@@ -61,7 +61,7 @@ export function Home({ email, onLogout, navigate }: {
           navigate={navigate}
         />
       </div>
-      <HarnessesCard projects={projects} />
+      <HarnessesCard projects={projects} onInstalled={refresh} />
       <SshKeysCard keys={sshKeys} onChanged={loadSshKeys} />
     </main>
   )

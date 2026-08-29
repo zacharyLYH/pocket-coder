@@ -1,6 +1,6 @@
 //go:build integration
 
-// Smoke test for the dev seed state (server/dev/state.mock.json): a server
+// Smoke test for the dev seed state (dev/state.mock.json): a server
 // booted against NOTHING but a state.json must recover the full desired
 // state — the project appears, the first ensure recreates its container,
 // and because a fresh engine has no repo volume, the repo is re-cloned
@@ -31,7 +31,7 @@ import (
 func TestStateMockRecovery(t *testing.T) {
 	// seed a fresh data dir with the committed mock, retargeting the login
 	// email to the one the test auth service expects
-	raw, err := os.ReadFile(filepath.Join("..", "..", "dev", "state.mock.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "dev", "state.mock.json"))
 	if err != nil {
 		t.Fatalf("read mock state: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestStateMockRecovery(t *testing.T) {
 	svc := project.NewService(project.Open(st), dkr, ev)
 	svc.SetSSHKeys(sshKeyStore)
 	h := New(Deps{Events: ev, Version: "itest", Auth: authSvc, Projects: svc,
-		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore})
+		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore, State: st})
 
 	cookie := login(t, h, &pinOut)
 	const id = "deadbeef"

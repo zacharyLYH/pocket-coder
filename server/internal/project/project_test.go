@@ -3,6 +3,7 @@ package project
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -146,7 +147,7 @@ func TestListStableOrder(t *testing.T) {
 	}
 	second, _ := s.List()
 	for i := range first {
-		if first[i] != second[i] {
+		if !reflect.DeepEqual(first[i], second[i]) {
 			t.Fatalf("list order unstable: %+v vs %+v", first, second)
 		}
 	}

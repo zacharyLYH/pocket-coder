@@ -5,7 +5,7 @@ import { ProjectPicker } from '@/components/HarnessesCard'
 import { LoginForm } from '@/components/LoginForm'
 
 // Unit tests for the terminal dialog and the shared picker — the pieces
-// with real logic (auto-naming rules, launch timeout, selection scoping)
+// with real logic (name-required, installed-only filter, launch timeout, selection scoping)
 // and for the login form's error paths. Fetch is mocked; the real terminal
 // bridge is covered by the Playwright stack tests.
 
@@ -21,7 +21,8 @@ beforeEach(() => {
   window.confirm = vi.fn(() => true)
 })
 
-const HARNESS = [{ id: 'opencode', name: 'OpenCode', command: 'opencode', install: 'npm i -g opencode-ai' }]
+const HARNESS_INSTALLED = [{ id: 'opencode', name: 'OpenCode', command: 'opencode', install: 'npm i -g opencode-ai', installed: true }]
+const HARNESS_NOT_INSTALLED = [{ id: 'opencode', name: 'OpenCode', command: 'opencode', install: 'npm i -g opencode-ai', installed: false }]
 
 describe('NewSessionDialog', () => {
   function renderDialog(over: Partial<Parameters<typeof NewSessionDialog>[0]> = {}) {
@@ -29,7 +30,7 @@ describe('NewSessionDialog', () => {
       open: true,
       onOpenChange: vi.fn(),
       projectId: 'p1',
-      harnesses: HARNESS,
+      harnesses: HARNESS_INSTALLED,
       onLaunched: vi.fn(),
       ...over,
     }
@@ -51,33 +52,51 @@ describe('NewSessionDialog', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).name).toBe('dev')
   })
 
-  it('harness sessions post the harness id, not the typed name', async () => {
+  it('harness sessions post the typed name and harness id', async () => {
     const fetchMock = mockFetch((url, init) =>
       url === '/api/projects/p1/sessions' && init?.method === 'POST'
-        ? { status: 201, body: { name: 'opencode-1', harness: 'opencode' } }
+        ? { status: 201, body: { name: 'my-session', harness: 'opencode' } }
         : undefined)
     vi.stubGlobal('fetch', fetchMock)
     const props = renderDialog()
 
+    fireEvent.change(screen.getByPlaceholderText(/Session name/), { target: { value: 'my-session' } })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'opencode' } })
-    expect(screen.getByText(/named automatically/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Create & Attach' }))
-    await waitFor(() => expect(props.onLaunched).toHaveBeenCalledWith('opencode-1'))
+    await waitFor(() => expect(props.onLaunched).toHaveBeenCalledWith('my-session'))
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
     expect(body.harnessId).toBe('opencode')
-    expect(body.name).toBeUndefined()
+    expect(body.name).toBe('my-session')
+  })
+
+  it('only installed harnesses appear in the dropdown', async () => {
+    renderDialog({ harnesses: HARNESS_NOT_INSTALLED })
+    // shell is always there, but the not-installed harness should be hidden
+    expect(screen.getByRole('combobox')).toBeInTheDocument()
+    expect(screen.queryByText('OpenCode')).not.toBeInTheDocument()
+    expect(screen.getByText('Shell (bash)')).toBeInTheDocument()
+  })
+
+  it('name is always required — harness launch without a name stays disabled', async () => {
+    renderDialog()
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'opencode' } })
+    // name empty -> disabled
+    expect(screen.getByRole('button', { name: 'Create & Attach' })).toBeDisabled()
+    fireEvent.change(screen.getByPlaceholderText(/Session name/), { target: { value: 'work' } })
+    expect(screen.getByRole('button', { name: 'Create & Attach' })).not.toBeDisabled()
   })
 
   it('a failed launch surfaces the server error inside the dialog', async () => {
     vi.stubGlobal('fetch', mockFetch(() => ({ status: 422, body: { error: 'not a CLI — it looks like it wants a display' } })))
     renderDialog()
 
+    fireEvent.change(screen.getByPlaceholderText(/Session name/), { target: { value: 'oops' } })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'opencode' } })
     fireEvent.click(screen.getByRole('button', { name: 'Create & Attach' }))
     expect(await screen.findByText(/not a CLI/)).toBeInTheDocument()
   })
 
-  it('submit is disabled while the shell name is empty', () => {
+  it('submit is disabled while the name is empty', () => {
     renderDialog()
     expect(screen.getByRole('button', { name: 'Create & Attach' })).toBeDisabled()
   })
@@ -95,6 +114,25 @@ describe('ProjectPicker', () => {
     render(<ProjectPicker {...base} picked={{ a: true, b: false }} applyLabel="Install in 1 project(s)" />)
     fireEvent.click(screen.getByRole('button', { name: /Install in 1 project/ }))
     expect(base.onApply).toHaveBeenCalledTimes(1)
+  })
+
+  it('installed projects are shown as Installed and cannot be toggled', () => {
+    const projects = [{ id: 'a', name: 'alpha' }, { id: 'b', name: 'beta' }]
+    const base = {
+      projects,
+      picked: { a: false, b: true },
+      onToggle: vi.fn(),
+      busy: false,
+      onApply: vi.fn(),
+      onCancel: () => {},
+      installed: { a: true, b: false },
+      applyLabel: 'Install in 1 project(s)',
+    }
+    render(<ProjectPicker {...base} />)
+    expect(screen.getByText('Installed')).toBeInTheDocument()
+    const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[]
+    expect(checkboxes[0].disabled).toBe(true) // alpha is installed
+    expect(checkboxes[1].disabled).toBe(false)
   })
 })
 

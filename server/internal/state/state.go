@@ -46,10 +46,11 @@ type SMTP struct {
 // Project is one sandbox project. Only what cannot be defaulted; the
 // container/volumes are derived from the id and reconciled from here.
 type Project struct {
-	Name        string `json:"name"`
-	Repo        string `json:"repo"`
-	Branch      string `json:"branch,omitempty"`
-	CloneMethod string `json:"cloneMethod,omitempty"` // "ssh" or "http" (default)
+	Name        string   `json:"name"`
+	Repo        string   `json:"repo"`
+	Branch      string   `json:"branch,omitempty"`
+	CloneMethod string   `json:"cloneMethod,omitempty"` // "ssh" or "http" (default)
+	Harnesses   []string `json:"harnesses,omitempty"`   // installed harness ids, ordered by install
 }
 
 // Harness is a CLI plugin: a global entry in "+ New Session". The map key

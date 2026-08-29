@@ -21,7 +21,7 @@ ALL_GROUPS='
 app|1|e2e/app.spec.ts e2e/sshkeys.e2e.spec.ts
 stack|2|e2e/terminal.stack.spec.ts
 sessions|3|e2e/terminal.session.spec.ts e2e/harness.inject.spec.ts e2e/harness.orchestration.spec.ts
-visual|4|e2e/home.visual.spec.ts e2e/terminal.visual.spec.ts
+visual|4|e2e/home.visual.spec.ts
 '
 
 run_group() {
@@ -30,7 +30,7 @@ run_group() {
   web=$((5170 + offset * 10))
   echo "[$name] starting: api:$api web:$web → test-results/$name.log"
   E2E_RUN_ID="$name" E2E_API_PORT="$api" E2E_WEB_PORT="$web" \
-    npx playwright test $specs > "test-results/$name.log" 2>&1 &
+    npx playwright test --config=playwright.config.ts $specs > "test-results/$name.log" 2>&1 &
   # remember pids via jobs; simplest is to wait on all and check logs below
 }
 

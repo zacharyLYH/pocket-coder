@@ -88,7 +88,7 @@ Inventory, not instructions:
 - `state.json`: gains the optional `sessions` registry described above. The
   `Document` struct grows one field; nothing existing moves. Fresh documents
   contain no `sessions` key at all.
-- `server/dev/state.mock.json`: intentionally unchanged, and it must stay
+- `dev/state.mock.json`: intentionally unchanged, and it must stay
   free of session entries even after implementation. Sessions are runtime
   objects, not desired state to seed; a seeded registry entry whose tmux
   session does not exist would either linger forever or force boot-time

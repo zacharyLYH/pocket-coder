@@ -6,14 +6,11 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { api, errMsg } from '@/lib/api'
 import { isLaunchable, type Harness } from '@/lib/types'
 
-// The launch timeout: harness installs (npm/pip) + CLI validation can
-// take a while. 3 minutes covers slow networks and large packages.
+// The launch timeout: CLI validation can take a while (freebuff downloads a platform binary on first run).
 const LAUNCH_TIMEOUT_MS = 180_000
 
-// New-session dialog: a typed name for plain shells, or a harness from the
-// registry (auto-named <harnessID>-<n> by the server). Harness launches may
-// install on first use, so they run against a generous timeout with live
-// progress text. Fields reset whenever the dialog closes.
+// New-session dialog: every session needs a user-supplied unique name;
+// harness dropdown lists only installed entries (install happens on the home page).
 export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onLaunched }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -28,6 +25,7 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
   const [launchError, setLaunchError] = useState<string | null>(null)
 
   const harness = harnesses.find((h) => h.id === type)
+  const installedHarnesses = harnesses.filter((h) => isLaunchable(h) && h.installed)
 
   function reset() {
     setName('')
@@ -37,24 +35,22 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
   }
 
   // createShell ensures a plain-shell session exists under the typed name.
-  async function createShell(name: string, signal: AbortSignal) {
-    setProgress('Starting shell session…')
+  async function createShell(sessionName: string, signal: AbortSignal) {
+    setProgress(`Launching ${sessionName}…`)
     await api(`/api/projects/${projectId}/sessions`, {
       method: 'POST',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name: sessionName }),
       signal,
     })
-    return name
+    return sessionName
   }
 
-  // createHarness launches a harness session; harness installs (npm/pip) can
-  // be slow, so it shares the launch timeout. The server picks the
-  // <harnessID>-<n> name to attach.
-  async function createHarness(id: string, signal: AbortSignal) {
-    setProgress('Installing harness (this may take a minute)…')
+  // createHarness launches a harness session under the explicit name.
+  async function createHarness(id: string, sessionName: string, signal: AbortSignal) {
+    setProgress(`Launching ${sessionName}…`)
     const created = await api<{ name?: string }>(`/api/projects/${projectId}/sessions`, {
       method: 'POST',
-      body: JSON.stringify({ harnessId: id }),
+      body: JSON.stringify({ harnessId: id, name: sessionName }),
       signal,
     })
     if (!created?.name) throw new Error('launch response missing session name')
@@ -63,23 +59,24 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
 
   async function launch(e: FormEvent) {
     e.preventDefault()
-    const isHarness = type !== 'shell'
-    if (!isHarness && !name.trim()) return
+    const trimmed = name.trim()
+    if (!trimmed) return
     setLaunching(true)
     setLaunchError(null)
     setProgress('Creating session…')
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), LAUNCH_TIMEOUT_MS)
     try {
+      const isHarness = type !== 'shell'
       const attached = isHarness
-        ? await createHarness(type, controller.signal)
-        : await createShell(name.trim(), controller.signal)
+        ? await createHarness(type, trimmed, controller.signal)
+        : await createShell(trimmed, controller.signal)
       onOpenChange(false)
       reset()
       onLaunched(attached)
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
-        setLaunchError('Launch timed out after 3 minutes — the harness may still be installing. Try again in a moment.')
+        setLaunchError('Launch timed out after 3 minutes. Try again in a moment.')
       } else {
         setLaunchError(errMsg(err))
       }
@@ -97,21 +94,14 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
           <DialogTitle>New Session</DialogTitle>
         </DialogHeader>
         <form onSubmit={launch} className="flex flex-col gap-3">
-          {!harness ? (
-            <Input
-              placeholder="Session name (e.g. dev, debug, main)"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-              required
-              disabled={launching}
-            />
-          ) : (
-            <p className="text-muted-foreground text-xs">
-              Sessions run by a harness are named automatically
-              (<span className="font-mono">{harness.id}-1</span>, …).
-            </p>
-          )}
+          <Input
+            placeholder="Session name (e.g. dev, debug, main)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+            required
+            disabled={launching}
+          />
           <div className="flex flex-col gap-1.5">
             <label className="text-muted-foreground text-xs font-medium">Run</label>
             <select
@@ -121,9 +111,9 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
               disabled={launching}
             >
               <option value="shell">Shell (bash)</option>
-              {harnesses.filter(isLaunchable).map((h) => (
+              {installedHarnesses.map((h) => (
                 <option key={h.id} value={h.id}>
-                  {h.name}{h.installed ? '' : ' — not installed in this project'}
+                  {h.name}
                 </option>
               ))}
             </select>
@@ -131,11 +121,6 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
           {harness && (
             <p className="text-muted-foreground text-xs">
               Command: <span className="font-mono">{harness.command}</span>
-            </p>
-          )}
-          {harness && !harness.installed && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              Not installed in this project yet — install it from the Harnesses card on the home page first.
             </p>
           )}
           {launching && progress && <LaunchProgress text={progress} />}
@@ -148,7 +133,7 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
             <Button type="button" variant="ghost" disabled={launching} onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={launching || (!harness && !name.trim())}>
+            <Button type="submit" disabled={launching || !name.trim()}>
               {launching ? 'Launching…' : 'Create & Attach'}
             </Button>
           </DialogFooter>

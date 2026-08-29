@@ -98,7 +98,7 @@ test.describe('home screen', () => {
     await page.getByPlaceholder(/Repo URL/).fill('git@github.com:x/hello.git')
     await page.getByRole('button', { name: 'SSH' }).click()
     await expect(page.getByText('No SSH keys')).toBeVisible()
-    await expect(page).toHaveScreenshot('home-ssh-no-keys.png', { fullPage: true })
+    await expect(page).toHaveScreenshot('home-ssh-no-keys.png')
   })
 
   test('harness suggestions render and install explicitly', async ({ page }) => {

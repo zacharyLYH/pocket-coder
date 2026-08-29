@@ -184,7 +184,9 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 		t.Fatalf("delete key1: %d %q", rec.Code, rec.Body)
 	}
 	// the harness that was installed into projects is removed from the
-	// registry — installs are live state, the registry entry is desired state
+	// registry — installs are desired state (recorded in the project), the
+	// registry entry is a separate desired state; deleting the harness leaves
+	// project records alone (reconcile skips unknown ids)
 	if rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/harnesses/my-agent"); rec.Code != http.StatusOK {
 		t.Fatalf("delete harness: %d %q", rec.Code, rec.Body)
 	}
@@ -232,9 +234,9 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 			map[string]any{"fingerprint": "sha256-_r_26MQJIPO1QjdZEfShlg", "publicKey": "ssh-ed25519 AAAA-key-two", "email": "me@example.com"},
 		},
 		"projects": map[string]any{
-			idA: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
-			// scope=repo removed the container, the record survives
-			idC: map[string]any{"name": "private", "repo": "git@github.com:me/private.git", "cloneMethod": "ssh"},
+			idA: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http", "harnesses": []any{"my-agent"}},
+			// scope=repo removed the container, the record survives (install record stays even though harness was deleted)
+			idC: map[string]any{"name": "private", "repo": "git@github.com:me/private.git", "cloneMethod": "ssh", "harnesses": []any{"my-agent"}},
 			// the failed-clone project survives too (retryable sandbox)
 			idE: map[string]any{"name": "x", "repo": "https://fail.example/x.git", "cloneMethod": "http"},
 			idF: map[string]any{"name": "untitled", "repo": "", "cloneMethod": "http"},

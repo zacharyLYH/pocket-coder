@@ -49,6 +49,13 @@ test('create a project in the UI, open its terminal, type', async ({ page }) => 
       .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 15_000 })
       .toContain('journey7')
 
+    // visual screenshots — desktop and phone variants of the same terminal
+    await expect(page).toHaveScreenshot('terminal-desktop.png', { caret: 'hide' })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForTimeout(500)
+    await expect(page).toHaveScreenshot('terminal-phone.png', { caret: 'hide' })
+    await page.setViewportSize({ width: 1280, height: 720 })
+
     // plumbing proof in the backend's own audit trail: clicking Terminal
     // created the session AND attached to it — no API help needed
     const log = readFileSync(`${DATA_DIR}/events.log`, 'utf8')
@@ -91,19 +98,23 @@ test('real OpenCode session renders through the backend terminal bridge', async 
 
     await page.getByRole('button', { name: '+ New Session' }).click()
     const dialog = page.getByRole('dialog')
+    await dialog.getByPlaceholder(/Session name/).fill('opencode-1')
     await dialog.locator('select').selectOption('opencode')
-    await expect(page.getByText(/Not installed in this project yet/)).not.toBeVisible()
     await dialog.getByRole('button', { name: 'Create & Attach' }).click()
 
     await expect(dialog).not.toBeVisible({ timeout: 240_000 })
-    const sessionSelect = page.locator('select[aria-label="Session"]')
-    await expect(sessionSelect).toHaveValue('opencode-1', { timeout: 30_000 })
+    const sessionButton = page.getByRole('button', { name: 'Session', exact: true })
+    await expect(sessionButton).toContainText('opencode-1', { timeout: 30_000 })
     await expect(page.getByText('Connected')).toBeVisible({ timeout: 30_000 })
     await expect(page.locator('.xterm-screen')).toBeVisible()
 
     // Exercise the same dropdown interaction as the reported naming bug,
     // then save the real rendered OpenCode screen for visual review.
-    await sessionSelect.selectOption('opencode-1')
+    await sessionButton.click()
+    await expect(page.getByRole('listbox')).toBeVisible()
+    await expect(page.getByRole('option', { name: 'opencode-1' })).toBeVisible()
+    await page.getByRole('option', { name: 'opencode-1' }).click()
+    await expect(sessionButton).toContainText('opencode-1')
     await expect
       .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 60_000 })
       .toMatch(/Build|Connect|Ask anything/)
@@ -113,6 +124,14 @@ test('real OpenCode session renders through the backend terminal bridge', async 
       animations: 'disabled',
       caret: 'hide',
     })
+    // mobile variant was missing — capture the same real render on a phone viewport
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForTimeout(500)
+    await expect(page).toHaveScreenshot('terminal-opencode-stack-mobile.png', {
+      animations: 'disabled',
+      caret: 'hide',
+    })
+    await page.setViewportSize({ width: 1280, height: 720 })
 
     const terminalText = await page.locator('.xterm-rows').innerText()
     expect(terminalText).toMatch(/Build|Connect|Ask anything/)

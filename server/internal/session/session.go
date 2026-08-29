@@ -400,6 +400,42 @@ func (s *Service) validateCLI(ctx context.Context, container, cmd string) error 
 	return nil
 }
 
+// Rename renames a live tmux session. The old name must exist, the new
+// name must be valid and not already taken. Live attaches survive because
+// they are bound to the tmux session id, not the name string.
+func (s *Service) Rename(ctx context.Context, container, oldName, newName string) error {
+	if !ValidName(oldName) {
+		return fmt.Errorf("%w: %q", ErrInvalidName, oldName)
+	}
+	if !ValidName(newName) {
+		return fmt.Errorf("%w: %q", ErrInvalidName, newName)
+	}
+	if oldName == newName {
+		return fmt.Errorf("%w: %s", ErrDuplicate, newName)
+	}
+	exists, err := s.Exists(ctx, container, newName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return fmt.Errorf("%w: %s", ErrDuplicate, newName)
+	}
+	res, err := s.dkr.Exec(ctx, container, []string{"tmux", "rename-session", "-t", oldName, newName}, false)
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		if strings.Contains(res.Output, "duplicate session") || strings.Contains(res.Output, "already exists") || strings.Contains(res.Output, "duplicate") {
+			return fmt.Errorf("%w: %s", ErrDuplicate, newName)
+		}
+		if strings.Contains(res.Output, "can't find session") {
+			return fmt.Errorf("no such session %q", oldName)
+		}
+		return fmt.Errorf("rename session %s: %s", oldName, strings.TrimSpace(res.Output))
+	}
+	return nil
+}
+
 // Kill terminates a session by name. Killing an already-gone session is not
 // an error (idempotent delete).
 func (s *Service) Kill(ctx context.Context, container, name string) error {
@@ -459,6 +495,9 @@ func (s *Service) LaunchNamed(ctx context.Context, container, name string, h har
 		return "", err
 	}
 	if res.ExitCode != 0 {
+		if strings.Contains(res.Output, "duplicate session") {
+			return "", fmt.Errorf("%w: %s", ErrDuplicate, name)
+		}
 		return "", fmt.Errorf("launch %s: %s", name, strings.TrimSpace(res.Output))
 	}
 	return name, nil

@@ -7,55 +7,119 @@ VERSION ?= dev
 -include server/.env
 export SPS_LOGIN_EMAIL SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD SMTP_FROM
 
-.PHONY: dev dev-seed test docker-test build check lint e2e generate web-install web-test clean
+.DEFAULT_GOAL := help
+.PHONY: help setup dev-seed test check-ci lint generate clean nuke start-local start-docker
 
-dev: ## Run the server on the host (Go toolchain; web dev server runs separately)
-	go -C server run ./cmd/server
+help: ## Show available commands
+	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-dev-seed: ## Reset server/data from server/dev/state.mock.json (real repo + harness registry; login email = SPS_LOGIN_EMAIL from server/.env)
+setup: ## First-time setup: check tools, create server/.env, install deps, seed demo data
+	@command -v go >/dev/null 2>&1 || { echo "missing: go (https://go.dev/dl/)"; exit 1; }
+	@command -v node >/dev/null 2>&1 || { echo "missing: node (https://nodejs.org/)"; exit 1; }
+	@command -v docker >/dev/null 2>&1 || { echo "missing: docker (https://docs.docker.com/get-docker/)"; exit 1; }
+	@if [ ! -f server/.env ]; then \
+		echo "SPS_LOGIN_EMAIL=you@example.com" > server/.env; \
+		echo "created server/.env — edit SPS_LOGIN_EMAIL, then re-run make setup"; \
+		exit 1; \
+	fi
+	@test -n "$(SPS_LOGIN_EMAIL)" || { echo 'SPS_LOGIN_EMAIL missing — set it in server/.env'; exit 1; }
+	@cd web && npm install
+	@$(MAKE) dev-seed
+	@echo ""
+	@echo "setup done — run:"
+	@echo "  make start-local              # backend :8080 + frontend :5173"
+	@echo "  make start-docker             # full stack via docker compose"
+	@echo "  make check-ci                 # run CI locally via act"
+
+start-local: ## Start backend + frontend locally (no docker)
+	@command -v go >/dev/null 2>&1 || { echo "missing: go (https://go.dev/dl/)"; exit 1; }
+	@command -v node >/dev/null 2>&1 || { echo "missing: node (https://nodejs.org/)"; exit 1; }
+	@test -n "$(SPS_LOGIN_EMAIL)" || { echo 'SPS_LOGIN_EMAIL missing — set it in server/.env'; exit 1; }
+	@$(MAKE) -B dev-seed
+	@trap 'kill $$(jobs -p) 2>/dev/null || true' EXIT; \
+	go -C server run ./cmd/server & \
+	cd web && npm run dev
+
+start-docker: ## Start full stack via docker compose
+	@command -v docker >/dev/null 2>&1 || { echo "missing: docker (https://docs.docker.com/get-docker/)"; exit 1; }
+	@if [ ! -f .env ]; then \
+		echo "SPS_LOGIN_EMAIL=local@example.com" > .env; \
+		echo "SMTP_HOST=smtp.gmail.com" >> .env; \
+		echo "SMTP_PORT=587" >> .env; \
+		echo "SMTP_USER=local@example.com" >> .env; \
+		echo "SMTP_PASSWORD=local" >> .env; \
+		echo "SMTP_FROM=local@example.com" >> .env; \
+	fi
+	@trap 'docker compose -f docker-compose.dev.yml down' EXIT; \
+	docker compose -f docker-compose.dev.yml up --build
+
+dev-seed: ## Reset server/data from dev/state.mock.json using SPS_LOGIN_EMAIL
 	@test -n "$(SPS_LOGIN_EMAIL)" || { echo 'SPS_LOGIN_EMAIL missing — set it in server/.env'; exit 1; }
 	@rm -rf server/data
 	@mkdir -p server/data
-	@sed "s/dev@example.com/$(SPS_LOGIN_EMAIL)/" server/dev/state.mock.json > server/data/state.json
+	@sed "s/dev@example.com/$(SPS_LOGIN_EMAIL)/" dev/state.mock.json > server/data/state.json
 	@chmod 600 server/data/state.json
-	@echo "seeded server/data/state.json — login as $(SPS_LOGIN_EMAIL) (PIN by email when SMTP_* is set in server/.env, else the server log)"
+	@echo "seeded server/data/state.json — login as $(SPS_LOGIN_EMAIL) (PIN in server log unless SMTP_* set)"
 
-test: ## Run Go unit tests
+test: ## Full stack tests: Go (unit+integration) + web (unit+build+e2e)
 	go -C server test ./...
+	go -C server test -tags integration -count=1 ./internal/...
+	cd web && npm run test:unit
+	cd web && npm run build
+	cd web && npm run test:e2e:parallel
 
-docker-test: ## Docker integration tests (requires a running Docker engine)
-	go -C server test -tags integration -count=1 ./internal/docker/
+check-ci: ## Run CI workflow locally via act (mirrors GitHub Actions exactly)
+	@command -v docker >/dev/null 2>&1 || { echo "missing: docker (https://docs.docker.com/get-docker/)"; exit 1; }; \
+	if ! command -v act >/dev/null 2>&1; then \
+		echo "act not found — installing ..."; \
+		OS=$$(uname -s); \
+		ARCH=$$(uname -m); \
+		case "$$OS" in \
+			Darwin) OS=Darwin ;; \
+			Linux) OS=Linux ;; \
+			*) echo "unsupported OS: $$OS — install act manually: https://github.com/nektos/act"; exit 1 ;; \
+		esac; \
+		case "$$ARCH" in \
+			x86_64) ARCH=amd64 ;; \
+			aarch64|arm64) ARCH=arm64 ;; \
+			*) echo "unsupported arch: $$ARCH"; exit 1 ;; \
+		esac; \
+		VERSION=$$(curl -sL https://api.github.com/repos/nektos/act/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/'); \
+		URL="https://github.com/nektos/act/releases/download/v$$VERSION/act_$$VERSION"_"$$OS"_"$$ARCH".tar.gz"; \
+		TMPDIR=$$(mktemp -d); \
+		curl -sL "$$URL" -o "$$TMPDIR/act.tar.gz"; \
+		tar -xzf "$$TMPDIR/act.tar.gz" -C "$$TMPDIR"; \
+		INSTALL_DIR="/usr/local/bin"; \
+		[ -w "$$INSTALL_DIR" ] || INSTALL_DIR="$$HOME/.local/bin"; \
+		mkdir -p "$$INSTALL_DIR"; \
+		cp "$$TMPDIR/act" "$$INSTALL_DIR/act"; \
+		chmod +x "$$INSTALL_DIR/act"; \
+		rm -rf "$$TMPDIR"; \
+		[ "$$INSTALL_DIR" = "/usr/local/bin" ] || export PATH="$$INSTALL_DIR:$$PATH"; \
+	fi; \
+	command -v act >/dev/null 2>&1 || { echo "act installation failed — install manually: https://github.com/nektos/act"; exit 1; }; \
+	trap 'docker compose -f docker-compose.dev.yml down 2>/dev/null || true' EXIT; \
+	act -W .github/workflows/ci.yml \
+		-P ubuntu-latest=nektos/act-environments-ubuntu:22.04 \
+		--container-options "--privileged" \
+		--env GIT_SSL_NO_VERIFY=true \
+		--log-prefix-job-id \
+		--rm
 
-build: ## Build the server binary into bin/
-	mkdir -p bin
-	go -C server build -ldflags "-X main.version=$(VERSION)" -o ../bin/sps ./cmd/server
-
-lint: ## Format + vet (Go) and lint (web)
+lint: ## Format check + vet + web lint
 	cd server && test -z "$$(gofmt -l .)"
 	go -C server vet ./...
 	cd web && npm run lint
 
-check: ## Lint, test, typecheck/build the web app, run FE unit + e2e tests (e2e needs Docker)
-	$(MAKE) lint
-	go -C server test ./...
-	cd web && npm run test:unit
-	cd web && npm run build
-	cd web && npm run test:e2e
-
-e2e: ## Stub — the end-to-end compose flow lands in Phase 6 (see docs/plan.md)
-	@echo "e2e: not implemented until Phase 6"
-
-web-install: ## Install web dependencies
-	cd web && npm install
-
-web-test: ## Run web e2e tests (real backend; needs Go toolchain + Docker engine)
-	cd web && npm run test:e2e
-
-web-test-parallel: ## Run web e2e tests in parallel, one process per test type
-	cd web && npm run test:e2e:parallel
-
-generate: ## Regenerate Go mocks (mockery) into server/mocks
+generate: ## Regenerate Go mocks
 	cd server && go generate ./...
 
-clean:
+clean: ## Remove build artifacts
 	rm -rf bin web/dist web/test-results web/playwright-report
+
+nuke: ## Teardown containers, volumes, network and local state
+	-docker rm -f $$(docker ps -aq --filter name=sps-) 2>/dev/null || true
+	-docker volume rm $$(docker volume ls -q --filter name=sps-) 2>/dev/null || true
+	-docker network rm sps-net 2>/dev/null || true
+	rm -rf server/data
+	@echo "nuked sps containers, volumes, network and server/data"

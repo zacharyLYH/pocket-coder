@@ -87,6 +87,9 @@ func main() {
 	svc := project.NewService(project.Open(st), dkr, ev)
 	svc.SetSSHKeys(sshKeyStore)
 
+	sessions := session.New(dkr)
+	svc.SetInstaller(&harnessInstaller{harnesses: harnesses, sessions: sessions})
+
 	ev.Append("boot", map[string]any{"version": version})
 	if len(seeded) > 0 {
 		ev.Append("harness.seed", map[string]any{"written": seeded})
@@ -95,8 +98,8 @@ func main() {
 
 	srv := &http.Server{Addr: cfg.Bind, Handler: httpapi.New(httpapi.Deps{
 		Events: ev, Version: version, Auth: authSvc, Projects: svc,
-		Sessions: session.New(dkr), Harnesses: harnesses,
-		SSHKeys: sshKeyStore,
+		Sessions: sessions, Harnesses: harnesses,
+		SSHKeys: sshKeyStore, State: st,
 	})}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -124,6 +127,22 @@ func main() {
 		}
 		logger.Info("shutdown complete")
 	}
+}
+
+// harnessInstaller adapts session installation for project recovery without
+// letting the project package import session (the SetSSHKeys pattern).
+type harnessInstaller struct {
+	harnesses *harness.Store
+	sessions  *session.Service
+}
+
+func (h *harnessInstaller) InstallHarness(ctx context.Context, container string, harnessID string) error {
+	har, err := h.harnesses.Get(harnessID)
+	if err != nil {
+		// unknown harness — record names an id that no longer exists, skip it
+		return nil
+	}
+	return h.sessions.InstallHarness(ctx, container, har)
 }
 
 func smtpFromConfig(cfg *config.Config) *state.SMTP {

@@ -83,6 +83,11 @@ func handleInstallHarness(d Deps) http.HandlerFunc {
 		results := runInProjects(d, r, body.ProjectIDs, func(container string) (string, error) {
 			return "", d.Sessions.InstallHarness(r.Context(), container, h)
 		})
+		for i, res := range results {
+			if i < len(body.ProjectIDs) && res.Status == "ok" {
+				_ = d.Projects.RecordInstall(body.ProjectIDs[i], id)
+			}
+		}
 		_, _ = d.Events.Append("harness.install", map[string]any{"id": id, "results": results})
 		writeJSON(w, http.StatusOK, map[string]any{"results": results})
 	}

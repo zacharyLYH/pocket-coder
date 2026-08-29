@@ -73,6 +73,19 @@ export function TerminalView({ projectId, initialSession, onBack }: {
     }
   }
 
+  async function rename(newName: string) {
+    await api(`/api/projects/${projectId}/sessions/${current}/rename`, {
+      method: 'POST',
+      body: JSON.stringify({ name: newName }),
+    })
+    const old = current
+    setCurrent(newName)
+    setError(null)
+    // keep session list in sync; the renamed session stays attached so no redial needed
+    setSessions((prev) => prev.map((s) => (s.name === old ? { name: newName } : s)))
+    refreshSessions()
+  }
+
   function onLaunched(name: string) {
     refreshSessions()
     setCurrent(name)
@@ -91,6 +104,7 @@ export function TerminalView({ projectId, initialSession, onBack }: {
         onSwitch={switchSession}
         onNewSession={() => setNewDialogOpen(true)}
         onRestart={restart}
+        onRename={rename}
         onKill={kill}
       />
 
