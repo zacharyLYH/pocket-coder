@@ -128,4 +128,30 @@ test.describe('home screen', () => {
       await deleteAllProjects(page.request)
     }
   })
+
+  test('busy overlay appears during harness install', async ({ page, request }) => {
+    test.skip(!(await engineUp(request)), 'Docker engine unavailable')
+    await deleteAllProjects(page.request)
+    await resetHarnessRegistry(page.request)
+    try {
+      await page.route('/api/harnesses/crasher-demo/install', async (route) => {
+        await new Promise((r) => setTimeout(r, 2000))
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ results: [{ project: 'p1', status: 'ok' }] }) })
+      })
+      await page.goto('/')
+      await page.getByRole('button', { name: 'Create project' }).click()
+      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
+      await expect(page.getByText('Crasher Demo')).toBeVisible()
+
+      const row = page.locator('div.flex.items-center.justify-between', { hasText: 'Crasher Demo' })
+      await row.getByRole('button', { name: 'Install…' }).click()
+      await page.getByRole('button', { name: /Install in 1 project/ }).click()
+
+      await expect(page.locator('p.text-muted-foreground').filter({ hasText: 'Working…' })).toBeVisible({ timeout: 5_000 })
+      await expect(page).toHaveScreenshot('home-busy-installing.png')
+    } finally {
+      await deleteAllProjects(page.request)
+    }
+  })
 })
+

@@ -15,7 +15,7 @@ type RowMsg = { kind: 'ok' | 'error'; text: string }
 // explicit and synchronous: pick the projects, the work happens now, and
 // per-project results (or errors) surface right here. New projects are
 // never auto-injected — they appear in the pickers and the user decides.
-export function HarnessesCard({ projects, onInstalled }: { projects: Project[]; onInstalled?: () => void }) {
+export function HarnessesCard({ projects, onInstalled, onBusyChange }: { projects: Project[]; onInstalled?: () => void; onBusyChange?: (busy: boolean) => void }) {
   const [harnesses, setHarnesses] = useState<Harness[]>([])
   const [pickerFor, setPickerFor] = useState<string | null>(null) // harness id or 'command'
   const [picked, setPicked] = useState<Record<string, boolean>>({})
@@ -31,6 +31,8 @@ export function HarnessesCard({ projects, onInstalled }: { projects: Project[]; 
   }
 
   useEffect(() => { load() }, [])
+
+  useEffect(() => { onBusyChange?.(busyKey !== null) }, [busyKey, onBusyChange])
 
   function isInstalled(projectId: string, harnessId: string) {
     const p = projects.find((x) => x.id === projectId)

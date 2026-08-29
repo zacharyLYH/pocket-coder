@@ -22,9 +22,9 @@ async function fetchState(request: any) {
 async function gateShot(page: any, gate: string) {
   await expect(page).toHaveScreenshot(`harness-orchestration-${gate}-desktop.png`, { fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
+  await page.waitForTimeout(300)
   await expect(page).toHaveScreenshot(`harness-orchestration-${gate}-mobile.png`, { fullPage: true })
   await page.setViewportSize({ width: 1280, height: 720 })
-  await page.waitForTimeout(300)
 }
 
 async function createProjectViaUI(page: any, request: any, repoUrl: string, expectedName: string) {

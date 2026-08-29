@@ -35,17 +35,6 @@
       "command": "opencode",
       "install": "npm i -g opencode-ai"
     },
-    "opencode-dev": {
-      "id": "opencode-dev",
-      "name": "OpenCode Dev",
-      "command": "opencode",
-      "install": "npm i -g opencode-ai@latest",
-      "configPath": "/root/.config/opencode/opencode.json",
-      "config": {
-        "theme": "dark",
-        "autoupdate": true
-      }
-    },
     "terminal": {
       "id": "terminal",
       "name": "Terminal",
