@@ -1,7 +1,7 @@
-import { expect, test } from '@playwright/test'
+import { expect, type APIRequestContext, type Page, test } from '@playwright/test'
 import { deleteAllProjects, engineUp, resetHarnessRegistry } from './helpers'
 
-async function waitForRunning(request: any, id: string) {
+async function waitForRunning(request: APIRequestContext, id: string) {
   for (let i = 0; i < 60; i++) {
     const res = await request.get(`/api/projects/${id}`)
     if (res.ok() && ((await res.json()) as { status: string }).status === 'running') return
@@ -10,7 +10,7 @@ async function waitForRunning(request: any, id: string) {
   throw new Error(`project ${id} never reached running`)
 }
 
-async function fetchState(request: any) {
+async function fetchState(request: APIRequestContext) {
   const res = await request.get('/api/state')
   expect(res.ok()).toBeTruthy()
   return (await res.json()) as {
@@ -19,7 +19,7 @@ async function fetchState(request: any) {
   }
 }
 
-async function gateShot(page: any, gate: string) {
+async function gateShot(page: Page, gate: string) {
   await expect(page).toHaveScreenshot(`harness-orchestration-${gate}-desktop.png`, { fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
   await page.waitForTimeout(300)
@@ -27,7 +27,7 @@ async function gateShot(page: any, gate: string) {
   await page.setViewportSize({ width: 1280, height: 720 })
 }
 
-async function createProjectViaUI(page: any, request: any, repoUrl: string, expectedName: string) {
+async function createProjectViaUI(page: Page, request: APIRequestContext, repoUrl: string, expectedName: string) {
   await page.getByPlaceholder(/Repo URL/).fill(repoUrl)
   await page.getByRole('button', { name: 'Create project' }).click()
   await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 30_000 })
@@ -89,7 +89,7 @@ test.describe('harness installs are desired state', () => {
         body.projects.sort((a, b) => (a.name !== b.name ? a.name.localeCompare(b.name) : a.id.localeCompare(b.id)))
         return body.projects.map((p) => p.id)
       }
-      let order = await getOrder()
+      const order = await getOrder()
       const idxAlpha = order.indexOf(idAlpha)
       const idxBeta = order.indexOf(idBeta)
       const idxThird = order.indexOf(third.id)

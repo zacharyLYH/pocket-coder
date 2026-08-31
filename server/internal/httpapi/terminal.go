@@ -320,7 +320,6 @@ func handleListSessions(d Deps) http.HandlerFunc {
 	}
 }
 
-
 func handleCreateSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")

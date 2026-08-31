@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, type APIRequestContext, type Page, test } from '@playwright/test'
 import { deleteAllProjects, engineUp } from './helpers'
 
 // The home-page injection flow, end to end against the real backend:
@@ -14,19 +14,19 @@ import { deleteAllProjects, engineUp } from './helpers'
 // while still exercising the real install+validate pipeline. Installed state
 // is verified through the backend's own per-project probe.
 
-async function createProjectViaUI(page: any) {
+async function createProjectViaUI(page: Page) {
   await page.getByPlaceholder(/Repo URL/).fill('')
   await page.getByRole('button', { name: 'Create project' }).click()
   await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 30_000 })
 }
 
-async function projectOrder(request: any): Promise<string[]> {
+async function projectOrder(request: APIRequestContext): Promise<string[]> {
   const res = await request.get('/api/projects')
   const body = (await res.json()) as { projects: { id: string }[] }
   return body.projects.map((p) => p.id)
 }
 
-async function crasherInstalled(request: any, id: string): Promise<boolean | undefined> {
+async function crasherInstalled(request: APIRequestContext, id: string): Promise<boolean | undefined> {
   const res = await request.get(`/api/projects/${id}/harnesses`)
   expect(res.ok()).toBeTruthy()
   const body = (await res.json()) as { harnesses: { id: string; installed: boolean }[] }

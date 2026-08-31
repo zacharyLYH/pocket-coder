@@ -1,7 +1,7 @@
-import { expect, test } from '@playwright/test'
+import { expect, type APIRequestContext, test } from '@playwright/test'
 import { deleteAllProjects, engineUp, resetHarnessRegistry } from './helpers'
 
-async function waitForRunning(request: any, id: string) {
+async function waitForRunning(request: APIRequestContext, id: string) {
   for (let i = 0; i < 60; i++) {
     const res = await request.get(`/api/projects/${id}`)
     if (res.ok() && ((await res.json()) as { status: string }).status === 'running') return
@@ -11,7 +11,7 @@ async function waitForRunning(request: any, id: string) {
 }
 
 // Read a marker file's mtime from inside the container. Returns 0 if absent.
-async function markerMtime(request: any, id: string): Promise<number> {
+async function markerMtime(request: APIRequestContext, id: string): Promise<number> {
   const res = await request.post('/api/projects/exec', {
     data: { projectIds: [id], command: 'stat -c %Y /tmp/harness-started 2>/dev/null || echo 0' },
   })
