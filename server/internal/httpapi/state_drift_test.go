@@ -144,7 +144,7 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 		t.Fatalf("create D: %d %q", codeD, idD)
 	}
 	// a failed clone returns an error but KEEPS the project record on
-	// purpose: the sandbox is up, the user can retry the clone. The failed
+	// purpose: the project is up, the user can retry the clone. The failed
 	// response carries no id — the audit trail is the record of it.
 	codeE, _ := create(`{"repoUrl":"https://fail.example/x.git"}`)
 	if codeE == http.StatusCreated {
@@ -152,11 +152,11 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 	}
 	idE := projectIDByRepo(t, d, "https://fail.example/x.git")
 	statetest.AssertSection(t, st.Path(), "projects", map[string]any{
-		idA: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
-		idB: map[string]any{"name": "untitled", "repo": "", "cloneMethod": "http"},
-		idC: map[string]any{"name": "private", "repo": "git@github.com:me/private.git", "cloneMethod": "ssh"},
-		idD: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "branch": "dev", "cloneMethod": "http"},
-		idE: map[string]any{"name": "x", "repo": "https://fail.example/x.git", "cloneMethod": "http"},
+		idA: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http",},
+		idB: map[string]any{"name": "untitled", "repo": "", "cloneMethod": "http",},
+		idC: map[string]any{"name": "private", "repo": "git@github.com:me/private.git", "cloneMethod": "ssh",},
+		idD: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "branch": "dev", "cloneMethod": "http",},
+		idE: map[string]any{"name": "x", "repo": "https://fail.example/x.git", "cloneMethod": "http",},
 	})
 
 	// ─── 4. interleaved operations ───────────────────────────────────────
@@ -237,7 +237,7 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 			idA: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http", "harnesses": []any{"my-agent"}, "sessions": map[string]any{"fake-1": map[string]any{"harness": "fake"}}},
 			// scope=repo removed the container, the record survives (install record stays even though harness was deleted)
 			idC: map[string]any{"name": "private", "repo": "git@github.com:me/private.git", "cloneMethod": "ssh", "harnesses": []any{"my-agent"}},
-			// the failed-clone project survives too (retryable sandbox)
+			// the failed-clone project survives too (retryable project)
 			idE: map[string]any{"name": "x", "repo": "https://fail.example/x.git", "cloneMethod": "http"},
 			idF: map[string]any{"name": "untitled", "repo": "", "cloneMethod": "http"},
 		},

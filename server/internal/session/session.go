@@ -450,6 +450,33 @@ func (s *Service) Rename(ctx context.Context, container, oldName, newName string
 	return nil
 }
 
+// Inject sends Ctrl+C, then the command, then Enter to a tmux session.
+func (s *Service) Inject(ctx context.Context, container, name, command string) error {
+	if !ValidName(name) {
+		return fmt.Errorf("%w: %q", ErrInvalidName, name)
+	}
+	if strings.TrimSpace(command) == "" {
+		return errors.New("empty command")
+	}
+	exists, err := s.Exists(ctx, container, name)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("no such session %q", name)
+	}
+	// Ctrl+C to interrupt any foreground process; ignore error — session may be idle.
+	_, _ = s.dkr.Exec(ctx, container, []string{"tmux", "send-keys", "-t", name, "C-c"}, false)
+	res, err := s.dkr.Exec(ctx, container, []string{"tmux", "send-keys", "-t", name, command, "Enter"}, false)
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("inject into %s: %s", name, strings.TrimSpace(res.Output))
+	}
+	return nil
+}
+
 // Kill terminates a session by name. Killing an already-gone session is not
 // an error (idempotent delete).
 func (s *Service) Kill(ctx context.Context, container, name string) error {

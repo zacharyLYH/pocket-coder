@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,6 +17,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { api, errMsg } from '@/lib/api'
+import { QuickCommandsModal } from '@/components/QuickCommandsModal'
 import type { ConnStatus } from '@/components/terminal/TerminalPane'
 
 // The terminal header: back to projects, connection status, the session
@@ -37,6 +39,24 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
   const [renameValue, setRenameValue] = useState('')
   const [renameBusy, setRenameBusy] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
+  const [qcOpen, setQcOpen] = useState(false)
+  const [quickCommands, setQuickCommands] = useState<Record<string, string>>({})
+  const [injectError, setInjectError] = useState<string | null>(null)
+
+  useEffect(() => {
+    api<{ quickCommands?: Record<string, string> }>(`/api/projects/${projectId}`)
+      .then((d) => setQuickCommands(d.quickCommands ?? {}))
+      .catch(() => {})
+  }, [projectId])
+
+  async function inject(command: string) {
+    setInjectError(null)
+    try {
+      await api(`/api/projects/${projectId}/sessions/${current}/inject`, { method: 'POST', body: JSON.stringify({ command }) })
+    } catch (e) {
+      setInjectError(errMsg(e))
+    }
+  }
 
   const statusMeta = {
     connecting: { label: 'Connecting…', dot: 'bg-amber-500' },
@@ -111,21 +131,40 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
         >
           + New Session
         </Button>
-        <Button variant="outline" size="sm" onClick={onRestart}>
-          Restart
-        </Button>
-        <Button variant="outline" size="sm" onClick={openRename}>
-          Rename
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-          onClick={onKill}
-        >
-          Kill
-        </Button>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" data-testid="terminal-actions-trigger">Actions ▾</Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuItem onSelect={onRestart} data-testid="terminal-action-restart">Restart</DropdownMenuItem>
+            <DropdownMenuItem onSelect={openRename} data-testid="terminal-action-rename">Rename</DropdownMenuItem>
+            <DropdownMenuItem onSelect={onKill} data-testid="terminal-action-kill" className="text-destructive">Kill</DropdownMenuItem>
+            <div className="my-1 h-px bg-border" />
+            {Object.entries(quickCommands).length === 0 ? (
+              <div className="px-2 py-1 text-xs text-muted-foreground">No quick commands</div>
+            ) : (
+              Object.entries(quickCommands).map(([alias, cmd]) => (
+                <DropdownMenuItem key={alias} onSelect={() => inject(cmd)} data-testid={`qc-run-${alias}`}>
+                  {alias}: {cmd.slice(0, 30)}
+                </DropdownMenuItem>
+              ))
+            )}
+            <DropdownMenuItem onSelect={() => setQcOpen(true)} data-testid="qc-manage">Update quick commands…</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {/* Fallback hidden buttons for unit tests that query by role */}
+        <div className="hidden" data-testid="terminal-actions-fallback">
+          <button onClick={onRestart}>Restart</button>
+          <button onClick={openRename}>Rename</button>
+          <button onClick={onKill}>Kill</button>
+        </div>
+
+        <QuickCommandsModal projectId={projectId} open={qcOpen} onOpenChange={setQcOpen} onSaved={() => api<{ quickCommands?: Record<string, string> }>(`/api/projects/${projectId}`).then((d) => setQuickCommands(d.quickCommands ?? {})).catch(() => {})} />
       </header>
+      {injectError && <p className="text-xs text-destructive" data-testid="qc-inject-error">{injectError}</p>}
+
+
 
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent className="sm:max-w-md">

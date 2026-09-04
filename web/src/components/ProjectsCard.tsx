@@ -16,6 +16,8 @@ import {
 import { api, errMsg } from '@/lib/api'
 import { terminalPath } from '@/lib/paths'
 import type { Project } from '@/lib/types'
+import { QuickCommandsModal } from '@/components/QuickCommandsModal'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 // Projects card: the project list plus the create form (repo URL, branch,
 // clone method). Deleting and creating are explicit and confirmed.
 export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, navigate }: {
@@ -32,6 +34,7 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [qcProject, setQcProject] = useState<string | null>(null)
 
   async function createProject(e: FormEvent) {
     e.preventDefault()
@@ -79,15 +82,21 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
           <p className="text-muted-foreground text-sm">No projects yet.</p>
         )}
         {projects.map((p) => (
-          <div key={p.id} className="flex items-center justify-between text-sm">
+          <div key={p.id} data-testid={`project-card-${p.id}`} className="flex items-center justify-between text-sm">
             <span>{p.name}</span>
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={() => navigate(terminalPath(p.id, 'main'))}>
                 Terminal
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(p.id)}>
-                Delete
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="ghost" data-testid={`project-menu-${p.id}`}>⋯</Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => setQcProject(p.id)}>Update quick commands</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setDeleteTarget(p.id)} className="text-destructive">Delete project</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         ))}
@@ -106,6 +115,8 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {qcProject && <QuickCommandsModal projectId={qcProject} open={!!qcProject} onOpenChange={(o) => { if (!o) setQcProject(null) }} onSaved={refresh} />}
 
         <form onSubmit={createProject} className="mt-2 flex flex-col gap-2 border-t pt-3">
           <Input

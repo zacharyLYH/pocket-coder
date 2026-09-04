@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { TerminalView } from '@/components/terminal/TerminalView'
 import { LoginForm } from '@/components/LoginForm'
 import { Home } from '@/components/Home'
+import { PreviewSurface } from '@/components/PreviewSurface'
 import { parseTerminalPath } from '@/lib/paths'
 
 type AuthState = 'loading' | 'out' | 'in'
@@ -55,8 +56,13 @@ export default function App() {
         projectId={terminal.projectId}
         initialSession={terminal.session}
         onBack={() => navigate('/')}
+        onOpenPreview={() => window.open(`/preview/${encodeURIComponent(terminal.projectId)}`, '_blank')}
       />
     )
+  }
+  const preview = path.match(/^\/preview\/([^/]+)$/)
+  if (preview) {
+    return <PreviewSurface projectId={decodeURIComponent(preview[1])} onBack={() => navigate('/')} />
   }
   return <Home email={email} onLogout={() => setState('out')} navigate={navigate} />
 }

@@ -39,12 +39,12 @@ func newService(t *testing.T) (*Service, *dockermocks.MockClient, *state.Store, 
 	return NewService(Open(st), d, ev), d, st, dataDir
 }
 
-func expectSandboxReady(d *dockermocks.MockClient, id *string) {
+func expectProjectReady(d *dockermocks.MockClient, id *string) {
 	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	d.EXPECT().InspectImage(mock.Anything, SandboxImage).Return(nil)
+	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.MatchedBy(func(sp docker.Spec) bool {
 		*id = sp.Name
-		return strings.HasPrefix(sp.Name, "sps-") && sp.Image == SandboxImage &&
+		return strings.HasPrefix(sp.Name, "sps-") && sp.Image == ProjectImage &&
 			sp.Writable && len(sp.Volumes) == 2
 	})).Return("cid123", nil)
 }
@@ -73,7 +73,7 @@ func types(evs []events.Event) []string {
 func TestCreateBlank(t *testing.T) {
 	s, d, _, _ := newService(t)
 	var name string
-	expectSandboxReady(d, &name)
+	expectProjectReady(d, &name)
 
 	id, p, err := s.Create(t.Context(), "", "", "")
 	if err != nil {
@@ -99,7 +99,7 @@ func TestCreateClonesInsideContainer(t *testing.T) {
 	for _, tc := range []struct{ branch string }{{""}, {"main"}} {
 		s, d, _, _ := newService(t)
 		var cid string
-		expectSandboxReady(d, &cid)
+		expectProjectReady(d, &cid)
 
 		wantArgs := []string{"git", "clone"}
 		if tc.branch != "" {
@@ -128,10 +128,10 @@ func TestCreateClonesInsideContainer(t *testing.T) {
 	}
 }
 
-func TestCreateCloneFailureKeepsSandbox(t *testing.T) {
+func TestCreateCloneFailureKeepsProject(t *testing.T) {
 	s, d, _, _ := newService(t)
 	var cname string
-	expectSandboxReady(d, &cname)
+	expectProjectReady(d, &cname)
 	d.EXPECT().Exec(mock.Anything, "cid123", []string{"git", "clone", testRepo, repoTarget + "/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 128, Output: "fatal: repository not found"}, nil)
 
@@ -142,7 +142,7 @@ func TestCreateCloneFailureKeepsSandbox(t *testing.T) {
 	}
 	entries, listErr := s.List()
 	if listErr != nil || len(entries) != 1 {
-		t.Fatalf("sandbox should survive clone failure: %v %v", entries, listErr)
+		t.Fatalf("project should survive clone failure: %v %v", entries, listErr)
 	}
 	foundErr := false
 	for _, e := range eventsOf(t, s) {
@@ -155,13 +155,13 @@ func TestCreateCloneFailureKeepsSandbox(t *testing.T) {
 	}
 }
 
-func TestCreateBuildsMissingSandboxImage(t *testing.T) {
+func TestCreateBuildsMissingProjectImage(t *testing.T) {
 	s, d, _, _ := newService(t)
 	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	d.EXPECT().InspectImage(mock.Anything, SandboxImage).
+	d.EXPECT().InspectImage(mock.Anything, ProjectImage).
 		Return(fmt.Errorf("inspect: %w", docker.ErrNotFound))
 	d.EXPECT().Build(mock.Anything, mock.MatchedBy(func(o docker.BuildOptions) bool {
-		return o.Tag == SandboxImage && o.InputStream != nil
+		return o.Tag == ProjectImage && o.InputStream != nil
 	}), mock.Anything).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
 
@@ -173,7 +173,7 @@ func TestCreateBuildsMissingSandboxImage(t *testing.T) {
 func TestCreateRunFailureCleansUpMetadata(t *testing.T) {
 	s, d, _, _ := newService(t)
 	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	d.EXPECT().InspectImage(mock.Anything, SandboxImage).Return(nil)
+	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.Anything).Return("", errors.New("engine on fire"))
 
 	if _, _, err := s.Create(t.Context(), "", "", ""); err == nil {
@@ -198,7 +198,7 @@ func TestCreateRejectsOptionInjection(t *testing.T) {
 func TestStartStopRestartEvents(t *testing.T) {
 	s, d, _, _ := newService(t)
 	var cname string
-	expectSandboxReady(d, &cname)
+	expectProjectReady(d, &cname)
 	id, _, err := s.Create(t.Context(), "", "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -310,7 +310,7 @@ func TestDefaultName(t *testing.T) {
 func TestCreateCloneExecErrorSurfaces(t *testing.T) {
 	s, d, _, _ := newService(t)
 	var cname string
-	expectSandboxReady(d, &cname)
+	expectProjectReady(d, &cname)
 	d.EXPECT().Exec(mock.Anything, "cid123", mock.Anything, false).
 		Return(docker.ExecResult{}, errors.New("exec infra exploded"))
 
@@ -388,7 +388,7 @@ func TestEnsureContainerMissingReconciles(t *testing.T) {
 	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
 	// reconciliation recreates the container
 	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	d.EXPECT().InspectImage(mock.Anything, SandboxImage).Return(nil)
+	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
 	// second Inspect: report the reconciled container as running
 	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
@@ -423,7 +423,7 @@ func TestEnsureContainerReconcileEvent(t *testing.T) {
 	}
 	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
 	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	d.EXPECT().InspectImage(mock.Anything, SandboxImage).Return(nil)
+	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
 	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
 	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
@@ -448,7 +448,7 @@ func TestEnsureContainerReconcileReclonesEmptyVolume(t *testing.T) {
 	}
 	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
 	var cid string
-	expectSandboxReady(d, &cid)
+	expectProjectReady(d, &cid)
 	// fresh engine: the repo volume came up empty...
 	d.EXPECT().Exec(mock.Anything, "cid123", []string{"ls", "-A", repoTarget}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
@@ -498,7 +498,7 @@ func TestEnsureContainerReinstallsHarnesses(t *testing.T) {
 	// Container is missing → triggers reconciliation
 	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
 	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	d.EXPECT().InspectImage(mock.Anything, SandboxImage).Return(nil)
+	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
 	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
 
@@ -574,7 +574,7 @@ func TestReconcileStateSkipsWithoutInstaller(t *testing.T) {
 func TestCreateCloneMethodSSH(t *testing.T) {
 	s, d, st, _ := newService(t)
 	var cid string
-	expectSandboxReady(d, &cid)
+	expectProjectReady(d, &cid)
 
 	// set up ssh key store so injectSSHKeys writes authorized_keys
 	s.sshKeys = sshkeys.New(st)

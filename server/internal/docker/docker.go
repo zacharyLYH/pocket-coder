@@ -45,10 +45,11 @@ type Client interface {
 
 // Container is the inspect summary the server needs — never the raw docker type.
 type Container struct {
-	ID      string
-	Running bool
-	Status  string
-	Image   string
+	ID        string
+	Running   bool
+	Status    string
+	Image     string
+	NetworkIP string
 }
 
 // Docker implements Client over go-dockerclient.
@@ -159,11 +160,21 @@ func (d *Docker) Inspect(ctx context.Context, id string) (Container, error) {
 	if err != nil {
 		return Container{}, wrapNotFound(id, err)
 	}
+	networkIP := c.NetworkSettings.IPAddress
+	if networkIP == "" {
+		for _, network := range c.NetworkSettings.Networks {
+			if network.IPAddress != "" {
+				networkIP = network.IPAddress
+				break
+			}
+		}
+	}
 	return Container{
-		ID:      c.ID,
-		Running: c.State.Running,
-		Status:  c.State.Status,
-		Image:   c.Config.Image,
+		ID:        c.ID,
+		Running:   c.State.Running,
+		Status:    c.State.Status,
+		Image:     c.Config.Image,
+		NetworkIP: networkIP,
 	}, nil
 }
 

@@ -22,6 +22,9 @@ services:
       - sps-data:/data
     ports:
       - "8080:8080"
+    networks:
+      - default
+      - sps-net
 
   web:
     image: node:24-alpine
@@ -40,3 +43,9 @@ services:
 volumes:
   sps-data:
   web-node-modules:
+
+networks:
+  # The server, project containers, and browser sidecars share this private
+  # network. Project ports are still never published to the host.
+  sps-net:
+    name: sps-net

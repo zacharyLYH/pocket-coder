@@ -58,6 +58,16 @@ func TestContainerOptionsOverrides(t *testing.T) {
 	}
 }
 
+func TestContainerNamespaceOmitsHostGatewayMapping(t *testing.T) {
+	opts := containerOptions(t.Context(), Spec{Name: "preview", Image: "browser", Network: "container:sps-project"})
+	if opts.HostConfig.NetworkMode != "container:sps-project" {
+		t.Fatalf("network = %q", opts.HostConfig.NetworkMode)
+	}
+	if len(opts.HostConfig.ExtraHosts) != 0 {
+		t.Fatalf("namespace sidecar must not have ExtraHosts: %v", opts.HostConfig.ExtraHosts)
+	}
+}
+
 func TestTarFileRoundTrip(t *testing.T) {
 	tr := tar.NewReader(tarFile(".sps-env", []byte("FOO=bar\n")))
 	hdr, err := tr.Next()

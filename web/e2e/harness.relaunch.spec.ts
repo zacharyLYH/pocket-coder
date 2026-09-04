@@ -80,7 +80,8 @@ test.describe('harness relaunch', () => {
       await page.waitForTimeout(2000)
 
       // Restart
-      await page.getByRole('button', { name: 'Restart' }).click()
+      await page.getByTestId('terminal-actions-trigger').click()
+      await page.getByTestId('terminal-action-restart').click()
       await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
 
       // Wait for harness to restart and write a new marker

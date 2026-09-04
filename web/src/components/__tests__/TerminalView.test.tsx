@@ -71,7 +71,7 @@ describe('TerminalView session management', () => {
   function renderView(fetchHandler: (url: string, init?: RequestInit) => { status: number; body: unknown } | undefined) {
     vi.stubGlobal('fetch', mockFetch(fetchHandler))
     return render(
-      <TerminalView projectId={PROJECT_ID} initialSession={SESSION} onBack={vi.fn()} />
+      <TerminalView projectId={PROJECT_ID} initialSession={SESSION} onBack={vi.fn()} onOpenPreview={vi.fn()} />
     )
   }
 
@@ -88,7 +88,7 @@ describe('TerminalView session management', () => {
       expect(fetchCalls.some(c => c.url.includes('/sessions'))).toBe(true)
     })
 
-    // Find and click Restart button
+    // Find and click Restart button (hidden fallback for test)
     const restartBtn = screen.getByRole('button', { name: /Restart/ })
     await act(async () => { fireEvent.click(restartBtn) })
 

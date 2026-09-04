@@ -202,7 +202,8 @@ test.describe('harness installs are desired state', () => {
       expect(bBody2.sessions.map((s) => s.name)).not.toContain('my-helper')
 
       await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
-      await page.getByRole('button', { name: 'Rename' }).click()
+      await page.getByTestId('terminal-actions-trigger').click()
+      await page.getByTestId('terminal-action-rename').click()
       const renameDialog = page.getByRole('dialog', { name: /Rename session/ })
       await expect(renameDialog).toBeVisible()
       const renameInput = renameDialog.getByPlaceholder('New session name')
@@ -234,7 +235,8 @@ test.describe('harness installs are desired state', () => {
       expect(state2.projects[idBeta].harnesses).toEqual(['crasher-demo', 'helper'])
       expect(state2.projects[third.id].harnesses ?? []).toEqual([])
 
-      await page.getByRole('button', { name: 'Restart' }).click()
+      await page.getByTestId('terminal-actions-trigger').click()
+      await page.getByTestId('terminal-action-restart').click()
       await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
       await expect(sessionButton).toContainText('renamed')
       await sessionButton.click()

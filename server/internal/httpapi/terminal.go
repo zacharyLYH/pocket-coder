@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -566,6 +567,40 @@ func handleRenameSession(d Deps) http.HandlerFunc {
 		}
 		_, _ = d.Events.Append("session.rename", map[string]any{"id": id, "from": oldName, "to": body.Name})
 		writeJSON(w, http.StatusOK, map[string]any{"name": body.Name})
+	}
+}
+
+func handleInjectSession(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, name := r.PathValue("id"), r.PathValue("name")
+		var body struct {
+			Command string `json:"command"`
+		}
+		if !decodeBody(w, r, &body, false) {
+			return
+		}
+		if strings.TrimSpace(body.Command) == "" {
+			writeErr(w, http.StatusBadRequest, "command is required")
+			return
+		}
+		var ok bool
+		if id, ok = ensureProject(d, w, r); !ok {
+			return
+		}
+		if err := d.Sessions.Inject(r.Context(), project.ContainerName(id), name, body.Command); err != nil {
+			if errors.Is(err, session.ErrInvalidName) || err.Error() == "empty command" || strings.Contains(err.Error(), "command is required") {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if strings.Contains(err.Error(), "no such session") {
+				writeErr(w, http.StatusNotFound, "no such session")
+				return
+			}
+			writeInternalErr(w, "inject session", err)
+			return
+		}
+		_, _ = d.Events.Append("session.inject", map[string]any{"id": id, "session": name})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
 

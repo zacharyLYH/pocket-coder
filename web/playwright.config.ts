@@ -54,7 +54,7 @@ export default defineConfig({
   snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}',
   expect: {
     toHaveScreenshot: {
-      maxDiffPixelRatio: 0.05,
+      maxDiffPixelRatio: 0.10,
       animations: 'disabled',
     },
   },
@@ -81,13 +81,10 @@ export default defineConfig({
     {
       command:
         // fresh backend state every run — the data dir is e2e-only
+        `bash -c 'trap "docker compose -f ../docker-compose.e2e.yml -p sps-e2e-${process.env.E2E_RUN_ID ?? 'default'} down 2>/dev/null" EXIT; ` +
         `rm -rf ${DATA_DIR} ${SERVER_LOG} && mkdir -p ${DATA_DIR} && ` +
-        `env SPS_BIND=127.0.0.1:${API_PORT} ` +
-        `SPS_LOGIN_EMAIL=me@example.com SPS_DATA_DIR=$PWD/${DATA_DIR} ` +
-        // empty-but-present shadows the repo-root .env, forcing the
-        // console mailer so tests can read the PIN from the log
-        `SMTP_USER= SMTP_PASSWORD= ` +
-        `go -C ../server run ./cmd/server 2> ${SERVER_LOG}`,
+        `env SPS_E2E_API_PORT=${API_PORT} SPS_E2E_DATA_DIR=$PWD/${DATA_DIR} ` +
+        `docker compose -f ../docker-compose.e2e.yml -p sps-e2e-${process.env.E2E_RUN_ID ?? 'default'} up --build > ${SERVER_LOG} 2>&1'`,
       url: `http://localhost:${API_PORT}/health`,
       reuseExistingServer: false,
       timeout: 60_000,

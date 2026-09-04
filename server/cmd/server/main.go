@@ -21,6 +21,7 @@ import (
 	"sps/internal/events"
 	"sps/internal/harness"
 	"sps/internal/httpapi"
+	"sps/internal/preview"
 	"sps/internal/project"
 	"sps/internal/session"
 	"sps/internal/sshkeys"
@@ -89,6 +90,7 @@ func main() {
 
 	sessions := session.New(dkr)
 	svc.SetInstaller(&harnessInstaller{harnesses: harnesses, sessions: sessions})
+	previewManager := preview.NewManager(&preview.DockerFactory{Docker: dkr})
 
 	// Sync running containers to match state.json (harness installs,
 	// etc.). state.json is the source of truth; this one-pass reconcile
@@ -106,7 +108,7 @@ func main() {
 	srv := &http.Server{Addr: cfg.Bind, Handler: httpapi.New(httpapi.Deps{
 		Events: ev, Version: version, Auth: authSvc, Projects: svc,
 		Sessions: sessions, Harnesses: harnesses,
-		SSHKeys: sshKeyStore, State: st,
+		SSHKeys: sshKeyStore, State: st, Preview: previewManager,
 	})}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -128,6 +130,9 @@ func main() {
 		logger.Info("signal received, shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		if err := previewManager.Close(shutdownCtx); err != nil {
+			logger.Error("preview shutdown failed", "err", err)
+		}
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			logger.Error("graceful shutdown failed", "err", err)
 			os.Exit(1)

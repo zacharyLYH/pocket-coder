@@ -52,9 +52,9 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 		t.Fatalf("add harness: %d %s", rec.Code, rec.Body)
 	}
 
-	// --- 3. create a project: sandbox pipeline runs, key injected ---
+	// --- 3. create a project: project pipeline runs, key injected ---
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	md.EXPECT().InspectImage(mock.Anything, project.SandboxImage).Return(nil)
+	md.EXPECT().InspectImage(mock.Anything, project.ProjectImage).Return(nil)
 	md.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
 	md.EXPECT().Exec(mock.Anything, "cid",
 		[]string{"sh", "-c", "mkdir -p /root/.ssh && chmod 700 /root/.ssh"}, false).
@@ -92,7 +92,7 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 			"email":       "me@example.com",
 		}},
 		"projects": map[string]any{
-			proj.ID: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
+			proj.ID: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http",},
 		},
 	})
 

@@ -14,6 +14,7 @@ import (
 	"sps/internal/auth"
 	"sps/internal/events"
 	"sps/internal/harness"
+	"sps/internal/preview"
 	"sps/internal/project"
 	"sps/internal/session"
 	"sps/internal/sshkeys"
@@ -34,6 +35,7 @@ type Deps struct {
 	Version   string
 	Auth      *auth.Service
 	Projects  *project.Service
+	Preview   *preview.Manager
 	Sessions  *session.Service
 	Harnesses *harness.Store
 	SSHKeys   *sshkeys.Store
@@ -62,6 +64,7 @@ func New(d Deps) http.Handler {
 		authed("GET", "/api/projects", handleListProjects)
 		authed("POST", "/api/projects", handleCreateProject)
 		authed("GET", "/api/projects/{id}", handleGetProject)
+		authed("PATCH", "/api/projects/{id}", handlePatchProject)
 		authed("DELETE", "/api/projects/{id}", handleDeleteProject)
 		for _, op := range []string{"start", "stop", "restart"} {
 			authed("POST", "/api/projects/{id}/"+op, func(d Deps) http.HandlerFunc { return handleProjectOp(d, op) })
@@ -74,6 +77,7 @@ func New(d Deps) http.Handler {
 		authed("DELETE", "/api/projects/{id}/sessions/{name}", handleKillSession)
 		authed("POST", "/api/projects/{id}/sessions/{name}/restart", handleRestartSession)
 		authed("POST", "/api/projects/{id}/sessions/{name}/rename", handleRenameSession)
+		authed("POST", "/api/projects/{id}/sessions/{name}/inject", handleInjectSession)
 		authed("GET", "/ws/projects/{id}/sessions/{name}", handleTerminal)
 	}
 
@@ -84,6 +88,26 @@ func New(d Deps) http.Handler {
 
 	if d.Projects != nil && d.Sessions != nil {
 		authed("POST", "/api/projects/exec", handleExecCommand)
+	}
+
+	if d.Preview != nil {
+		authed("GET", "/api/projects/{id}/preview", handlePreviewStatus)
+		authed("POST", "/api/projects/{id}/preview/start", handlePreviewStart)
+		authed("DELETE", "/api/projects/{id}/preview", handlePreviewClose)
+		authed("GET", "/api/projects/{id}/preview/{path...}", handlePreviewSurface)
+	}
+	if d.Preview != nil && d.Sessions != nil {
+		authed("GET", "/api/projects/{id}/preview/ports", handlePreviewPorts)
+		authed("GET", "/api/projects/{id}/preview/tools/screenshot", handlePreviewScreenshot)
+		authed("GET", "/api/projects/{id}/preview/tools/inspect", handlePreviewInspect)
+		authed("GET", "/api/projects/{id}/preview/tools/console", handlePreviewConsole)
+		authed("GET", "/api/projects/{id}/preview/tools/network", handlePreviewNetwork)
+		authed("POST", "/api/projects/{id}/preview/tools/navigate", handlePreviewNavigate)
+		authed("POST", "/api/projects/{id}/preview/tools/click", handlePreviewClick)
+		authed("POST", "/api/projects/{id}/preview/tools/type", handlePreviewType)
+		authed("POST", "/api/projects/{id}/preview/tools/reload", handlePreviewReload)
+		authed("POST", "/api/projects/{id}/preview/tools/scroll", handlePreviewScroll)
+		authed("POST", "/api/projects/{id}/preview/tools/viewport", handlePreviewViewport)
 	}
 
 	if d.Harnesses != nil {

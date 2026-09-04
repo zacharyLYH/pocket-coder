@@ -69,7 +69,7 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 	h := New(d)
 
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	md.EXPECT().InspectImage(mock.Anything, project.SandboxImage).Return(nil)
+	md.EXPECT().InspectImage(mock.Anything, project.ProjectImage).Return(nil)
 	md.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
 	md.EXPECT().Exec(mock.Anything, "cid", []string{"git", "clone", "https://github.com/x/hello.git", "/workspace/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
@@ -93,12 +93,12 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 		t.Fatalf("created = %+v (want name=hello repo=%s branch=\"\"), err=%v", created, want, err)
 	}
 
-	// the source of truth on disk is exactly this project — name+repo only
+	// the source of truth on disk is exactly this project — name+repo
 	// (branch/cloneMethod empty → omitted), nothing else in the document
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": ""},
 		"projects": map[string]any{
-			created.ID: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
+			created.ID: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http",},
 		},
 	})
 
@@ -126,7 +126,7 @@ func TestCreateCloneFailureSurfacesDetail(t *testing.T) {
 	h := New(d)
 
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	md.EXPECT().InspectImage(mock.Anything, project.SandboxImage).Return(nil)
+	md.EXPECT().InspectImage(mock.Anything, project.ProjectImage).Return(nil)
 	md.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
 	md.EXPECT().Exec(mock.Anything, "cid", mock.Anything, false).
 		Return(docker.ExecResult{ExitCode: 128, Output: "fatal: repository not found"}, nil)

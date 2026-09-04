@@ -3,17 +3,20 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { terminalPath } from '@/lib/paths'
 import { api, errMsg } from '@/lib/api'
 import type { Harness } from '@/lib/types'
+import { Button } from '@/components/ui/button'
 import { TerminalHeader } from '@/components/terminal/TerminalHeader'
 import { TerminalPane, type ConnStatus } from '@/components/terminal/TerminalPane'
 import { NewSessionDialog } from '@/components/terminal/NewSessionDialog'
+import { PreviewTab } from '@/components/terminal/PreviewTab'
 
 // The terminal screen: header (status, session picker, actions) above the
 // live terminal pane. Owns which session is attached and the shared status/
 // error state; the pane owns xterm and the websocket.
-export function TerminalView({ projectId, initialSession, onBack }: {
+export function TerminalView({ projectId, initialSession, onBack, onOpenPreview }: {
   projectId: string
   initialSession: string
   onBack: () => void
+  onOpenPreview: () => void
 }) {
   const [current, setCurrent] = useState(initialSession)
   const [status, setStatus] = useState<ConnStatus>('connecting')
@@ -22,6 +25,7 @@ export function TerminalView({ projectId, initialSession, onBack }: {
   const [harnesses, setHarnesses] = useState<Harness[]>([])
   const [redial, setRedial] = useState(0)
   const [newDialogOpen, setNewDialogOpen] = useState(false)
+  const [tab, setTab] = useState<'terminal' | 'preview'>('terminal')
   const hostRef = useRef<HTMLDivElement>(null)
 
   // ─── data fetching ──────────────────────────────────────────────────
@@ -96,19 +100,25 @@ export function TerminalView({ projectId, initialSession, onBack }: {
   }
 
   return (
-    <div className="flex h-dvh flex-col gap-3 bg-muted/40 p-3">
-      <TerminalHeader
-        projectId={projectId}
-        current={current}
-        sessions={sessions}
-        status={status}
-        onBack={onBack}
-        onSwitch={switchSession}
-        onNewSession={() => setNewDialogOpen(true)}
-        onRestart={restart}
-        onRename={rename}
-        onKill={kill}
-      />
+    <div className="flex h-dvh w-full flex-col gap-3 bg-muted/40 p-0">
+      <div className="px-3 pt-3">
+        <TerminalHeader
+          projectId={projectId}
+          current={current}
+          sessions={sessions}
+          status={status}
+          onBack={onBack}
+          onSwitch={switchSession}
+          onNewSession={() => setNewDialogOpen(true)}
+          onRestart={restart}
+          onRename={rename}
+          onKill={kill}
+        />
+      </div>
+      <div className="flex gap-2 px-3">
+        <Button className="flex-1" size="sm" variant={tab === 'terminal' ? 'secondary' : 'outline'} onClick={() => setTab('terminal')} data-testid="tab-terminal">Terminal</Button>
+        <Button className="flex-1" size="sm" variant={tab === 'preview' ? 'secondary' : 'outline'} onClick={() => setTab('preview')} data-testid="tab-preview">Preview</Button>
+      </div>
 
       {error && (
         <p className="max-h-24 overflow-auto rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs break-all text-destructive">
@@ -116,17 +126,23 @@ export function TerminalView({ projectId, initialSession, onBack }: {
         </p>
       )}
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-xl border bg-black p-2 shadow-sm">
-        <div ref={hostRef} className="h-full" />
-        <TerminalPane
-          projectId={projectId}
-          session={current}
-          redial={redial}
-          hostRef={hostRef}
-          onStatus={setStatus}
-          onError={setError}
-        />
-      </div>
+      {tab === 'preview' ? (
+        <div className="min-h-0 flex-1 w-full px-3 pb-3">
+          <PreviewTab projectId={projectId} onOpenPreview={onOpenPreview} />
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl">
+          <div ref={hostRef} className="h-full w-full" />
+          <TerminalPane
+            projectId={projectId}
+            session={current}
+            redial={redial}
+            hostRef={hostRef}
+            onStatus={setStatus}
+            onError={setError}
+          />
+        </div>
+      )}
 
       <NewSessionDialog
         open={newDialogOpen}

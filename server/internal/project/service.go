@@ -19,10 +19,10 @@ import (
 	"sps/internal/textutil"
 )
 
-// SandboxImage is the shared project sandbox. Built once from the embedded
+// ProjectImage is the shared project image. Built once from the embedded
 // Dockerfile if absent. The tag version bumps whenever the embedded
 // Dockerfile changes, so engines holding an older build rebuild it.
-const SandboxImage = "sps-sandbox:v3"
+const ProjectImage = "sps-project:v3"
 
 const (
 	repoTarget = "/workspace"
@@ -112,9 +112,9 @@ func ContainerName(id string) string { return "sps-" + id }
 func repoVolume(id string) string { return "sps-" + id + "-repo" }
 func homeVolume(id string) string { return "sps-" + id + "-home" }
 
-// Create runs a sandbox for the repo and clones it inside the container
-// (blank sandbox when repoURL is empty). Synchronous: returns when the
-// project is ready or failed. A clone failure keeps the sandbox running so
+// Create runs a project for the repo and clones it inside the container
+// (blank project when repoURL is empty). Synchronous: returns when the
+// project is ready or failed. A clone failure keeps the project running so
 // the user can repair it from the terminal — only the error surfaces here.
 // cloneMethod is "ssh" or "http" (empty defaults to "http").
 func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod string) (string, Project, error) {
@@ -137,7 +137,7 @@ func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod strin
 	}
 	s.ev.Append("project.create", map[string]any{"id": id, "name": p.Name, "repo": repoURL, "branch": branch, "cloneMethod": cloneMethod})
 
-	cid, err := s.runSandbox(ctx, id)
+	cid, err := s.runProject(ctx, id)
 	if err != nil {
 		_ = s.store.Delete(id)
 		return "", Project{}, err
@@ -155,18 +155,19 @@ func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod strin
 	return id, p, nil
 }
 
-// runSandbox ensures network + image exist, then creates and starts the
-// project's container.
-func (s *Service) runSandbox(ctx context.Context, id string) (string, error) {
+// runProject ensures network + image exist, then creates and starts the
+// project's container. Preview traffic stays inside the project/browser
+// network path; project ports are never published on the Docker host.
+func (s *Service) runProject(ctx context.Context, id string) (string, error) {
 	if err := s.dkr.EnsureNetwork(ctx, docker.DefaultNetwork); err != nil {
 		return "", err
 	}
-	if err := s.ensureSandboxImage(ctx); err != nil {
+	if err := s.ensureProjectImage(ctx); err != nil {
 		return "", err
 	}
 	spec := docker.Spec{
 		Name:     ContainerName(id),
-		Image:    SandboxImage,
+		Image:    ProjectImage,
 		Writable: true,
 		Volumes: []docker.Mount{
 			{Name: repoVolume(id), Dest: repoTarget},
@@ -208,19 +209,19 @@ func (s *Service) injectSSHKeys(ctx context.Context, container string) error {
 	return nil
 }
 
-// ensureSandboxImage builds the embedded sandbox definition when the image
+// ensureProjectImage builds the embedded project definition when the image
 // is not on the engine yet.
-func (s *Service) ensureSandboxImage(ctx context.Context) error {
-	err := s.dkr.InspectImage(ctx, SandboxImage)
+func (s *Service) ensureProjectImage(ctx context.Context) error {
+	err := s.dkr.InspectImage(ctx, ProjectImage)
 	if err == nil {
 		return nil
 	}
 	if !errors.Is(err, docker.ErrNotFound) {
 		return err
 	}
-	slog.Info("building sandbox image", "image", SandboxImage)
-	s.ev.Append("project.image.build", map[string]any{"image": SandboxImage})
-	return s.dkr.Build(ctx, docker.BuildOptions{Tag: SandboxImage, InputStream: sandboxContext()}, io.Discard)
+	slog.Info("building project image", "image", ProjectImage)
+	s.ev.Append("project.image.build", map[string]any{"image": ProjectImage})
+	return s.dkr.Build(ctx, docker.BuildOptions{Tag: ProjectImage, InputStream: projectContext()}, io.Discard)
 }
 
 // Get returns one project plus its live container status.
@@ -234,6 +235,11 @@ func (s *Service) Get(ctx context.Context, id string) (Project, Status, error) {
 		return Project{}, Status{}, err
 	}
 	return p, st, nil
+}
+
+// Update persists a project's desired state to state.json.
+func (s *Service) Update(id string, p Project) error {
+	return s.wrapNotFound(s.store.Update(id, p))
 }
 
 // EnsureContainer makes sure a project's container exists, returning its
@@ -260,7 +266,7 @@ func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error
 	case StateMissing:
 		// Container gone, volumes persist — recreate it.
 		slog.Info("reconciling missing container", "id", id)
-		cid, err := s.runSandbox(ctx, id)
+		cid, err := s.runProject(ctx, id)
 		if err != nil {
 			return Status{}, fmt.Errorf("reconcile container %s: %w", id, err)
 		}
@@ -271,7 +277,7 @@ func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error
 		}
 		// Fresh engine: the repo volume doesn't exist yet, so nothing was
 		// recovered by recreating the container — re-clone from the repo
-		// URL. Like Create, a clone failure keeps the sandbox running.
+		// URL. Like Create, a clone failure keeps the project running.
 		if p.Repo != "" {
 			if empty, err := s.repoVolumeEmpty(ctx, cid); err != nil {
 				slog.Warn("repo volume check after reconcile", "id", id, "err", err)
@@ -299,7 +305,7 @@ func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error
 	}
 }
 
-// repoVolumeEmpty reports whether the sandbox's repo volume has no visible
+// repoVolumeEmpty reports whether the project's repo volume has no visible
 // content (a fresh volume — nothing was recovered from disk).
 func (s *Service) repoVolumeEmpty(ctx context.Context, cid string) (bool, error) {
 	res, err := s.dkr.Exec(ctx, cid, []string{"ls", "-A", repoTarget}, false)
@@ -312,7 +318,7 @@ func (s *Service) repoVolumeEmpty(ctx context.Context, cid string) (bool, error)
 	return strings.TrimSpace(res.Output) == "", nil
 }
 
-// cloneRepo clones the project's repo into the sandbox's repo volume.
+// cloneRepo clones the project's repo into the project's repo volume.
 // Shared by Create and post-reconcile recovery.
 func (s *Service) cloneRepo(ctx context.Context, id, cid string, p Project) error {
 	if p.Repo == "" {
@@ -423,7 +429,7 @@ func (s *Service) wrapNotFound(err error) error {
 }
 
 // defaultName derives the project name from the repo URL ("untitled" for a
-// blank sandbox), mirroring what a polished SaaS would show in its list.
+// blank project), mirroring what a polished SaaS would show in its list.
 func defaultName(repoURL string) string {
 	name := strings.TrimSuffix(strings.TrimRight(repoURL, "/"), ".git")
 	if i := strings.LastIndexByte(name, '/'); i >= 0 {
