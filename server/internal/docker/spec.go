@@ -8,7 +8,7 @@ import (
 )
 
 // Safe container defaults: one shared bridge network, 512 MiB memory cap.
-const DefaultNetwork = "sps-net"
+const DefaultNetwork = "pcoder-net"
 
 // Mount is a volume mounted into a container.
 type Mount struct {
@@ -27,7 +27,7 @@ func NetworkNamespace(containerID string) string {
 }
 
 // Spec describes a container to create or run. Zero values get safe
-// defaults: non-privileged, read-only rootfs, unlimited memory, sps-net
+// defaults: non-privileged, read-only rootfs, unlimited memory, pcoder-net
 // network.
 type Spec struct {
 	Name     string

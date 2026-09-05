@@ -11,7 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/mock"
 
-	"sps/internal/docker"
+	"pcoder/internal/docker"
 )
 
 // The pty hands us raw bytes in arbitrary chunks; a multi-byte character can
@@ -23,10 +23,10 @@ func TestTerminalOutputSurvivesUTF8SplitAcrossFrames(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc", []string{"tmux", "has-session", "-t", "main"}, false).
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "main"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
-	md.EXPECT().Attach(mock.Anything, "sps-abc", mock.Anything,
+	md.EXPECT().Attach(mock.Anything, "pcoder-abc", mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything, true).
 		RunAndReturn(func(ctx context.Context, _ string, _ []string, stdin io.Reader, stdout, _ io.Writer, _ bool) (string, <-chan docker.ExecDone, error) {
 			done := make(chan docker.ExecDone, 1)

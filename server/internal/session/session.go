@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"sps/internal/docker"
-	"sps/internal/harness"
-	"sps/internal/textutil"
+	"pcoder/internal/docker"
+	"pcoder/internal/harness"
+	"pcoder/internal/textutil"
 )
 
 // ErrInvalidName means a session name outside the allowed shape.

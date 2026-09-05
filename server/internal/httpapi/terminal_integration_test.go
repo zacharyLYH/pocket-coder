@@ -100,7 +100,7 @@ func TestTerminalLiveLifecycle(t *testing.T) {
 	defer conn2.Close()
 	send(conn2, map[string]any{"type": "input", "data": "echo back\n"})
 	readUntilOutputContains(conn2, "back")
-	res, err := dkr.Exec(t.Context(), "sps-"+id, []string{"tmux", "capture-pane", "-t", "main", "-p"}, false)
+	res, err := dkr.Exec(t.Context(), "pcoder-"+id, []string{"tmux", "capture-pane", "-t", "main", "-p"}, false)
 	if err != nil || res.ExitCode != 0 || !strings.Contains(res.Output, "hi7") {
 		t.Fatalf("scrollback lost across reconnect: %+v err=%v", res, err)
 	}

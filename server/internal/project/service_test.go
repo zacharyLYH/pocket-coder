@@ -11,11 +11,11 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"sps/internal/docker"
-	"sps/internal/events"
-	"sps/internal/sshkeys"
-	"sps/internal/state"
-	dockermocks "sps/mocks/docker"
+	"pcoder/internal/docker"
+	"pcoder/internal/events"
+	"pcoder/internal/sshkeys"
+	"pcoder/internal/state"
+	dockermocks "pcoder/mocks/docker"
 )
 
 const testRepo = "https://github.com/x/hello.git"
@@ -44,7 +44,7 @@ func expectProjectReady(d *dockermocks.MockClient, id *string) {
 	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.MatchedBy(func(sp docker.Spec) bool {
 		*id = sp.Name
-		return strings.HasPrefix(sp.Name, "sps-") && sp.Image == ProjectImage &&
+		return strings.HasPrefix(sp.Name, "pcoder-") && sp.Image == ProjectImage &&
 			sp.Writable && len(sp.Volumes) == 2
 	})).Return("cid123", nil)
 }
@@ -52,11 +52,11 @@ func expectProjectReady(d *dockermocks.MockClient, id *string) {
 // expectReconcile pins the missing-container recovery chain: first Inspect
 // misses, the container is recreated, the second Inspect reports running.
 func expectReconcile(d *dockermocks.MockClient) {
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
+	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
 	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
 	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
 }
 
 func eventsOf(t *testing.T, s *Service) []events.Event {
@@ -96,8 +96,8 @@ func TestCreateBlank(t *testing.T) {
 	if !reflect.DeepEqual(p, want) {
 		t.Fatalf("project = %+v, want %+v", p, want)
 	}
-	if name != "sps-"+id {
-		t.Fatalf("container name = %q, want sps-%s", name, id)
+	if name != "pcoder-"+id {
+		t.Fatalf("container name = %q, want pcoder-%s", name, id)
 	}
 	gotTypes := types(eventsOf(t, s))
 	if gotTypes[len(gotTypes)-2] != "project.create" || gotTypes[len(gotTypes)-1] != "project.ready" {
@@ -128,7 +128,7 @@ func TestCreateClonesInsideContainer(t *testing.T) {
 		if !reflect.DeepEqual(p, want) {
 			t.Fatalf("project = %+v, want %+v", p, want)
 		}
-		d.EXPECT().Inspect(mock.Anything, "sps-"+id).Return(docker.Container{Running: true, Status: "running"}, nil)
+		d.EXPECT().Inspect(mock.Anything, "pcoder-"+id).Return(docker.Container{Running: true, Status: "running"}, nil)
 		if _, status, err := s.Get(t.Context(), id); err != nil || status.State != "running" {
 			t.Fatalf("get: %v %+v", err, status)
 		}
@@ -214,8 +214,8 @@ func TestStartStopRestartEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d.EXPECT().Stop(mock.Anything, "sps-"+id, stopWait).Return(nil)
-	d.EXPECT().Start(mock.Anything, "sps-"+id).Return(nil)
+	d.EXPECT().Stop(mock.Anything, "pcoder-"+id, stopWait).Return(nil)
+	d.EXPECT().Start(mock.Anything, "pcoder-"+id).Return(nil)
 	if err := s.Restart(t.Context(), id); err != nil {
 		t.Fatalf("restart: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestStopToleratesMissingContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrapped := fmt.Errorf("stop: %w", docker.ErrNotFound)
-	d.EXPECT().Stop(mock.Anything, "sps-abc", stopWait).Return(wrapped)
+	d.EXPECT().Stop(mock.Anything, "pcoder-abc", stopWait).Return(wrapped)
 	if err := s.Stop(t.Context(), "abc"); err != nil {
 		t.Fatalf("stop missing container should be idempotent: %v", err)
 	}
@@ -262,16 +262,16 @@ func TestDeleteScopes(t *testing.T) {
 			}
 			// volume-taking scopes stop the container first (best effort)
 			if tc.scope != ScopeMetadata {
-				d.EXPECT().Stop(mock.Anything, "sps-abc", stopWait).Return(nil)
+				d.EXPECT().Stop(mock.Anything, "pcoder-abc", stopWait).Return(nil)
 			}
 			if tc.removeContainer {
-				d.EXPECT().Remove(mock.Anything, "sps-abc", true).Return(nil)
+				d.EXPECT().Remove(mock.Anything, "pcoder-abc", true).Return(nil)
 			}
 			if tc.home {
-				d.EXPECT().RemoveVolume(mock.Anything, "sps-abc-home").Return(nil)
+				d.EXPECT().RemoveVolume(mock.Anything, "pcoder-abc-home").Return(nil)
 			}
 			if tc.repo {
-				d.EXPECT().RemoveVolume(mock.Anything, "sps-abc-repo").Return(nil)
+				d.EXPECT().RemoveVolume(mock.Anything, "pcoder-abc-repo").Return(nil)
 			}
 			if err := s.Delete(t.Context(), "abc", tc.scope); err != nil {
 				t.Fatalf("delete: %v", err)
@@ -340,14 +340,14 @@ func TestStartMissingContainerPropagates(t *testing.T) {
 	// metadata exists but the container is gone (scope=container deleted):
 	// Start must surface the engine's not-found so HTTP maps it to 404.
 	wrapped := fmt.Errorf("start: %w", docker.ErrNotFound)
-	d.EXPECT().Start(mock.Anything, "sps-abc").Return(wrapped)
+	d.EXPECT().Start(mock.Anything, "pcoder-abc").Return(wrapped)
 	if err := s.Start(t.Context(), "abc"); !errors.Is(err, docker.ErrNotFound) {
 		t.Fatalf("err = %v, want docker.ErrNotFound", err)
 	}
 
 	// Restart tolerates the stop but still fails at start.
-	d.EXPECT().Stop(mock.Anything, "sps-abc", stopWait).Return(nil)
-	d.EXPECT().Start(mock.Anything, "sps-abc").Return(wrapped)
+	d.EXPECT().Stop(mock.Anything, "pcoder-abc", stopWait).Return(nil)
+	d.EXPECT().Start(mock.Anything, "pcoder-abc").Return(wrapped)
 	if err := s.Restart(t.Context(), "abc"); !errors.Is(err, docker.ErrNotFound) {
 		t.Fatalf("restart err = %v, want docker.ErrNotFound", err)
 	}
@@ -358,10 +358,10 @@ func TestDeletePartialFailureReportsFirstError(t *testing.T) {
 	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	d.EXPECT().Stop(mock.Anything, "sps-abc", stopWait).Return(nil)
+	d.EXPECT().Stop(mock.Anything, "pcoder-abc", stopWait).Return(nil)
 	first := fmt.Errorf("remove: %w", docker.ErrNotFound)
-	d.EXPECT().Remove(mock.Anything, "sps-abc", true).Return(first)
-	d.EXPECT().RemoveVolume(mock.Anything, "sps-abc-home").Return(errors.New("second"))
+	d.EXPECT().Remove(mock.Anything, "pcoder-abc", true).Return(first)
+	d.EXPECT().RemoveVolume(mock.Anything, "pcoder-abc-home").Return(errors.New("second"))
 
 	err := s.Delete(t.Context(), "abc", ScopeContainer)
 	if !errors.Is(err, docker.ErrNotFound) {
@@ -384,10 +384,10 @@ func TestDeleteAllKeepsRecordWhenDockerCleanupFails(t *testing.T) {
 	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	d.EXPECT().Stop(mock.Anything, "sps-abc", stopWait).Return(nil)
-	d.EXPECT().Remove(mock.Anything, "sps-abc", true).Return(nil)
-	d.EXPECT().RemoveVolume(mock.Anything, "sps-abc-home").Return(errors.New("volume busy"))
-	d.EXPECT().RemoveVolume(mock.Anything, "sps-abc-repo").Return(nil)
+	d.EXPECT().Stop(mock.Anything, "pcoder-abc", stopWait).Return(nil)
+	d.EXPECT().Remove(mock.Anything, "pcoder-abc", true).Return(nil)
+	d.EXPECT().RemoveVolume(mock.Anything, "pcoder-abc-home").Return(errors.New("volume busy"))
+	d.EXPECT().RemoveVolume(mock.Anything, "pcoder-abc-repo").Return(nil)
 
 	if err := s.Delete(t.Context(), "abc", ScopeAll); err == nil {
 		t.Fatal("expected the volume failure to surface")
@@ -404,7 +404,7 @@ func TestEnsureContainerRunningIsNoop(t *testing.T) {
 	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
 	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestEnsureContainerExitedIsNoop(t *testing.T) {
 	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: false, Status: "exited"}, nil)
+	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: false, Status: "exited"}, nil)
 	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +466,7 @@ func TestEnsureContainerReconcileReclonesEmptyVolume(t *testing.T) {
 	if err := s.store.Create("abc", Project{Name: "hello", Repo: testRepo}); err != nil {
 		t.Fatal(err)
 	}
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
+	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
 	var cid string
 	expectProjectReady(d, &cid)
 	// fresh engine: the repo volume came up empty...
@@ -476,7 +476,7 @@ func TestEnsureContainerReconcileReclonesEmptyVolume(t *testing.T) {
 	d.EXPECT().Exec(mock.Anything, "cid123",
 		[]string{"git", "clone", testRepo, repoTarget + "/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
 
 	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
 		t.Fatal(err)
@@ -557,11 +557,11 @@ func TestReconcileStateInstallsMissingHarnesses(t *testing.T) {
 	s.SetInstaller(inst)
 
 	// abc: running → reconcile
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
 	// def: running but no harnesses → skip (no Inspect call expected)
-	d.EXPECT().Inspect(mock.Anything, "sps-def").Return(docker.Container{Running: true}, nil).Once()
+	d.EXPECT().Inspect(mock.Anything, "pcoder-def").Return(docker.Container{Running: true}, nil).Once()
 	// ghi: missing → skip
-	d.EXPECT().Inspect(mock.Anything, "sps-ghi").Return(docker.Container{}, docker.ErrNotFound).Once()
+	d.EXPECT().Inspect(mock.Anything, "pcoder-ghi").Return(docker.Container{}, docker.ErrNotFound).Once()
 
 	s.ReconcileState(t.Context())
 
@@ -582,7 +582,7 @@ func TestReconcileStateSkipsWithoutInstaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No installer set — should not panic
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
 	s.ReconcileState(t.Context())
 	// No crash = pass
 }
@@ -615,7 +615,7 @@ func TestCreateCloneMethodSSH(t *testing.T) {
 	if p.CloneMethod != "ssh" {
 		t.Fatalf("CloneMethod = %q, want ssh", p.CloneMethod)
 	}
-	d.EXPECT().Inspect(mock.Anything, "sps-"+id).Return(docker.Container{Running: true}, nil)
+	d.EXPECT().Inspect(mock.Anything, "pcoder-"+id).Return(docker.Container{Running: true}, nil)
 	if _, status, err := s.Get(t.Context(), id); err != nil || status.State != "running" {
 		t.Fatalf("get: %v %+v", err, status)
 	}

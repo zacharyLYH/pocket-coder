@@ -4,9 +4,9 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-// SPS_SERVER_URL points the dev proxy at the Go server: set to
+// PCODER_SERVER_URL points the dev proxy at the Go server: set to
 // http://server:8080 inside docker-compose.dev.yml, default localhost.
-const serverUrl = process.env.SPS_SERVER_URL ?? 'http://localhost:8080'
+const serverUrl = process.env.PCODER_SERVER_URL ?? 'http://localhost:8080'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

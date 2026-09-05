@@ -1,4 +1,4 @@
-# side-project-saviour
+# pocket-coder
 
 Rotate between free coding harnesses while vibe coding on the move.
 
@@ -8,7 +8,7 @@ Rotate between free coding harnesses while vibe coding on the move.
 
 ```sh
 make setup                      # checks tools, creates server/.env, installs deps, seeds from dev/state.mock.json
-# first run creates server/.env — edit SPS_LOGIN_EMAIL, then re-run make setup
+# first run creates server/.env — edit PCODER_LOGIN_EMAIL, then re-run make setup
 
 make start-local                # :8080 backend + :5173 frontend (no docker)
 make start-docker               # full stack via docker compose
@@ -18,7 +18,7 @@ Open `http://localhost:5173` and log in with that email. PIN prints to the serve
 
 Manual alternative:
 ```sh
-echo "SPS_LOGIN_EMAIL=you@example.com" > server/.env
+echo "PCODER_LOGIN_EMAIL=you@example.com" > server/.env
 make dev-seed                   # same seed step as make setup
 ```
 
@@ -26,7 +26,7 @@ make dev-seed                   # same seed step as make setup
 
 - Containers survive server restarts; next attach recreates them if deleted.
 - Stop the server before hand-editing `server/data/state.json`.
-- Teardown: `make nuke` (or manually `docker rm -f $(docker ps -aq --filter name=sps-)` + `docker volume rm …` + `docker network rm sps-net` + `rm -rf server/data`)
+- Teardown: `make nuke` (or manually `docker rm -f $(docker ps -aq --filter name=pcoder-)` + `docker volume rm …` + `docker network rm pcoder-net` + `rm -rf server/data`)
 
 ## Configuration
 
@@ -36,15 +36,15 @@ Config loads from `server/.env` (or `../.env` when run inside `server/`). Real e
 
 | Variable | Description |
 |---|---|
-| `SPS_LOGIN_EMAIL` | Login PIN recipient. Required. |
+| `PCODER_LOGIN_EMAIL` | Login PIN recipient. Required. |
 | `SMTP_HOST` | SMTP host (`smtp.gmail.com`). Set `SMTP_*` group for email delivery. |
 | `SMTP_PORT` | SMTP port (`587`) |
 | `SMTP_USER` | Gmail address |
 | `SMTP_PASSWORD` | Gmail app password https://help.meetalfred.com/en/articles/8160682-set-up-smtp-for-gmail-app-password-guide |
 | `SMTP_FROM` | Sender address |
-| `SPS_DATA_DIR` | State dir (default `./data`) |
-| `SPS_BIND` | Listen addr (default `:8080`) |
-| `SPS_DOCKER_SOCK` | Docker endpoint (default `unix:///var/run/docker.sock`) |
+| `PCODER_DATA_DIR` | State dir (default `./data`) |
+| `PCODER_BIND` | Listen addr (default `:8080`) |
+| `PCODER_DOCKER_SOCK` | Docker endpoint (default `unix:///var/run/docker.sock`) |
 
 ## Tests
 

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"sps/internal/auth"
-	"sps/internal/events"
+	"pcoder/internal/auth"
+	"pcoder/internal/events"
 )
 
 func TestUnauthorized(t *testing.T) {

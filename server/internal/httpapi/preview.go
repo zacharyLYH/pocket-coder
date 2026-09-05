@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"sps/internal/preview"
-	"sps/internal/project"
+	"pcoder/internal/preview"
+	"pcoder/internal/project"
 )
 
 func handlePreviewStatus(d Deps) http.HandlerFunc {
@@ -122,7 +122,7 @@ func handlePreviewClose(d Deps) http.HandlerFunc {
 }
 
 // handlePreviewSurface forwards noVNC assets and its websocket through the
-// authenticated SPS origin. The worker endpoint is private and never placed
+// authenticated PCODER origin. The worker endpoint is private and never placed
 // in a Location header or JSON response.
 func handlePreviewSurface(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

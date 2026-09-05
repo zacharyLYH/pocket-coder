@@ -82,7 +82,7 @@ Placement: a top-level item on the home screen, outside any project — the syst
 
 **Scope.**
 - Image build with streamed logs (the shared sandbox image needs this).
-- Container create/start/stop/remove/inspect with defaults: non-privileged, read-only rootfs where practical, resource limits, `sps-net` network, named volumes (`sps-<id>-repo`, `sps-<id>-home`).
+- Container create/start/stop/remove/inspect with defaults: non-privileged, read-only rootfs where practical, resource limits, `pcoder-net` network, named volumes (`pcoder-<id>-repo`, `pcoder-<id>-home`).
 - Exec: `docker exec` with `-i -t`, attach hijack, and `ResizeExecTTY`.
 - Logs tail. File upload (the `docker cp` primitive) for env/harness config writes. Port detection (`ss -tlnp`). SSH-key mount into containers.
 - All functions return typed errors; no raw docker API leaks past this package.
@@ -97,8 +97,8 @@ Placement: a top-level item on the home screen, outside any project — the syst
 
 **Scope.**
 - `Mailer` interface with two impls: `ConsoleMailer` (dev: print PIN to log) and `SmtpMailer` (sends via Google SMTP with `net/smtp`, creds from `SMTP_*` env vars — an app password, no SMTP server).
-- `SPS_JWT_SECRET` is not a required env var: on first boot generate a random secret with `crypto/rand` and persist it to `$DATA_DIR` (0600); the env var overrides. A hardcoded default secret would be a security hole.
-- Flow: request PIN for the configured `SPS_LOGIN_EMAIL` (set in `.env`, not a startup prompt) → rate-limit and expire PINs → verify → issue signed JWT (crypto/rand, expiry, `HttpOnly; SameSite=Strict` cookie).
+- `PCODER_JWT_SECRET` is not a required env var: on first boot generate a random secret with `crypto/rand` and persist it to `$DATA_DIR` (0600); the env var overrides. A hardcoded default secret would be a security hole.
+- Flow: request PIN for the configured `PCODER_LOGIN_EMAIL` (set in `.env`, not a startup prompt) → rate-limit and expire PINs → verify → issue signed JWT (crypto/rand, expiry, `HttpOnly; SameSite=Strict` cookie).
 - Middleware: every `/api/*` and `/ws/*` route requires a valid JWT (except login/PIN routes). WebSocket handshake validates the cookie too.
 - Logged-out and logged-in UI states in the scaffolded frontend.
 - Emit `login` events (success/failure, never the token) on every flow.
@@ -113,7 +113,7 @@ Placement: a top-level item on the home screen, outside any project — the syst
 
 **Scope.**
 - Provision the Netcup VPS: Ubuntu, Docker + compose, SSH. One-time setup, recorded in `docs/ops.md` (runbook), no secrets in the repo.
-- DuckDNS: a subdomain (e.g., `sps.<name>.duckdns.org`, wildcard for future preview routing) pointing at the VPS; the update client runs on the host, not in the stack.
+- DuckDNS: a subdomain (e.g., `pcoder.<name>.duckdns.org`, wildcard for future preview routing) pointing at the VPS; the update client runs on the host, not in the stack.
 - HTTPS: a reverse-proxy sidecar (Caddy) with automatic Let's Encrypt on the DuckDNS subdomain, HTTPS-only, redirect. Phase 4's auth already gates exposure, so the box goes public only behind a login.
 - `make live-check`: tries the real `https://<host>` from a laptop — `/health` 200 over TLS, an unauthenticated `/api/*` 401, then the current phase's smoke tests. Grows with every phase.
 - CI/CD as a flow, not a detail: on push, `make test` → build images → deploy to the live box (SSH deploy key) → `make live-check`. First pass is one workflow/script against the deploy key; refine when we cross that bridge.
@@ -129,7 +129,7 @@ Placement: a top-level item on the home screen, outside any project — the syst
 
 **Scope.**
 - Shared sandbox image (embedded `Dockerfile` in `internal/project/sandbox/`: git, tmux, `ss`, SSH, CA certs on a slim base), built once locally if absent.
-- `POST /api/projects` `{repoUrl?, branch?}` → run sandbox (named volumes `sps-<id>-repo` at `/workspace`, `sps-<id>-home` at `/root`, `sps-net`, writable rootfs) → `git clone` inside the container into `/workspace/repo` (blank sandbox when `repoUrl` empty) → ready. Synchronous: progress lands as event lines (`project.create/clone/ready`); clone failures land as `error` events and the sandbox stays up for manual repair.
+- `POST /api/projects` `{repoUrl?, branch?}` → run sandbox (named volumes `pcoder-<id>-repo` at `/workspace`, `pcoder-<id>-home` at `/root`, `pcoder-net`, writable rootfs) → `git clone` inside the container into `/workspace/repo` (blank sandbox when `repoUrl` empty) → ready. Synchronous: progress lands as event lines (`project.create/clone/ready`); clone failures land as `error` events and the sandbox stays up for manual repair.
 - `GET /api/projects` (index), `GET /api/projects/{id}` (metadata + live container status via weathervane), `POST /{id}/start|stop|restart`, `DELETE /{id}?scope=container|repo|metadata|all`.
 - Branch pinned when given; default to the remote's HEAD otherwise.
 
@@ -175,7 +175,7 @@ Placement: a top-level item on the home screen, outside any project — the syst
 > race + playwright green; integration tests clean up via t.Cleanup, no
 > leaked containers). Remaining: item 4's manual phone smoke against
 > `go run`. Sandbox image v3 ships node/npm/python3/pip and an
-> `sps-update-runtime` script for latest-stable updates on request; Vi Demo
+> `pcoder-update-runtime` script for latest-stable updates on request; Vi Demo
 > and Crasher Demo harnesses are seeded so the TUI and `|| echo` failure
 > stories are visible from the "+ New Session" picker.
 
@@ -237,7 +237,7 @@ Placement: a top-level item on the home screen, outside any project — the syst
 - Poll loop per project: exec `git status --porcelain`, hash it, recompute the full diff only when the hash moves. Nearly free while idle.
 - Comments stored in `state.json`: `{file, line, side, anchorText, body, targetSession, status(draft|sent|resolved), round}`. `anchorText` re-finds the line when the agent shifts it before delivery.
 - Targetable sessions are derived, not stored: live tmux sessions bound to a registered harness with a command other than `bash`. Depends on `docs/rfc-session-names.md` (session names become identifiers, harness binding becomes attached data); until that lands, the binding is derived from the legacy `<harnessID>-<n>` naming convention.
-- Round tags: "done reviewing" tags the tree (`sps-review-N`). Next visit defaults to delta-since-tag, switchable to full diff.
+- Round tags: "done reviewing" tags the tree (`pcoder-review-N`). Next visit defaults to delta-since-tag, switchable to full diff.
 
 **Scope — reader UX (code first, noise control second).**
 - Brief screen before any diff: files grouped (source, tests, config, deleted), each row with numstat, ordered by directory so related changes sit adjacent.
@@ -263,7 +263,7 @@ Placement: a top-level item on the home screen, outside any project — the syst
 **Goal.** Secrets are a file, masked, and survive restarts.
 
 **Scope.**
-- Env endpoints: `GET` (masked, reveal-one), `PUT` (upsert/remove) → writes `project.json` `env` (0600) and uploads `/root/.sps-env` into the container; `profile.d` snippet sources it in every login shell; new sessions see new env without a recreate.
+- Env endpoints: `GET` (masked, reveal-one), `PUT` (upsert/remove) → writes `project.json` `env` (0600) and uploads `/root/.pcoder-env` into the container; `profile.d` snippet sources it in every login shell; new sessions see new env without a recreate.
 - Secrets never in `docker inspect`, logs, or the UI; project file 0600.
 - Persistence audit: repo volume, home volume, data dir — stop/start, server restart, compose down/up survival. Confirm delete scopes don't leak.
 - Emit `env.changed` events with names only — never values.
@@ -309,7 +309,7 @@ Placement: a top-level item on the home screen, outside any project — the syst
 
 **Scope.**
 - System guide (the "taught bounds" doc) shipped as markdown.
-- Chat bubble UI (projects screen + per project) that streams an LLM conversation using the authed CLI's provider/key (or `SPS_HELPER_API_KEY` override).
+- Chat bubble UI (projects screen + per project) that streams an LLM conversation using the authed CLI's provider/key (or `PCODER_HELPER_API_KEY` override).
 - Tools (server-side, bounded): read project.json / harness plugins / harness config in home volume / container state / **the event log** (tail + `since` filter, read-only); probe auth & ports; apply confirm-diff to the three config categories via the Phase 3 file primitive.
 - v1 abilities: wire-up-my-key (masked field per harness), switch-model (one-line config diff + confirm), suggest-buttons, where-do-i-stand (portfolio briefing, backed by the event log).
 - Bounds enforced in code, not prose: no repo/tmux write paths, secrets never in chat, dumb-bot (no polling/autonomy).

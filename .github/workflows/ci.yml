@@ -68,7 +68,7 @@ jobs:
       - name: Create .env (server requires it; gitignored locally)
         run: |
           cat > .env <<'EOF'
-          SPS_LOGIN_EMAIL=ci@example.com
+          PCODER_LOGIN_EMAIL=ci@example.com
           SMTP_HOST=smtp.gmail.com
           SMTP_PORT=587
           SMTP_USER=ci@example.com

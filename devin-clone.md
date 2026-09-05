@@ -1,4 +1,4 @@
-# Devin-style preview for SPS
+# Devin-style preview for PCODER
 
 ## Purpose
 
@@ -26,7 +26,7 @@ Existing blocks:
 - `POST /api/projects/:id/sessions/:name/inject {command}` — `Ctrl+C` + `command` +
   `Enter` via `tmux send-keys`. Alias resolved client-side.
 - Browser runtime — Chromium + Xvfb + x11vnc + noVNC, CDP at `/json/version`,
-  private `sps-net` only. **Must change**: `docker_runtime.go` hardcodes
+  private `pcoder-net` only. **Must change**: `docker_runtime.go` hardcodes
   `BROWSER_TARGET=http://127.0.0.1:3000`; required is dynamic per selected port.
 
 Preview flow:
@@ -40,7 +40,7 @@ Preview tab (TerminalView):  polls GET /preview/slots + Refresh
 
 Open:
 GET /preview/:project?port=N → iframe /api/projects/:id/preview/vnc.html?port=N
-  → auth SPS handler → private sidecar noVNC WS → Xvfb → x11vnc → Chromium
+  → auth PCODER handler → private sidecar noVNC WS → Xvfb → x11vnc → Chromium
   → Chromium at http://127.0.0.1:N (dynamic BROWSER_TARGET)
 ```
 
@@ -62,13 +62,13 @@ building with live HMR"; poor fit for exact mobile Safari fidelity.
 **Codespaces**: forwards a dev port to the user browser — real browser but
 `localhost` still means the phone, so API proxying is required.
 
-SPS copies Devin's remote-browser model. Do not copy Codespaces' direct
+PCODER copies Devin's remote-browser model. Do not copy Codespaces' direct
 browser-to-project as primary — it doesn't solve `localhost`.
 
 ## 2. Architecture
 
 ```text
-phone → SPS HTTPS (JWT) → worker per active port → project netns → app(s)
+phone → PCODER HTTPS (JWT) → worker per active port → project netns → app(s)
 ```
 
 No public app ports.
@@ -82,12 +82,12 @@ a crash affects only that preview. Share-nothing; optimize only after measuring.
 ### 2.2 `localhost` means the project
 
 Sidecar uses `container:<project-container>` netns so loopback is shared.
-No public port; SPS reaches it via private IP. Alternative (Chromium inside
+No public port; PCODER reaches it via private IP. Alternative (Chromium inside
 project image) rejected — bloats user image.
 
 ### 2.3 Display
 
-`Chromium → Xvfb → x11vnc → noVNC WS → canvas`. Keep on SPS origin. WebRTC later
+`Chromium → Xvfb → x11vnc → noVNC WS → canvas`. Keep on PCODER origin. WebRTC later
 only if VNC bandwidth warrants it.
 
 ### 2.4 Quick commands
@@ -154,11 +154,11 @@ Device emulation is a hint, not Safari emulation.
 | Many previews per project | One worker per port, unbounded | Memory scales with previews |
 | Reuse commands | `QuickCommands` map + modal (Home+Terminal) | UI + PATCH |
 | Run command quickly | `POST /inject {command}` = Ctrl+C+type+Enter | Needs session name |
-| Keep app off internet | No published ports; SPS-only surface | Remote display only |
+| Keep app off internet | No published ports; PCODER-only surface | Remote display only |
 | Preserve HMR | Chromium → dev server directly | Broken HMR stays broken |
 
 Unchanged: `localhost` sharing, root-relative paths, WebSockets, cookies,
-SPS JWT for surface/WS/inject, per-project/profile isolation — see prior doc.
+PCODER JWT for surface/WS/inject, per-project/profile isolation — see prior doc.
 
 ## 4. Interaction scope
 
@@ -171,7 +171,7 @@ preview, popups, extensions, DevTools, exact Safari, full a11y.
 
 ## 5. Security
 
-Only SPS HTTPS is public. Never publish project/VNC/noVNC/CDP/Docker socket;
+Only PCODER HTTPS is public. Never publish project/VNC/noVNC/CDP/Docker socket;
 WS via JWT/private network. Project is trusted user code — keep non-privileged,
 no host net, minimal mounts, CPU/mem limits, per-preview isolated profiles,
 CDP private. Browser profile = project data, not in logs. Outbound internet
@@ -185,14 +185,14 @@ the user-visible truth. CDP is for polling only (wait for HMR text), not for
 screenshots.
 
 ```text
-Playwright → SPS page → noVNC canvas → Chromium sidecar (netns) → app
+Playwright → PCODER page → noVNC canvas → Chromium sidecar (netns) → app
 ```
 
 ### 6.1 CDP readiness
 
 Worker's private `GET /json/version` must return `webSocketDebuggerUrl` before
 `ready`. Verify: endpoint appears before ready, correct Chromium version, WS
-connects, SPS reachable, public unreachable, not in logs.
+connects, PCODER reachable, public unreachable, not in logs.
 
 ### 6.2 Waiting for state
 
@@ -212,7 +212,7 @@ Keep synthetic Vite+React fixture (`preview.helpers.ts`) — small, fast, proven
 2. Exec-write new `src/App.jsx` via `POST /projects/exec`.
 3. Poll until new marker appears.
 4. `page.screenshot` after; assert before≠after with `maxDiffPixelRatio:0.10`.
-No SPS reload; HMR is the fixture's Vite.
+No PCODER reload; HMR is the fixture's Vite.
 
 ### 6.5 User+AI same browser
 

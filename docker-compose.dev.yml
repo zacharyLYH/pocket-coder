@@ -14,23 +14,23 @@ services:
       - path: .env
         required: false
     environment:
-      SPS_DATA_DIR: /data
-      SPS_BIND: :8080
-      SPS_DOCKER_SOCK: unix:///var/run/docker.sock
+      PCODER_DATA_DIR: /data
+      PCODER_BIND: :8080
+      PCODER_DOCKER_SOCK: unix:///var/run/docker.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - sps-data:/data
+      - pcoder-data:/data
     ports:
       - "8080:8080"
     networks:
       - default
-      - sps-net
+      - pcoder-net
 
   web:
     image: node:24-alpine
     working_dir: /app
     environment:
-      SPS_SERVER_URL: http://server:8080
+      PCODER_SERVER_URL: http://server:8080
     volumes:
       - ./web:/app
       - web-node-modules:/app/node_modules # container installs here, never in host ./web
@@ -41,11 +41,11 @@ services:
       - server
 
 volumes:
-  sps-data:
+  pcoder-data:
   web-node-modules:
 
 networks:
   # The server, project containers, and browser sidecars share this private
   # network. Project ports are still never published to the host.
-  sps-net:
-    name: sps-net
+  pcoder-net:
+    name: pcoder-net

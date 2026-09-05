@@ -1,6 +1,6 @@
 // Package config loads and validates server configuration from the
-// environment. Server-specific variables carry the SPS_ prefix so that
-// "unknown config" is detectable: any SPS_* or SMTP_* variable we do not
+// environment. Server-specific variables carry the PCODER_ prefix so that
+// "unknown config" is detectable: any PCODER_* or SMTP_* variable we do not
 // know about is a startup error rather than a silently ignored typo.
 package config
 
@@ -14,14 +14,14 @@ import (
 )
 
 // Environment variable names, exported so any package can reference config
-// keys by name. Required: SPS_LOGIN_EMAIL plus the SMTP_* group (documented
+// keys by name. Required: PCODER_LOGIN_EMAIL plus the SMTP_* group (documented
 // in the README). Everything else has a sensible default.
 const (
-	EnvDataDir    = "SPS_DATA_DIR"    // where all state lives; default ./data
-	EnvBind       = "SPS_BIND"        // listen address; default :8080
-	EnvLoginEmail = "SPS_LOGIN_EMAIL" // recipient of login PINs (required)
-	EnvJWTSecret  = "SPS_JWT_SECRET"  // signing key; auto-generated + persisted when unset
-	EnvDockerSock = "SPS_DOCKER_SOCK" // docker engine endpoint; default unix:///var/run/docker.sock
+	EnvDataDir    = "PCODER_DATA_DIR"    // where all state lives; default ./data
+	EnvBind       = "PCODER_BIND"        // listen address; default :8080
+	EnvLoginEmail = "PCODER_LOGIN_EMAIL" // recipient of login PINs (required)
+	EnvJWTSecret  = "PCODER_JWT_SECRET"  // signing key; auto-generated + persisted when unset
+	EnvDockerSock = "PCODER_DOCKER_SOCK" // docker engine endpoint; default unix:///var/run/docker.sock
 
 	EnvSMTPHost = "SMTP_HOST"     // Google SMTP by default
 	EnvSMTPPort = "SMTP_PORT"     // 587 by default
@@ -118,7 +118,7 @@ func load(env []string) (*Config, error) {
 	values := map[string]string{}
 	for _, kv := range env {
 		key, value, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(key, "SPS_") || strings.HasPrefix(key, "SMTP_") {
+		if strings.HasPrefix(key, "PCODER_") || strings.HasPrefix(key, "SMTP_") {
 			if !knownKeys[key] {
 				return nil, fmt.Errorf("unknown config variable %q (supported: %s)", key, known())
 			}
@@ -132,16 +132,16 @@ func load(env []string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		DataDir:    strEnv(values, "SPS_DATA_DIR", "./data"),
-		Bind:       strEnv(values, "SPS_BIND", ":8080"),
-		LoginEmail: values["SPS_LOGIN_EMAIL"],
-		JWTSecret:  values["SPS_JWT_SECRET"],
+		DataDir:    strEnv(values, "PCODER_DATA_DIR", "./data"),
+		Bind:       strEnv(values, "PCODER_BIND", ":8080"),
+		LoginEmail: values["PCODER_LOGIN_EMAIL"],
+		JWTSecret:  values["PCODER_JWT_SECRET"],
 		SMTPHost:   strEnv(values, "SMTP_HOST", "smtp.gmail.com"),
 		SMTPPort:   port,
 		SMTPUser:   values["SMTP_USER"],
 		SMTPPass:   values["SMTP_PASSWORD"],
 		SMTPFrom:   values["SMTP_FROM"],
-		DockerSock: strEnv(values, "SPS_DOCKER_SOCK", "unix:///var/run/docker.sock"),
+		DockerSock: strEnv(values, "PCODER_DOCKER_SOCK", "unix:///var/run/docker.sock"),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -153,19 +153,19 @@ func load(env []string) (*Config, error) {
 // that would misbehave at runtime.
 func (c *Config) Validate() error {
 	if c.DataDir == "" {
-		return fmt.Errorf("SPS_DATA_DIR must not be empty")
+		return fmt.Errorf("PCODER_DATA_DIR must not be empty")
 	}
 	if _, port, err := net.SplitHostPort(c.Bind); err != nil || port == "" {
-		return fmt.Errorf("SPS_BIND %q is not a host:port address: %v", c.Bind, err)
+		return fmt.Errorf("PCODER_BIND %q is not a host:port address: %v", c.Bind, err)
 	}
 	if c.LoginEmail == "" {
-		return fmt.Errorf("SPS_LOGIN_EMAIL must be set in .env (see README for the required variables)")
+		return fmt.Errorf("PCODER_LOGIN_EMAIL must be set in .env (see README for the required variables)")
 	}
 	if !emailRe.MatchString(c.LoginEmail) {
-		return fmt.Errorf("SPS_LOGIN_EMAIL %q is not a valid email address", c.LoginEmail)
+		return fmt.Errorf("PCODER_LOGIN_EMAIL %q is not a valid email address", c.LoginEmail)
 	}
 	if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
-		return fmt.Errorf("SPS_JWT_SECRET must be at least 32 characters when set")
+		return fmt.Errorf("PCODER_JWT_SECRET must be at least 32 characters when set")
 	}
 	if c.SMTPPort != 0 && (c.SMTPPort < 1 || c.SMTPPort > 65535) {
 		return fmt.Errorf("SMTP_PORT %d is not a valid port", c.SMTPPort)

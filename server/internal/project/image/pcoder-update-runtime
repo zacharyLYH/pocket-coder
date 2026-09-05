@@ -1,5 +1,5 @@
 #!/bin/sh
-# sps-update-runtime — bring this project's runtimes up to the latest
+# pcoder-update-runtime — bring this project's runtimes up to the latest
 # stable versions: node + npm (NodeSource current LTS) and python3 + pip.
 # Run it in any terminal of the project; it needs no arguments.
 set -eu

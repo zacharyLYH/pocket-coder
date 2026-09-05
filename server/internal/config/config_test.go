@@ -8,7 +8,7 @@ import (
 )
 
 func TestLoadDefaults(t *testing.T) {
-	cfg, err := load([]string{"SPS_LOGIN_EMAIL=me@example.com"})
+	cfg, err := load([]string{"PCODER_LOGIN_EMAIL=me@example.com"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -22,21 +22,21 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadAllFields(t *testing.T) {
 	cfg, err := load([]string{
-		"SPS_DATA_DIR=/srv/sps",
-		"SPS_BIND=127.0.0.1:9000",
-		"SPS_LOGIN_EMAIL=me@example.com",
-		"SPS_JWT_SECRET=" + strings.Repeat("x", 32),
+		"PCODER_DATA_DIR=/srv/pcoder",
+		"PCODER_BIND=127.0.0.1:9000",
+		"PCODER_LOGIN_EMAIL=me@example.com",
+		"PCODER_JWT_SECRET=" + strings.Repeat("x", 32),
 		"SMTP_HOST=smtp.gmail.com",
 		"SMTP_PORT=587",
 		"SMTP_USER=me@gmail.com",
 		"SMTP_PASSWORD=app-password",
 		"SMTP_FROM=me@gmail.com",
-		"SPS_DOCKER_SOCK=tcp://127.0.0.1:2375",
+		"PCODER_DOCKER_SOCK=tcp://127.0.0.1:2375",
 	})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	want := Config{DataDir: "/srv/sps", Bind: "127.0.0.1:9000", LoginEmail: "me@example.com",
+	want := Config{DataDir: "/srv/pcoder", Bind: "127.0.0.1:9000", LoginEmail: "me@example.com",
 		JWTSecret: strings.Repeat("x", 32), SMTPHost: "smtp.gmail.com", SMTPPort: 587,
 		SMTPUser: "me@gmail.com", SMTPPass: "app-password", SMTPFrom: "me@gmail.com",
 		DockerSock: "tcp://127.0.0.1:2375"}
@@ -47,13 +47,13 @@ func TestLoadAllFields(t *testing.T) {
 
 func TestLoadRejectsMissingLoginEmail(t *testing.T) {
 	_, err := load(nil)
-	if err == nil || !strings.Contains(err.Error(), "SPS_LOGIN_EMAIL") {
+	if err == nil || !strings.Contains(err.Error(), "PCODER_LOGIN_EMAIL") {
 		t.Fatalf("expected missing-email error, got %v", err)
 	}
 }
 
 func TestLoadRejectsUnknownVariable(t *testing.T) {
-	for _, unknown := range []string{"SPS_BOGUS_SETTING=1", "SMTP_BOGUS=1"} {
+	for _, unknown := range []string{"PCODER_BOGUS_SETTING=1", "SMTP_BOGUS=1"} {
 		if _, err := load([]string{unknown}); err == nil || !strings.Contains(err.Error(), strings.SplitN(unknown, "=", 2)[0]) {
 			t.Fatalf("expected unknown-variable error for %q, got %v", unknown, err)
 		}
@@ -65,8 +65,8 @@ func TestAppendDotEnv(t *testing.T) {
 	dotenv := filepath.Join(dir, ".env")
 	if err := os.WriteFile(dotenv, []byte(`
 # comment line
-SPS_LOGIN_EMAIL=from-dotenv@example.com
-SPS_BIND = "127.0.0.1:9999"
+PCODER_LOGIN_EMAIL=from-dotenv@example.com
+PCODER_BIND = "127.0.0.1:9999"
 SMTP_USER=user@example.com
 =no-name
 KEY_NO_EQ
@@ -74,7 +74,7 @@ KEY_NO_EQ
 		t.Fatal(err)
 	}
 
-	env := []string{"SPS_BIND=:8080", "SPS_LOGIN_EMAIL=real@example.com"}
+	env := []string{"PCODER_BIND=:8080", "PCODER_LOGIN_EMAIL=real@example.com"}
 	if err := appendDotEnv(&env, dotenv); err != nil {
 		t.Fatalf("appendDotEnv: %v", err)
 	}
@@ -85,10 +85,10 @@ KEY_NO_EQ
 		got[k] = v
 	}
 	// Real environment wins.
-	if got["SPS_LOGIN_EMAIL"] != "real@example.com" {
+	if got["PCODER_LOGIN_EMAIL"] != "real@example.com" {
 		t.Fatalf("real env lost: %v", got)
 	}
-	if got["SPS_BIND"] != ":8080" {
+	if got["PCODER_BIND"] != ":8080" {
 		t.Fatalf("real env lost for bind: %v", got)
 	}
 	// Dotenv fills gaps and trims quotes/whitespace.
@@ -98,7 +98,7 @@ KEY_NO_EQ
 }
 
 func TestAppendDotEnvMissingFile(t *testing.T) {
-	env := []string{"SPS_LOGIN_EMAIL=me@example.com"}
+	env := []string{"PCODER_LOGIN_EMAIL=me@example.com"}
 	if err := appendDotEnv(&env, filepath.Join(t.TempDir(), "nope.env")); err != nil {
 		t.Fatalf("missing file should be ignored, got %v", err)
 	}
@@ -108,11 +108,11 @@ func TestAppendDotEnvMissingFile(t *testing.T) {
 }
 
 // skipIfRealEnvConflicts guards Load()-level tests: a developer machine or CI
-// runner with SPS_*/SMTP_* variables set would shadow every .env value.
+// runner with PCODER_*/SMTP_* variables set would shadow every .env value.
 func skipIfRealEnvConflicts(t *testing.T) {
 	t.Helper()
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "SPS_") || strings.HasPrefix(kv, "SMTP_") {
+		if strings.HasPrefix(kv, "PCODER_") || strings.HasPrefix(kv, "SMTP_") {
 			t.Skipf("real environment shadows .env: %s", kv)
 		}
 	}
@@ -122,7 +122,7 @@ func TestLoadFallsBackToParentDotEnv(t *testing.T) {
 	skipIfRealEnvConflicts(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, ".env"),
-		[]byte("SPS_LOGIN_EMAIL=root@example.com\nSPS_DATA_DIR=/from/root\n"), 0o600); err != nil {
+		[]byte("PCODER_LOGIN_EMAIL=root@example.com\nPCODER_DATA_DIR=/from/root\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sub := filepath.Join(root, "server")
@@ -144,8 +144,8 @@ func TestLoadPrefersLocalDotEnvOverParent(t *testing.T) {
 	skipIfRealEnvConflicts(t)
 	root := t.TempDir()
 	for _, f := range []struct{ path, body string }{
-		{filepath.Join(root, ".env"), "SPS_LOGIN_EMAIL=parent@example.com"},
-		{filepath.Join(root, "server", ".env"), "SPS_LOGIN_EMAIL=local@example.com"},
+		{filepath.Join(root, ".env"), "PCODER_LOGIN_EMAIL=parent@example.com"},
+		{filepath.Join(root, "server", ".env"), "PCODER_LOGIN_EMAIL=local@example.com"},
 	} {
 		if err := os.MkdirAll(filepath.Dir(f.path), 0o700); err != nil {
 			t.Fatal(err)
@@ -166,14 +166,14 @@ func TestLoadPrefersLocalDotEnvOverParent(t *testing.T) {
 }
 
 func TestValidateRejectsBadValues(t *testing.T) {
-	email := "SPS_LOGIN_EMAIL=me@example.com"
+	email := "PCODER_LOGIN_EMAIL=me@example.com"
 	cases := []struct {
 		name string
 		env  []string
 	}{
-		{"bad bind", []string{email, "SPS_BIND=8080"}},
-		{"bad email", []string{"SPS_LOGIN_EMAIL=not-an-email"}},
-		{"short jwt secret", []string{email, "SPS_JWT_SECRET=short"}},
+		{"bad bind", []string{email, "PCODER_BIND=8080"}},
+		{"bad email", []string{"PCODER_LOGIN_EMAIL=not-an-email"}},
+		{"short jwt secret", []string{email, "PCODER_JWT_SECRET=short"}},
 		{"bad smtp port", []string{email, "SMTP_PORT=abc"}},
 		{"out of range smtp port", []string{email, "SMTP_PORT=70000"}},
 	}

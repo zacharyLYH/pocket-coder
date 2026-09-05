@@ -44,7 +44,7 @@ export function Home({ email, onLogout, navigate }: {
     <>
       <main className="mx-auto w-full max-w-md p-4">
         <header className="flex items-center justify-between py-4">
-          <h1 className="text-lg font-semibold">Side Project Saviour</h1>
+          <h1 className="text-lg font-semibold">Pocket Coder</h1>
           <Button variant="ghost" size="sm" onClick={logout}>
             Log out
           </Button>

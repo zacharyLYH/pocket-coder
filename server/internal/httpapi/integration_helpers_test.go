@@ -23,14 +23,14 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"sps/internal/auth"
-	"sps/internal/docker"
-	"sps/internal/events"
-	"sps/internal/harness"
-	"sps/internal/project"
-	"sps/internal/session"
-	"sps/internal/sshkeys"
-	"sps/internal/state"
+	"pcoder/internal/auth"
+	"pcoder/internal/docker"
+	"pcoder/internal/events"
+	"pcoder/internal/harness"
+	"pcoder/internal/project"
+	"pcoder/internal/session"
+	"pcoder/internal/sshkeys"
+	"pcoder/internal/state"
 )
 
 func newLiveDeps(t *testing.T) (http.Handler, *docker.Docker, *project.Service, *bytes.Buffer, *events.Log, *state.Store) {
@@ -48,7 +48,7 @@ func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docke
 	}
 	t.Cleanup(func() { ev.Close() })
 
-	dkr, err := docker.New(os.Getenv("SPS_DOCKER_SOCK"))
+	dkr, err := docker.New(os.Getenv("PCODER_DOCKER_SOCK"))
 	if err != nil {
 		t.Fatalf("new docker client: %v", err)
 	}

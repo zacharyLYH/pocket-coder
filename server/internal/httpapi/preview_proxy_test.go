@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestPreviewProxyStripsSPSPrefix(t *testing.T) {
+func TestPreviewProxyStripsPCODERPrefix(t *testing.T) {
 	target, err := url.Parse("http://10.0.0.8:6080")
 	if err != nil {
 		t.Fatal(err)

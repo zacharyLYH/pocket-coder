@@ -11,10 +11,10 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"sps/internal/docker"
-	"sps/internal/harness"
-	"sps/internal/project"
-	"sps/internal/state/statetest"
+	"pcoder/internal/docker"
+	"pcoder/internal/harness"
+	"pcoder/internal/project"
+	"pcoder/internal/state/statetest"
 )
 
 // TestInstallHarnessEndpoint drives POST /api/harnesses/{id}/install with an
@@ -30,7 +30,7 @@ func TestInstallHarnessEndpoint(t *testing.T) {
 	}
 
 	// only "abc" is selected: nothing may run against "def"
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 
 	// running project: lookup (miss) → install → re-lookup (hit) → validate
 	lookup := []string{"bash", "-lc", "command -v fakecli"}
@@ -38,7 +38,7 @@ func TestInstallHarnessEndpoint(t *testing.T) {
 	validate := []string{"bash", "-lc", "fakecli --version || fakecli --help"}
 	// misses: InstallHarness's initial probe; the post-install re-check hits
 	lookups := 0
-	md.EXPECT().Exec(mock.Anything, "sps-abc", lookup, false).
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", lookup, false).
 		RunAndReturn(func(context.Context, string, []string, bool) (docker.ExecResult, error) {
 			lookups++
 			if lookups < 2 {
@@ -46,9 +46,9 @@ func TestInstallHarnessEndpoint(t *testing.T) {
 			}
 			return docker.ExecResult{ExitCode: 0, Output: "/usr/bin/fakecli"}, nil
 		})
-	md.EXPECT().Exec(mock.Anything, "sps-abc", install, false).
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", install, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "added 1 package\n"}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc", validate, true).
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", validate, true).
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli 1.0\n"}, nil)
 
 	h := New(d)
@@ -171,8 +171,8 @@ func TestProjectHarnessesShowsInstalled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"bash", "-lc", `for c in fakecli ghosty vi; do command -v "$c" >/dev/null && echo "$c"; done`}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli\nvi\n"}, nil)
 
@@ -203,7 +203,7 @@ func TestProjectHarnessesShowsInstalled(t *testing.T) {
 	}
 
 	// stopped container → 409 (EnsureContainer sees exited and leaves it)
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: false, Status: "exited"}, nil).Once()
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: false, Status: "exited"}, nil).Once()
 	rec = authedGet(t, h, cookie, "/api/projects/abc/harnesses")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("stopped container: %d, want 409", rec.Code)

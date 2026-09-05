@@ -3,8 +3,8 @@ package sshkeys
 import (
 	"testing"
 
-	"sps/internal/state"
-	"sps/internal/state/statetest"
+	"pcoder/internal/state"
+	"pcoder/internal/state/statetest"
 )
 
 func newState(t *testing.T) (*state.Store, *Store) {

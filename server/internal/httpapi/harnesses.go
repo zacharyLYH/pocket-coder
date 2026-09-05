@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"sps/internal/harness"
-	"sps/internal/project"
+	"pcoder/internal/harness"
+	"pcoder/internal/project"
 )
 
 func handleListHarnesses(d Deps) http.HandlerFunc {

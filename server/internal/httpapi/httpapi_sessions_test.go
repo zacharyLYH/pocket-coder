@@ -16,10 +16,10 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/mock"
 
-	"sps/internal/docker"
-	"sps/internal/harness"
-	"sps/internal/session"
-	dockermocks "sps/mocks/docker"
+	"pcoder/internal/docker"
+	"pcoder/internal/harness"
+	"pcoder/internal/session"
+	dockermocks "pcoder/mocks/docker"
 )
 
 // newSessionDeps and seedProject live in httpapi_test.go (shared fixtures).
@@ -46,8 +46,8 @@ func TestSessionsRequireAuth(t *testing.T) {
 func TestCreateSessionLifecycle(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
 		Return(docker.ExecResult{ExitCode: 1, Output: "no server running on /tmp/tmux-0/default"}, nil)
 
@@ -60,9 +60,9 @@ func TestCreateSessionLifecycle(t *testing.T) {
 		t.Fatalf("empty list: got %d %q, want 200 %q", rec.Code, rec.Body, want)
 	}
 
-	md.EXPECT().Exec(mock.Anything, "sps-abc", []string{"tmux", "has-session", "-t", "work"}, false).
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "work"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil).Once() // ensure: no such session yet
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		append([]string{"tmux", "new-session", "-d", "-s", "work", "-c", "/workspace",
 			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
@@ -83,10 +83,10 @@ func TestCreateSessionLifecycle(t *testing.T) {
 	}
 
 	// an existing session is ensure-success (200) without creating anything
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc", []string{"tmux", "has-session", "-t", "work"}, false).
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "work"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil) // ensure: already there
-	md.EXPECT().Exec(mock.Anything, "sps-abc", mock.MatchedBy(func(cmd []string) bool {
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", mock.MatchedBy(func(cmd []string) bool {
 		return len(cmd) == 3 && cmd[0] == "bash" && cmd[1] == "-lc"
 	}), false).Return(docker.ExecResult{ExitCode: 0}, nil) // IsAlive: session is live
 	rec = authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"work"}`)
@@ -96,9 +96,9 @@ func TestCreateSessionLifecycle(t *testing.T) {
 	}
 
 	// a harness id is a valid shell-session name (created as plain shell)
-	md.EXPECT().Exec(mock.Anything, "sps-abc", []string{"tmux", "has-session", "-t", "fake"}, false).
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "fake"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil).Once()
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		append([]string{"tmux", "new-session", "-d", "-s", "fake", "-c", "/workspace",
 			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
@@ -145,8 +145,8 @@ func TestTerminalPreflight(t *testing.T) {
 	}
 
 	// missing session → strict 404, no upgrade
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc", []string{"tmux", "has-session", "-t", "main"}, false).
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "main"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil)
 	rec := wsGet("/ws/projects/abc/sessions/main")
 	want := "{\"error\":\"no such session\"}\n"
@@ -172,8 +172,8 @@ func TestTerminalRelaunchesHarnessFromState(t *testing.T) {
 	_ = d.Projects.RecordSession("abc", "helper-1", "fake")
 
 	// has-session: not in tmux → triggers the state.json relaunch path
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "has-session", "-t", "helper-1"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil)
 
@@ -208,9 +208,9 @@ func TestListSessionsIncludesStateJSONEntries(t *testing.T) {
 	// Record a harness session in state.json that's NOT in tmux
 	_ = d.Projects.RecordSession("abc", "oc-1", "fake")
 
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	// tmux only has one session — "live-session"
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "live-session\n"}, nil)
 
@@ -250,18 +250,18 @@ func TestEnsureRelaunchesDeadHarnessSession(t *testing.T) {
 	// Record session metadata: "fake-1" runs the "fake" harness
 	_ = d.Projects.RecordSession("abc", "fake-1", "fake")
 
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	// has-session: session exists in tmux
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "has-session", "-t", "fake-1"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 	// IsAlive: session is dead (pane_pid check fails)
-	md.EXPECT().Exec(mock.Anything, "sps-abc", mock.MatchedBy(func(cmd []string) bool {
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", mock.MatchedBy(func(cmd []string) bool {
 		return len(cmd) == 3 && cmd[0] == "bash" && cmd[1] == "-lc" &&
 			strings.Contains(cmd[2], "kill -0")
 	}), false).Return(docker.ExecResult{ExitCode: 1}, nil) // kill -0 failed → dead
 	// kill the dead session
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "kill-session", "-t", "fake-1"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 	// relaunch the harness
@@ -303,11 +303,11 @@ func TestEnsureFallsBackToShellWhenHarnessGone(t *testing.T) {
 	_ = d.Harnesses.Remove("fake")
 
 	// Session not in tmux — ensure call should fall back to plain shell
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "has-session", "-t", "gone-1"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		append([]string{"tmux", "new-session", "-d", "-s", "gone-1", "-c", "/workspace",
 			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
@@ -337,11 +337,11 @@ func TestRestartPlainShellDoesNotLaunchHarness(t *testing.T) {
 
 	// Create a plain shell named "opencode-1" — this must record empty
 	// harness metadata in state.json so restart doesn't use ParseBase.
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "has-session", "-t", "opencode-1"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil).Once()
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		append([]string{"tmux", "new-session", "-d", "-s", "opencode-1", "-c", "/workspace",
 			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
@@ -365,10 +365,10 @@ func TestRestartPlainShellDoesNotLaunchHarness(t *testing.T) {
 	}
 
 	// Now restart — should create a plain shell, NOT launch opencode
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "kill-session", "-t", "opencode-1"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		append([]string{"tmux", "new-session", "-d", "-s", "opencode-1", "-c", "/workspace",
 			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
@@ -390,8 +390,8 @@ func TestTerminalRoundTrip(t *testing.T) {
 	seedProject(t, dataDir, "abc")
 
 	resized := make(chan [2]int, 8)
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc", []string{"tmux", "has-session", "-t", "main"}, false).
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "main"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 	md.EXPECT().ResizeTTY(mock.Anything, "exec-1", 40, 120).RunAndReturn(
 		func(_ context.Context, _ string, rows, cols int) error {
@@ -400,7 +400,7 @@ func TestTerminalRoundTrip(t *testing.T) {
 		})
 	wantAttach := append([]string{"env", "TERM=xterm-256color", "COLORTERM=truecolor", "tmux"}, session.ThemeArgs()...)
 	wantAttach = append(wantAttach, ";", "attach", "-t", "main")
-	md.EXPECT().Attach(mock.Anything, "sps-abc",
+	md.EXPECT().Attach(mock.Anything, "pcoder-abc",
 		wantAttach,
 		mock.Anything, mock.Anything, mock.Anything, true).
 		RunAndReturn(func(ctx context.Context, _ string, _ []string, stdin io.Reader, stdout, stderr io.Writer, _ bool) (string, <-chan docker.ExecDone, error) {
@@ -492,10 +492,10 @@ func TestTerminalSurvivesAbruptClientDrop(t *testing.T) {
 	seedProject(t, dataDir, "abc")
 
 	attachEnded := make(chan struct{})
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc", []string{"tmux", "has-session", "-t", "main"}, false).
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "main"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
-	md.EXPECT().Attach(mock.Anything, "sps-abc", mock.Anything,
+	md.EXPECT().Attach(mock.Anything, "pcoder-abc", mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything, true).
 		RunAndReturn(func(ctx context.Context, _ string, _ []string, stdin io.Reader, stdout, stderr io.Writer, _ bool) (string, <-chan docker.ExecDone, error) {
 			done := make(chan docker.ExecDone, 1)
@@ -596,10 +596,10 @@ func hasEventType(d Deps, typ string) bool {
 }
 
 // expectLaunch pins the exec chain LaunchNamed performs for the fake plugin
-// against container "sps-<id>", session <name>.
+// against container "pcoder-<id>", session <name>.
 func expectLaunch(md *dockermocks.MockClient, id, name string) {
 	list := []string{"tmux", "list-sessions", "-F", "#{session_name}"}
-	md.EXPECT().Exec(mock.Anything, "sps-"+id, list, mock.Anything).
+	md.EXPECT().Exec(mock.Anything, "pcoder-"+id, list, mock.Anything).
 		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
 	probe := []string{"test", "-d", "/workspace/repo/.git"}
 	lookup := []string{"bash", "-lc", "command -v fakecli"}
@@ -608,20 +608,20 @@ func expectLaunch(md *dockermocks.MockClient, id, name string) {
 		"bash", "-lc", `fakecli || echo "[fakecli exited: $?]"`,
 		";", "set-option", "remain-on-exit", "on",
 		";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...)
-	md.EXPECT().Exec(mock.Anything, "sps-"+id, probe, mock.Anything).
+	md.EXPECT().Exec(mock.Anything, "pcoder-"+id, probe, mock.Anything).
 		Return(docker.ExecResult{ExitCode: 1}, nil).Once()
-	md.EXPECT().Exec(mock.Anything, "sps-"+id, lookup, false).
+	md.EXPECT().Exec(mock.Anything, "pcoder-"+id, lookup, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "/usr/bin/fakecli\n"}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-"+id, validate, true).
+	md.EXPECT().Exec(mock.Anything, "pcoder-"+id, validate, true).
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli 1.0\n"}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-"+id, create, false).
+	md.EXPECT().Exec(mock.Anything, "pcoder-"+id, create, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
 }
 
 func TestCreateHarnessSession(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	expectLaunch(md, "abc", "fake-1")
 
 	h := New(d)
@@ -648,7 +648,7 @@ func TestCreateHarnessSession(t *testing.T) {
 func TestCreateHarnessSessionUnknownHarness404(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
@@ -667,18 +667,18 @@ func TestCreateHarnessSessionNotACLI422(t *testing.T) {
 	if _, err := d.Harnesses.Save(harness.Harness{Name: "Broken", Command: "sleepy"}); err != nil {
 		t.Fatal(err)
 	}
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"test", "-d", "/workspace/repo/.git"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"bash", "-lc", "command -v sleepy"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "/usr/bin/sleepy\n"}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc", mock.Anything, true).
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", mock.Anything, true).
 		Return(docker.ExecResult{ExitCode: 0, Output: ""}, nil)
 
 	h := New(d)
@@ -709,8 +709,8 @@ func TestRestartBareHarnessNameRelaunchesHarness(t *testing.T) {
 
 	// A session named after the bare harness id "fake" (no -<n> suffix):
 	// restart must relaunch the harness, not create a plain shell.
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "kill-session", "-t", "fake"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 	expectLaunchNamed(md, "abc", "fake")
@@ -729,19 +729,19 @@ func TestRestartBareHarnessNameRelaunchesHarness(t *testing.T) {
 func TestCreateThenListSessions(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 
-	md.EXPECT().Exec(mock.Anything, "sps-abc", []string{"tmux", "has-session", "-t", "work"}, false).
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "work"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil).Once() // ensure: not there yet
 	shellCreate := append([]string{"tmux", "new-session", "-d", "-s", "work", "-c", "/workspace",
 		";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...)
-	md.EXPECT().Exec(mock.Anything, "sps-abc", shellCreate, false).
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", shellCreate, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
 	expectLaunch(md, "abc", "fake-1")
 
 	// the list the picker renders: the shell the user named plus the
 	// auto-numbered harness session, nothing else
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "fake-1\nwork\n"}, nil)
 
@@ -780,8 +780,8 @@ func TestKillAndRestartSessions(t *testing.T) {
 	seedProject(t, dataDir, "abc")
 
 	killed := 0
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "kill-session", "-t", "main"}, false).
 		RunAndReturn(func(context.Context, string, []string, bool) (docker.ExecResult, error) {
 			killed++
@@ -799,7 +799,7 @@ func TestKillAndRestartSessions(t *testing.T) {
 	waitForEvent(t, d, "session.exit")
 
 	// restart resolves "main": no such plugin → plain shell recreation
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		append([]string{"tmux", "new-session", "-d", "-s", "main", "-c", "/workspace",
 			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
@@ -816,8 +816,8 @@ func TestRestartHarnessSessionSameName(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "kill-session", "-t", "fake-1"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 	expectLaunchNamed(md, "abc", "fake-1")
@@ -835,15 +835,15 @@ func TestRestartHarnessSessionSameName(t *testing.T) {
 // Kept separate (not merged with a bool): the tty matchers differ
 // deliberately — Named pins exact tty values while expectLaunch is lenient.
 func expectLaunchNamed(md *dockermocks.MockClient, id, name string) {
-	md.EXPECT().Exec(mock.Anything, "sps-"+id,
+	md.EXPECT().Exec(mock.Anything, "pcoder-"+id,
 		[]string{"test", "-d", "/workspace/repo/.git"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil).Once()
-	md.EXPECT().Exec(mock.Anything, "sps-"+id,
+	md.EXPECT().Exec(mock.Anything, "pcoder-"+id,
 		[]string{"bash", "-lc", "command -v fakecli"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "/usr/bin/fakecli\n"}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-"+id, mock.Anything, true).
+	md.EXPECT().Exec(mock.Anything, "pcoder-"+id, mock.Anything, true).
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli 1.0\n"}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-"+id,
+	md.EXPECT().Exec(mock.Anything, "pcoder-"+id,
 		append([]string{"tmux", "new-session", "-d", "-s", name, "-c", "/workspace",
 			"bash", "-lc", `fakecli || echo "[fakecli exited: $?]"`,
 			";", "set-option", "remain-on-exit", "on",

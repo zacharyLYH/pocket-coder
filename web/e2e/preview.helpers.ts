@@ -142,7 +142,7 @@ function writeFilesCmd(files: Record<string, string>): string {
 
 async function waitForNpmInstall(request: APIRequestContext, id: string) {
   for (let i = 0; i < 60; i++) {
-    const s = await execInProject(request, id, 'cat /tmp/sps-npm.status 2>/dev/null || echo pending')
+    const s = await execInProject(request, id, 'cat /tmp/pcoder-npm.status 2>/dev/null || echo pending')
     if (s.trim() === '0') return
     if (s.trim() === '1') throw new Error('npm install failed')
     await new Promise((r) => setTimeout(r, 2000))
@@ -156,10 +156,10 @@ async function createRunningViteProject(request: APIRequestContext, files: Recor
   const id = await createProject(request)
   const command = `${writeFilesCmd(files)}; nohup bash -lc '
     cd /workspace/app;
-    npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/sps-npm.log 2>&1;
-    echo $? >/tmp/sps-npm.status;
-    node server.js >/tmp/sps-backend.log 2>&1 &
-    exec npm run dev -- --host 0.0.0.0 --port 3000 >/tmp/sps-vite.log 2>&1
+    npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/pcoder-npm.log 2>&1;
+    echo $? >/tmp/pcoder-npm.status;
+    node server.js >/tmp/pcoder-backend.log 2>&1 &
+    exec npm run dev -- --host 0.0.0.0 --port 3000 >/tmp/pcoder-vite.log 2>&1
   ' >/dev/null 2>&1 </dev/null &`
   const setup = await request.post('/api/projects/exec', { data: { projectIds: [id], command } })
   expect(setup.ok()).toBeTruthy()
@@ -171,12 +171,12 @@ async function createRunningViteProject(request: APIRequestContext, files: Recor
 // so a test can start them via inject (the user-driven flow).
 async function createPreinstalledProject(request: APIRequestContext, files: Record<string, string>): Promise<string> {
   const id = await createProject(request)
-  const install = `${writeFilesCmd(files)}; cd /workspace/app && npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/sps-npm.log 2>&1; echo $? >/tmp/sps-npm.status`
+  const install = `${writeFilesCmd(files)}; cd /workspace/app && npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/pcoder-npm.log 2>&1; echo $? >/tmp/pcoder-npm.status`
   const res = await request.post('/api/projects/exec', { data: { projectIds: [id], command: install } })
   expect(res.ok()).toBeTruthy()
   await waitForNpmInstall(request, id)
   await request.patch(`/api/projects/${id}`, {
-    data: { quickCommands: { dev: 'cd /workspace/app && npm run dev -- --host 0.0.0.0 --port 3000', backend: 'cd /workspace/app && nohup node server.js >/tmp/sps-backend.log 2>&1 &' } },
+    data: { quickCommands: { dev: 'cd /workspace/app && npm run dev -- --host 0.0.0.0 --port 3000', backend: 'cd /workspace/app && nohup node server.js >/tmp/pcoder-backend.log 2>&1 &' } },
   })
   return id
 }
@@ -224,7 +224,7 @@ async function waitForProjectApp(request: APIRequestContext, id: string) {
     } catch {
       if (attempt % 10 === 0) {
         try {
-          const npmStatus = await execInProject(request, id, 'cat /tmp/sps-npm.status 2>/dev/null || echo pending')
+          const npmStatus = await execInProject(request, id, 'cat /tmp/pcoder-npm.status 2>/dev/null || echo pending')
           if (npmStatus.trim() === '1') throw new Error('npm install failed')
         } catch (error) {
           if (error instanceof Error && error.message.startsWith('npm install failed')) throw error
@@ -394,8 +394,8 @@ async function createStaticProject(
 export async function createVanillaProject(request: APIRequestContext): Promise<string> {
   return createStaticProject(request, 'Vanilla', vanillaFiles, `nohup bash -lc '
     cd /workspace/app;
-    node server.js >/tmp/sps-backend.log 2>&1 &
-    exec node static-server.js >/tmp/sps-vite.log 2>&1
+    node server.js >/tmp/pcoder-backend.log 2>&1 &
+    exec node static-server.js >/tmp/pcoder-vite.log 2>&1
   ' >/dev/null 2>&1 </dev/null &`, ['3000/', '4000/api/data'])
 }
 
@@ -441,7 +441,7 @@ const responsiveFiles: Record<string, string> = {
 export async function createResponsiveProject(request: APIRequestContext): Promise<string> {
   return createStaticProject(request, 'Responsive', responsiveFiles, `nohup bash -lc '
     cd /workspace/app;
-    exec node static-server.js >/tmp/sps-vite.log 2>&1
+    exec node static-server.js >/tmp/pcoder-vite.log 2>&1
   ' >/dev/null 2>&1 </dev/null &`, ['3000/'])
 }
 

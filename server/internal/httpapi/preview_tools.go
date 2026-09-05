@@ -15,7 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"sps/internal/preview"
+	"pcoder/internal/preview"
 )
 
 // ── CDP session cache ───────────────────────────────────────────────────
@@ -406,7 +406,7 @@ func handlePreviewConsole(d Deps) http.HandlerFunc {
 			return
 		}
 		result, err := s.call(r.Context(), "Runtime.evaluate", map[string]any{
-			"expression":    "JSON.stringify(window.__sps_logs||[])",
+			"expression":    "JSON.stringify(window.__pcoder_logs||[])",
 			"returnByValue": true,
 		})
 		if err != nil {

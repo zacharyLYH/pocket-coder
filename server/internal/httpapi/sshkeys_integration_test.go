@@ -80,7 +80,7 @@ func TestSSHKeyInjectOnCreate(t *testing.T) {
 	// verify authorized_keys exists and contains the key
 	var catResult string
 	for i := 0; i < 15; i++ {
-		res, err := dkr.Exec(t.Context(), "sps-"+id,
+		res, err := dkr.Exec(t.Context(), "pcoder-"+id,
 			[]string{"cat", "/root/.ssh/authorized_keys"}, false)
 		if err == nil && res.ExitCode == 0 {
 			catResult = strings.TrimSpace(res.Output)
@@ -127,15 +127,15 @@ func TestReconcileMissingContainer(t *testing.T) {
 	waitForStatus(t, h, cookie, id, "running")
 
 	// manually kill the container (simulate engine restart / docker rm)
-	if err := dkr.Stop(t.Context(), "sps-"+id, 0); err != nil {
+	if err := dkr.Stop(t.Context(), "pcoder-"+id, 0); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
-	if err := dkr.Remove(t.Context(), "sps-"+id, true); err != nil {
+	if err := dkr.Remove(t.Context(), "pcoder-"+id, true); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 
 	// verify the container is gone
-	if _, err := dkr.Inspect(t.Context(), "sps-"+id); err == nil {
+	if _, err := dkr.Inspect(t.Context(), "pcoder-"+id); err == nil {
 		t.Fatal("container should be gone")
 	}
 

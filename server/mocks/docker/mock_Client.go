@@ -4,7 +4,7 @@ package mocks
 
 import (
 	context "context"
-	docker "sps/internal/docker"
+	docker "pcoder/internal/docker"
 
 	io "io"
 

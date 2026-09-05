@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"sps/internal/state/statetest"
+	"pcoder/internal/state/statetest"
 )
 
 func open(t *testing.T, dataDir string, seed Bootstrap) (*Store, Document) {

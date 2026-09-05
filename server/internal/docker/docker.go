@@ -22,7 +22,7 @@ var (
 	ErrNotFound = errors.New("container not found")
 )
 
-// DefaultEndpoint is used when SPS_DOCKER_SOCK is unset.
+// DefaultEndpoint is used when PCODER_DOCKER_SOCK is unset.
 const DefaultEndpoint = "unix:///var/run/docker.sock"
 
 // Client is everything the server needs from Docker. Defined as an interface

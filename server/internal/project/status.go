@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"sps/internal/docker"
+	"pcoder/internal/docker"
 )
 
 // Live container status mapping. The strings surface verbatim in the HTTP

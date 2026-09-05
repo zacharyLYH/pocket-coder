@@ -8,7 +8,7 @@ import (
 	"os"
 	"sort"
 
-	"sps/internal/state"
+	"pcoder/internal/state"
 )
 
 // Project aliases the canonical persisted shape.

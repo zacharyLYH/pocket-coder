@@ -12,7 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"sps/internal/preview"
+	"pcoder/internal/preview"
 )
 
 // endpointWorker/Factory and authedPostCtx live in httpapi_test.go now:
@@ -80,7 +80,7 @@ func startTestDeps(t *testing.T, script *scriptedCDP, projectID string) (http.Ha
 
 	d, pinOut := newTestDeps(t)
 	m := preview.NewManager(previewTestFactory{ep: preview.Endpoint{CDP: srv.URL}})
-	if _, err := m.Ensure(context.Background(), preview.Config{ProjectID: projectID, ContainerID: "sps-" + projectID}); err != nil {
+	if _, err := m.Ensure(context.Background(), preview.Config{ProjectID: projectID, ContainerID: "pcoder-" + projectID}); err != nil {
 		t.Fatal(err)
 	}
 	d.Preview = m

@@ -7,13 +7,13 @@ import (
 )
 
 func TestContainerOptionsDefaults(t *testing.T) {
-	opts := containerOptions(t.Context(), Spec{Name: "sps-x", Image: "img"})
-	if opts.Name != "sps-x" || opts.Config.Image != "img" {
+	opts := containerOptions(t.Context(), Spec{Name: "pcoder-x", Image: "img"})
+	if opts.Name != "pcoder-x" || opts.Config.Image != "img" {
 		t.Fatalf("name/image not set: %+v", opts)
 	}
 	h := opts.HostConfig
-	if h.NetworkMode != "sps-net" {
-		t.Fatalf("network = %q, want sps-net", h.NetworkMode)
+	if h.NetworkMode != "pcoder-net" {
+		t.Fatalf("network = %q, want pcoder-net", h.NetworkMode)
 	}
 	if !h.ReadonlyRootfs {
 		t.Fatal("default spec should have a read-only rootfs")
@@ -31,10 +31,10 @@ func TestContainerOptionsDefaults(t *testing.T) {
 
 func TestContainerOptionsOverrides(t *testing.T) {
 	opts := containerOptions(t.Context(), Spec{
-		Name: "sps-x", Image: "img", Cmd: []string{"sleep", "1"},
+		Name: "pcoder-x", Image: "img", Cmd: []string{"sleep", "1"},
 		Env: []string{"A=B"}, WorkDir: "/root",
 		Writable: true, Memory: 1 << 30, Network: "custom-net",
-		Volumes: []Mount{{Name: "sps-x-home", Dest: "/root"}},
+		Volumes: []Mount{{Name: "pcoder-x-home", Dest: "/root"}},
 		Binds:   []string{"/host/key:/root/.ssh/id_ed25519:ro"},
 	})
 	h := opts.HostConfig
@@ -47,7 +47,7 @@ func TestContainerOptionsOverrides(t *testing.T) {
 	if h.NetworkMode != "custom-net" {
 		t.Fatalf("network = %q", h.NetworkMode)
 	}
-	if len(h.Mounts) != 1 || h.Mounts[0].Source != "sps-x-home" || h.Mounts[0].Target != "/root" {
+	if len(h.Mounts) != 1 || h.Mounts[0].Source != "pcoder-x-home" || h.Mounts[0].Target != "/root" {
 		t.Fatalf("volumes: %+v", h.Mounts)
 	}
 	if len(h.Binds) != 1 || h.Binds[0] != "/host/key:/root/.ssh/id_ed25519:ro" {
@@ -59,8 +59,8 @@ func TestContainerOptionsOverrides(t *testing.T) {
 }
 
 func TestContainerNamespaceOmitsHostGatewayMapping(t *testing.T) {
-	opts := containerOptions(t.Context(), Spec{Name: "preview", Image: "browser", Network: "container:sps-project"})
-	if opts.HostConfig.NetworkMode != "container:sps-project" {
+	opts := containerOptions(t.Context(), Spec{Name: "preview", Image: "browser", Network: "container:pcoder-project"})
+	if opts.HostConfig.NetworkMode != "container:pcoder-project" {
 		t.Fatalf("network = %q", opts.HostConfig.NetworkMode)
 	}
 	if len(opts.HostConfig.ExtraHosts) != 0 {
@@ -69,13 +69,13 @@ func TestContainerNamespaceOmitsHostGatewayMapping(t *testing.T) {
 }
 
 func TestTarFileRoundTrip(t *testing.T) {
-	tr := tar.NewReader(tarFile(".sps-env", []byte("FOO=bar\n")))
+	tr := tar.NewReader(tarFile(".pcoder-env", []byte("FOO=bar\n")))
 	hdr, err := tr.Next()
 	if err != nil {
 		t.Fatalf("next: %v", err)
 	}
-	if hdr.Name != ".sps-env" {
-		t.Fatalf("tar name = %q, want %q", hdr.Name, ".sps-env")
+	if hdr.Name != ".pcoder-env" {
+		t.Fatalf("tar name = %q, want %q", hdr.Name, ".pcoder-env")
 	}
 	got, err := io.ReadAll(tr)
 	if err != nil {

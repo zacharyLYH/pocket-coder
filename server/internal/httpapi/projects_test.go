@@ -9,9 +9,9 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"sps/internal/docker"
-	"sps/internal/project"
-	"sps/internal/state/statetest"
+	"pcoder/internal/docker"
+	"pcoder/internal/project"
+	"pcoder/internal/state/statetest"
 )
 
 // newProjectDeps, authedPost and authedRequest live in httpapi_test.go
@@ -74,7 +74,7 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 		t.Fatalf("list = %+v err=%v", list, err)
 	}
 
-	md.EXPECT().Inspect(mock.Anything, "sps-"+created.ID).
+	md.EXPECT().Inspect(mock.Anything, "pcoder-"+created.ID).
 		Return(docker.Container{Running: true, Status: "running"}, nil)
 	rec = authedGet(t, h, cookie, "/api/projects/"+created.ID)
 	var got struct {
@@ -122,7 +122,7 @@ func TestGetEngineFailureIs500(t *testing.T) {
 	if err := project.Open(dataDir).Create("abc", project.Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, errors.New("engine down"))
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{}, errors.New("engine down"))
 	rec := authedGet(t, h, cookie, "/api/projects/abc")
 	want := "{\"error\":\"internal error\"}\n"
 	if rec.Code != http.StatusInternalServerError || rec.Body.String() != want {
@@ -140,8 +140,8 @@ func TestOpMissingContainerIs404(t *testing.T) {
 	if err := project.Open(dataDir).Create("abc", project.Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	md.EXPECT().Start(mock.Anything, "sps-abc").
-		Return(fmt.Errorf("start container sps-abc: %w", docker.ErrNotFound))
+	md.EXPECT().Start(mock.Anything, "pcoder-abc").
+		Return(fmt.Errorf("start container pcoder-abc: %w", docker.ErrNotFound))
 
 	rec := authedPost(t, h, cookie, "/api/projects/abc/start", "")
 	want := "{\"error\":\"container not found\"}\n"
@@ -188,14 +188,14 @@ func TestLazyReconciliationViaSessionHandler(t *testing.T) {
 	seedProject(t, dataDir, "abc")
 
 	// first call: container missing → triggers reconciliation
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
 	md.EXPECT().InspectImage(mock.Anything, project.ProjectImage).Return(nil)
 	md.EXPECT().Run(mock.Anything, mock.Anything).Return("new-cid", nil)
 	// EnsureContainer re-inspects after reconciling: now running
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
 	// after reconciliation, the session list uses the container NAME (not cid)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
 		Return(docker.ExecResult{ExitCode: 1, Output: "no server running"}, nil)
 

@@ -30,7 +30,7 @@ type SmtpMailer struct {
 
 func (m SmtpMailer) SendPIN(_ context.Context, email, pin string) error {
 	auth := smtp.PlainAuth("", m.User, m.Password, m.Host)
-	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: Side Project Saviour login PIN\r\n\r\nYour login PIN is %s (valid for 10 minutes).\r\n",
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: Pocket Coder login PIN\r\n\r\nYour login PIN is %s (valid for 10 minutes).\r\n",
 		m.From, email, pin)
 	if err := smtp.SendMail(fmt.Sprintf("%s:%d", m.Host, m.Port), auth, m.From, []string{email}, []byte(msg)); err != nil {
 		return fmt.Errorf("send pin email: %w", err)

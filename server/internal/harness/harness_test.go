@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"sps/internal/state"
-	"sps/internal/state/statetest"
+	"pcoder/internal/state"
+	"pcoder/internal/state/statetest"
 )
 
 // newState opens a fresh state file in a temp dir and returns a plugin

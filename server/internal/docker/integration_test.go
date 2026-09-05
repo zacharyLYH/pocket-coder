@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	itImage   = "sps-test:latest"
-	itName    = "sps-itest"
-	itNetwork = "sps-test-net"
-	itHomeVol = "sps-itest-home"
+	itImage   = "pcoder-test:latest"
+	itName    = "pcoder-itest"
+	itNetwork = "pcoder-test-net"
+	itHomeVol = "pcoder-itest-home"
 )
 
 // fixtureDir walks up from the test's cwd to the repo's test/fixtures/docker
@@ -48,14 +48,14 @@ func fixtureDir(t *testing.T) string {
 
 func newTestDocker(t *testing.T) *Docker {
 	t.Helper()
-	d, err := New(os.Getenv("SPS_DOCKER_SOCK"))
+	d, err := New(os.Getenv("PCODER_DOCKER_SOCK"))
 	if err != nil {
 		t.Fatalf("new docker client: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := d.Ping(ctx); err != nil {
-		t.Fatalf("docker unavailable — is the engine running? (SPS_DOCKER_SOCK=%q): %v", os.Getenv("SPS_DOCKER_SOCK"), err)
+		t.Fatalf("docker unavailable — is the engine running? (PCODER_DOCKER_SOCK=%q): %v", os.Getenv("PCODER_DOCKER_SOCK"), err)
 	}
 	return d
 }

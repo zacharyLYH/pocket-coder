@@ -1,4 +1,4 @@
-module sps
+module pcoder
 
 go 1.26
 

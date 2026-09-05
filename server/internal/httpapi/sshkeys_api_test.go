@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"testing"
 
-	"sps/internal/state/statetest"
+	"pcoder/internal/state/statetest"
 )
 
 func TestSSHKeysAPI(t *testing.T) {

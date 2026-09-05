@@ -12,17 +12,17 @@ import (
 	"strings"
 	"time"
 
-	"sps/internal/docker"
-	"sps/internal/events"
-	"sps/internal/sshkeys"
-	"sps/internal/state"
-	"sps/internal/textutil"
+	"pcoder/internal/docker"
+	"pcoder/internal/events"
+	"pcoder/internal/sshkeys"
+	"pcoder/internal/state"
+	"pcoder/internal/textutil"
 )
 
 // ProjectImage is the shared project image. Built once from the embedded
 // Dockerfile if absent. The tag version bumps whenever the embedded
 // Dockerfile changes, so engines holding an older build rebuild it.
-const ProjectImage = "sps-project:v3"
+const ProjectImage = "pcoder-project:v3"
 
 const (
 	repoTarget = "/workspace"
@@ -107,10 +107,10 @@ func (s *Service) RemoveSession(projectID, name string) error {
 }
 
 // ContainerName is the docker container backing project id.
-func ContainerName(id string) string { return "sps-" + id }
+func ContainerName(id string) string { return "pcoder-" + id }
 
-func repoVolume(id string) string { return "sps-" + id + "-repo" }
-func homeVolume(id string) string { return "sps-" + id + "-home" }
+func repoVolume(id string) string { return "pcoder-" + id + "-repo" }
+func homeVolume(id string) string { return "pcoder-" + id + "-home" }
 
 // Create runs a project for the repo and clones it inside the container
 // (blank project when repoURL is empty). Synchronous: returns when the

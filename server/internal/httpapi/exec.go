@@ -7,7 +7,7 @@ package httpapi
 import (
 	"net/http"
 
-	"sps/internal/project"
+	"pcoder/internal/project"
 )
 
 // execResult is one project's outcome in a batch run.

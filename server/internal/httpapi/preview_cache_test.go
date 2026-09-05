@@ -10,9 +10,9 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/mock"
 
-	"sps/internal/docker"
-	"sps/internal/preview"
-	"sps/internal/session"
+	"pcoder/internal/docker"
+	"pcoder/internal/preview"
+	"pcoder/internal/session"
 )
 
 // seedCacheSession registers a live loopback websocket in cdpCache. The CDP
@@ -92,7 +92,7 @@ func TestProjectStopEvictsCDPSession(t *testing.T) {
 	}
 
 	seedCacheSession(t, created.ID)
-	md.EXPECT().Stop(mock.Anything, "sps-"+created.ID, mock.Anything).Return(nil)
+	md.EXPECT().Stop(mock.Anything, "pcoder-"+created.ID, mock.Anything).Return(nil)
 	rec = authedPost(t, h, cookie, "/api/projects/"+created.ID+"/stop", ``)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("stop = %d body=%s", rec.Code, rec.Body)

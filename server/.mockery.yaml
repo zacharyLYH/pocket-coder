@@ -8,9 +8,9 @@ issue-845-fix: true
 dir: "mocks/{{.PackageName}}"
 outpkg: "mocks"
 packages:
-  sps/internal/auth:
+  pcoder/internal/auth:
     interfaces:
       Mailer:
-  sps/internal/docker:
+  pcoder/internal/docker:
     interfaces:
       Client:

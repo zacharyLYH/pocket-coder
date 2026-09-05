@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	"sps/internal/docker"
-	"sps/internal/project"
-	"sps/internal/state"
+	"pcoder/internal/docker"
+	"pcoder/internal/project"
+	"pcoder/internal/state"
 )
 
 // handleCreateProject runs the create pipeline synchronously: project up,

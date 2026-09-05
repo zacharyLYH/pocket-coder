@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net/http"
 
-	"sps/internal/sshkeys"
+	"pcoder/internal/sshkeys"
 )
 
 func handleListSSHKeys(d Deps) http.HandlerFunc {

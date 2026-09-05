@@ -8,7 +8,7 @@ CDP_PORT="${CDP_PORT:-9222}"
 VNC_WEB_PORT="${VNC_WEB_PORT:-6080}"
 CDP_PROXY_PORT="${CDP_PROXY_PORT:-9223}"
 TARGET="${BROWSER_TARGET:-http://127.0.0.1:3000}"
-PROFILE="${BROWSER_PROFILE:-/tmp/sps-browser-profile}"
+PROFILE="${BROWSER_PROFILE:-/tmp/pcoder-browser-profile}"
 
 export DISPLAY
 

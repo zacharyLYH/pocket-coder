@@ -19,10 +19,10 @@ import (
 	"strings"
 	"testing"
 
-	"sps/internal/auth"
-	"sps/internal/docker"
-	"sps/internal/events"
-	"sps/internal/project"
+	"pcoder/internal/auth"
+	"pcoder/internal/docker"
+	"pcoder/internal/events"
+	"pcoder/internal/project"
 )
 
 // deleteProjectAll registers scope=all deletion as test cleanup, so a failed
@@ -32,7 +32,7 @@ import (
 
 // fixtureRepo creates a one-commit git repo under dir/repo and serves it
 // with git daemon, returning a git:// URL reachable from containers via the
-// sps-net gateway.
+// pcoder-net gateway.
 
 func TestProjectPipelineLifecycle(t *testing.T) {
 	h, dkr, svc, pinOut, _, _ := newLiveDeps(t)
@@ -53,7 +53,7 @@ func TestProjectPipelineLifecycle(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	res, err := dkr.Exec(ctx, "sps-"+id, []string{"git", "-C", "/workspace/repo", "log", "--oneline"}, false)
+	res, err := dkr.Exec(ctx, "pcoder-"+id, []string{"git", "-C", "/workspace/repo", "log", "--oneline"}, false)
 	if err != nil || res.ExitCode != 0 || !bytes.Contains([]byte(res.Output), []byte("first")) {
 		t.Fatalf("clone verification failed: %+v err=%v", res, err)
 	}
@@ -72,7 +72,7 @@ func TestProjectPipelineLifecycle(t *testing.T) {
 		t.Fatalf("restart: %d %v", code, body)
 	}
 	waitForStatus(t, h, cookie, id, "running")
-	res, err = dkr.Exec(ctx, "sps-"+id, []string{"cat", "/workspace/repo/hello.txt"}, false)
+	res, err = dkr.Exec(ctx, "pcoder-"+id, []string{"cat", "/workspace/repo/hello.txt"}, false)
 	if err != nil || res.ExitCode != 0 || res.Output != "hi\n" {
 		t.Fatalf("repo volume did not survive restart: %+v err=%v", res, err)
 	}
@@ -83,7 +83,7 @@ func TestProjectPipelineLifecycle(t *testing.T) {
 	if code != http.StatusOK || !reflect.DeepEqual(body, map[string]any{"ok": true}) {
 		t.Fatalf("delete repo scope: %d %v", code, body)
 	}
-	if _, err := dkr.Inspect(ctx, "sps-"+id); !errors.Is(err, docker.ErrNotFound) {
+	if _, err := dkr.Inspect(ctx, "pcoder-"+id); !errors.Is(err, docker.ErrNotFound) {
 		t.Fatalf("after scope=repo inspect err = %v, want ErrNotFound", err)
 	}
 	entries, listErr := svc.List()
@@ -99,7 +99,7 @@ func TestProjectPipelineLifecycle(t *testing.T) {
 	if code != http.StatusNotFound || !reflect.DeepEqual(body, map[string]any{"error": "no such project"}) {
 		t.Fatalf("get after delete: %d %v", code, body)
 	}
-	if _, err := dkr.Inspect(ctx, "sps-"+id); err == nil {
+	if _, err := dkr.Inspect(ctx, "pcoder-"+id); err == nil {
 		t.Fatal("container should be gone after scope=all")
 	}
 }
@@ -121,7 +121,7 @@ func TestBlankProjectLifecycle(t *testing.T) {
 
 	ctx := context.Background()
 	waitForStatus(t, h, cookie, id, "running")
-	res, err := dkr.Exec(ctx, "sps-"+id,
+	res, err := dkr.Exec(ctx, "pcoder-"+id,
 		[]string{"sh", "-c", "command -v git && command -v tmux && command -v ss"}, false)
 	if err != nil || res.ExitCode != 0 {
 		t.Fatalf("project missing essentials: %+v err=%v", res, err)
@@ -165,7 +165,7 @@ func TestProjectBranchPinning(t *testing.T) {
 		t.Fatalf("create payload = %v, want %v", body, wantPayload)
 	}
 
-	res, err := dkr.Exec(context.Background(), "sps-"+id,
+	res, err := dkr.Exec(context.Background(), "pcoder-"+id,
 		[]string{"git", "-C", "/workspace/repo", "rev-parse", "--abbrev-ref", "HEAD"}, false)
 	if err != nil || res.ExitCode != 0 || res.Output != "dev\n" {
 		t.Fatalf("branch pinning: got %+v err=%v, want HEAD on dev", res, err)
@@ -196,7 +196,7 @@ func TestCloneFailureLiveKeepsProjectAndLogsError(t *testing.T) {
 	id := entries[0].ID
 	deleteProjectAll(t, h, cookie, id)
 	code, body = doJSON(t, h, cookie, http.MethodGet, "/api/projects/"+id, "")
-	wantStatus := map[string]any{"id": id, "name": "nope", "repo": "git://host.docker.internal:1/nope.git", "branch": "", "cloneMethod": "http", "status": "running"}
+	wantStatus := map[string]any{"id": id, "name": "nope", "repo": "git://host.docker.internal:1/nope.git", "branch": "", "cloneMethod": "http", "status": "running", "quickCommands": nil}
 	if code != http.StatusOK || !reflect.DeepEqual(body, wantStatus) {
 		t.Fatalf("post-failure status: got %d %v, want %v", code, body, wantStatus)
 	}
@@ -274,7 +274,7 @@ func TestProjectIsolationAndRestartSurvival(t *testing.T) {
 	defer ev2.Close()
 	var pinOut2 bytes.Buffer
 	auth2 := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut2})
-	dkr2, err := docker.New(os.Getenv("SPS_DOCKER_SOCK"))
+	dkr2, err := docker.New(os.Getenv("PCODER_DOCKER_SOCK"))
 	if err != nil {
 		t.Fatal(err)
 	}

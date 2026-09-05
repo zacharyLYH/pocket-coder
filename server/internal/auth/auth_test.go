@@ -15,7 +15,7 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	authmocks "sps/mocks/auth"
+	authmocks "pcoder/mocks/auth"
 )
 
 const testSecret = "0123456789abcdef0123456789abcdef"

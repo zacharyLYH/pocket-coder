@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"sps/internal/auth"
+	"pcoder/internal/auth"
 )
 
 func handleRequestPIN(d Deps) http.HandlerFunc {

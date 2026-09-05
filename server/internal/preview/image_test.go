@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"sps/internal/docker"
+	"pcoder/internal/docker"
 )
 
 type imageFake struct {

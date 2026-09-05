@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"sps/internal/auth"
+	"pcoder/internal/auth"
 )
 
 func TestRequestPIN(t *testing.T) {

@@ -11,14 +11,14 @@ import (
 	"net/http"
 	"os"
 
-	"sps/internal/auth"
-	"sps/internal/events"
-	"sps/internal/harness"
-	"sps/internal/preview"
-	"sps/internal/project"
-	"sps/internal/session"
-	"sps/internal/sshkeys"
-	"sps/internal/state"
+	"pcoder/internal/auth"
+	"pcoder/internal/events"
+	"pcoder/internal/harness"
+	"pcoder/internal/preview"
+	"pcoder/internal/project"
+	"pcoder/internal/session"
+	"pcoder/internal/sshkeys"
+	"pcoder/internal/state"
 )
 
 // EventLog is what handlers need from the event log: read history and append

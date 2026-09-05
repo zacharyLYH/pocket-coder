@@ -123,7 +123,7 @@ test.describe('preview HMR', () => {
       // ── Step 7: Wait for the visible value to change (section 6.4) ──
       await waitForInspectContaining(request, projectID, 'HMR is working')
 
-      // ── Step 8: Test must not ask SPS to reload (section 6.4) ──
+      // ── Step 8: Test must not ask PCODER to reload (section 6.4) ──
       expect(navigations).toBe(0)
 
       // ── Step 9: Capture AFTER screenshot ──

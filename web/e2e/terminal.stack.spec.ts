@@ -32,7 +32,7 @@ test('create a project in the UI, open its terminal, type', async ({ page }) => 
     await page.getByRole('button', { name: 'Create project' }).click()
     // create is synchronous (project up before the response); done when the
     // button comes back. On a cold engine this includes building
-    // sps-project — minutes on a fresh CI runner, so stay generous.
+    // pcoder-project — minutes on a fresh CI runner, so stay generous.
     await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({
       timeout: 300_000,
     })

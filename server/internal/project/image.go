@@ -10,7 +10,7 @@ import (
 //go:embed image/Dockerfile
 var projectDockerfile []byte
 
-//go:embed image/sps-update-runtime
+//go:embed image/pcoder-update-runtime
 var projectUpdateScript []byte
 
 // projectContext returns a tar stream of the embedded project build context,
@@ -19,8 +19,8 @@ var projectUpdateScript []byte
 // ignored.
 func projectContext() io.Reader {
 	files := map[string][]byte{
-		"Dockerfile":         projectDockerfile,
-		"sps-update-runtime": projectUpdateScript,
+		"Dockerfile":            projectDockerfile,
+		"pcoder-update-runtime": projectUpdateScript,
 	}
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)

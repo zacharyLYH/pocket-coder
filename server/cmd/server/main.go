@@ -1,4 +1,4 @@
-// Command server is the Side Project Saviour control plane: it serves the
+// Command server is the Pocket Coder control plane: it serves the
 // HTTP API and talks to Docker on the host. This file only boots: config,
 // data dir, state file, event log, harness seeding. The HTTP surface lives
 // in internal/httpapi.
@@ -15,17 +15,17 @@ import (
 	"syscall"
 	"time"
 
-	"sps/internal/auth"
-	"sps/internal/config"
-	"sps/internal/docker"
-	"sps/internal/events"
-	"sps/internal/harness"
-	"sps/internal/httpapi"
-	"sps/internal/preview"
-	"sps/internal/project"
-	"sps/internal/session"
-	"sps/internal/sshkeys"
-	"sps/internal/state"
+	"pcoder/internal/auth"
+	"pcoder/internal/config"
+	"pcoder/internal/docker"
+	"pcoder/internal/events"
+	"pcoder/internal/harness"
+	"pcoder/internal/httpapi"
+	"pcoder/internal/preview"
+	"pcoder/internal/project"
+	"pcoder/internal/session"
+	"pcoder/internal/sshkeys"
+	"pcoder/internal/state"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".

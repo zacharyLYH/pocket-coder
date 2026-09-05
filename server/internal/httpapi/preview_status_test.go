@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"sps/internal/preview"
+	"pcoder/internal/preview"
 )
 
 // previewTestWorker/Factory live in httpapi_test.go (shared fixtures).
@@ -35,7 +35,7 @@ func statusOf(t *testing.T, h http.Handler, cookie *http.Cookie, projectID strin
 func TestPreviewStatusRequiresAuthAndNeverReturnsPrivateEndpoint(t *testing.T) {
 	d, pinOut := newTestDeps(t)
 	m := preview.NewManager(previewTestFactory{ep: privatePreviewEndpoint})
-	if _, err := m.Ensure(context.Background(), preview.Config{ProjectID: "p1", ContainerID: "sps-p1"}); err != nil {
+	if _, err := m.Ensure(context.Background(), preview.Config{ProjectID: "p1", ContainerID: "pcoder-p1"}); err != nil {
 		t.Fatal(err)
 	}
 	d.Preview = m

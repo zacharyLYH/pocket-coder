@@ -6,7 +6,7 @@ import { API_PORT, AUTH_STATE, COMPOSE_PROJECT, DATA_DIR, RUN_DIR, SERVER_LOG, W
 // server + Vite dev server as webServers (needs the Go toolchain + a running
 // Docker engine) and every spec — behavioral, visual, and full-stack
 // journeys — exercises them with NOTHING mocked. The PIN comes from the
-// console-mailer output redirected into $RUN_DIR/sps-stack-server.log.
+// console-mailer output redirected into $RUN_DIR/pcoder-stack-server.log.
 //
 // Determinism comes from two resets:
 //   1. Per run: the stack data dir is wiped before the server boots, so
@@ -34,8 +34,8 @@ import { API_PORT, AUTH_STATE, COMPOSE_PROJECT, DATA_DIR, RUN_DIR, SERVER_LOG, W
   // Leftover projects from a crashed run are NOT auto-removed (a name-based
 // docker cleanup could destroy real projects on a shared engine). If a run
 // is killed mid-test, remove strays by hand:
-//   docker rm -f $(docker ps -aq --filter name=sps-) && \
-//     docker volume rm $(docker volume ls -q --filter name=sps-)
+//   docker rm -f $(docker ps -aq --filter name=pcoder-) && \
+//     docker volume rm $(docker volume ls -q --filter name=pcoder-)
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -83,12 +83,12 @@ export default defineConfig({
       command:
         // fresh backend state every run — the data dir is e2e-only
         `bash -c 'trap "docker compose -f ../docker-compose.e2e.yml -p ${COMPOSE_PROJECT} down 2>/dev/null" EXIT; ` +
-        // the compose stack attaches to the shared sps-net bridge, declared
+        // the compose stack attaches to the shared pcoder-net bridge, declared
         // external — on a fresh engine (CI) it does not exist yet, so create
         // it first; idempotent when it already does
-        `docker network create sps-net 2>/dev/null || true; ` +
+        `docker network create pcoder-net 2>/dev/null || true; ` +
         `rm -rf ${DATA_DIR} ${SERVER_LOG} && mkdir -p ${DATA_DIR} && ` +
-        `env SPS_E2E_API_PORT=${API_PORT} SPS_E2E_DATA_DIR=$PWD/${DATA_DIR} ` +
+        `env PCODER_E2E_API_PORT=${API_PORT} PCODER_E2E_DATA_DIR=$PWD/${DATA_DIR} ` +
         `docker compose -f ../docker-compose.e2e.yml -p ${COMPOSE_PROJECT} up --build > ${SERVER_LOG} 2>&1'`,
       url: `http://localhost:${API_PORT}/health`,
       reuseExistingServer: false,
@@ -97,7 +97,7 @@ export default defineConfig({
       stderr: 'pipe' as const,
     },
     {
-      command: `SPS_SERVER_URL=http://127.0.0.1:${API_PORT} npm run dev -- --port ${WEB_PORT} --strictPort`,
+      command: `PCODER_SERVER_URL=http://127.0.0.1:${API_PORT} npm run dev -- --port ${WEB_PORT} --strictPort`,
       url: `http://localhost:${WEB_PORT}`,
       reuseExistingServer: false,
       timeout: 60_000,

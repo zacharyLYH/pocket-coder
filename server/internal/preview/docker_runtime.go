@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"sps/internal/docker"
+	"pcoder/internal/docker"
 )
 
 const (
-	DefaultBrowserImage = "sps-browser:v12"
+	DefaultBrowserImage = "pcoder-browser:v12"
 	// SidecarPorts are the preview browser's own ports. The sidecar shares
 	// the project's network namespace, so ss lists them alongside user
 	// ports. Keep this as the single source of truth — preview port
@@ -47,7 +47,7 @@ type containerRuntime interface {
 
 // DockerFactory launches one browser sidecar in the project's network
 // namespace. The sidecar has no host-published ports; the server reaches it
-// through the private SPS Docker network using its container IP.
+// through the private PCODER Docker network using its container IP.
 type DockerFactory struct {
 	Docker     containerRuntime
 	Image      string
@@ -72,13 +72,13 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 		}
 	}
 	spec := docker.Spec{
-		Name:     "sps-preview-" + cfg.ProjectID,
+		Name:     "pcoder-preview-" + cfg.ProjectID,
 		Image:    image,
 		Writable: true,
 		Network:  docker.NetworkNamespace(cfg.ContainerID),
 		Env: []string{
 			"BROWSER_TARGET=http://127.0.0.1:3000",
-			"BROWSER_PROFILE=/tmp/sps-browser-profile",
+			"BROWSER_PROFILE=/tmp/pcoder-browser-profile",
 			"WIDTH=" + strconv.Itoa(DisplayWidth), "HEIGHT=" + strconv.Itoa(DisplayHeight),
 			"CDP_PORT=" + strconv.Itoa(SidecarChromiumPort),
 			"CDP_PROXY_PORT=" + strconv.Itoa(SidecarCDPProxyPort),

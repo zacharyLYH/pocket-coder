@@ -1,5 +1,5 @@
 // Package auth implements the system's only login: a one-time PIN emailed to
-// the configured SPS_LOGIN_EMAIL, exchanged for a signed JWT stored in an
+// the configured PCODER_LOGIN_EMAIL, exchanged for a signed JWT stored in an
 // HttpOnly cookie. Deliberately not a SaaS identity system — one email, one
 // person.
 package auth
@@ -33,7 +33,7 @@ const (
 )
 
 // CookieName is the session cookie carrying the JWT.
-const CookieName = "sps_session"
+const CookieName = "pcoder_session"
 
 // Errors returned by the service. Handlers map these to HTTP statuses.
 var (
@@ -71,7 +71,7 @@ type pinRecord struct {
 	attempts int
 }
 
-// New returns a Service that sends PINs to email (normally SPS_LOGIN_EMAIL)
+// New returns a Service that sends PINs to email (normally PCODER_LOGIN_EMAIL)
 // and signs tokens with secret.
 func New(email string, secret []byte, mailer Mailer) *Service {
 	return &Service{
@@ -87,7 +87,7 @@ func New(email string, secret []byte, mailer Mailer) *Service {
 
 // LoadOrCreateSecret returns the signing secret from path, generating a
 // random one (crypto/rand, 0600) and persisting it if missing or too short.
-// This is the SPS_JWT_SECRET fallback: a hardcoded default would let anyone
+// This is the PCODER_JWT_SECRET fallback: a hardcoded default would let anyone
 // forge tokens, so the secret is a file, not a constant.
 func LoadOrCreateSecret(path string) ([]byte, error) {
 	if raw, err := os.ReadFile(path); err == nil && len(raw) >= secretMinLength {

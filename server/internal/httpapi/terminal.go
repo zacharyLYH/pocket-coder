@@ -16,9 +16,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"sps/internal/project"
-	"sps/internal/session"
-	"sps/internal/state"
+	"pcoder/internal/project"
+	"pcoder/internal/session"
+	"pcoder/internal/state"
 )
 
 // wsIn is a browser→server frame. input carries raw keystrokes; resize

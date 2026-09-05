@@ -55,7 +55,7 @@ export function LoginForm({ onLoggedIn }: { onLoggedIn: (email: string) => void 
     <main className="bg-muted/40 grid min-h-dvh place-items-center p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Side Project Saviour</CardTitle>
+          <CardTitle>Pocket Coder</CardTitle>
           <CardDescription>Sign in with the PIN sent to your email.</CardDescription>
         </CardHeader>
         <CardContent>

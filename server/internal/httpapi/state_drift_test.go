@@ -7,9 +7,9 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"sps/internal/docker"
-	"sps/internal/state"
-	"sps/internal/state/statetest"
+	"pcoder/internal/docker"
+	"pcoder/internal/state"
+	"pcoder/internal/state/statetest"
 	"strings"
 )
 

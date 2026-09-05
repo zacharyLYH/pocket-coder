@@ -30,7 +30,7 @@ run_group() {
   api=$((8080 + offset * 10))
   web=$((5170 + offset * 10))
   # Clean up any leftover containers from crashed runs
-  docker compose -f ../docker-compose.e2e.yml -p "sps-e2e-$name" down 2>/dev/null
+  docker compose -f ../docker-compose.e2e.yml -p "pcoder-e2e-$name" down 2>/dev/null
   echo "[$name] starting: api:$api web:$web → test-results/$name.log"
   E2E_RUN_ID="$name" E2E_API_PORT="$api" E2E_WEB_PORT="$web" \
     npx playwright test --config=playwright.config.ts $specs > "test-results/$name.log" 2>&1 &
@@ -70,7 +70,7 @@ fi
 
 # Final cleanup of all groups
 for name in app stack sessions visual preview; do
-  docker compose -f ../docker-compose.e2e.yml -p "sps-e2e-$name" down 2>/dev/null
+  docker compose -f ../docker-compose.e2e.yml -p "pcoder-e2e-$name" down 2>/dev/null
 done
 
 echo "PARALLEL E2E: all groups passed"

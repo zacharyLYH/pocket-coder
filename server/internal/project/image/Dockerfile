@@ -13,8 +13,8 @@ RUN apt-get update \
 	&& ln -sf "$(command -v busybox)" /usr/local/bin/vi
 
 # Runtime updater, run by the user inside any terminal of the project.
-COPY sps-update-runtime /usr/local/bin/sps-update-runtime
-RUN chmod +x /usr/local/bin/sps-update-runtime
+COPY pcoder-update-runtime /usr/local/bin/pcoder-update-runtime
+RUN chmod +x /usr/local/bin/pcoder-update-runtime
 
 # Keep the container alive; all real work happens via docker exec.
 CMD ["sleep", "infinity"]

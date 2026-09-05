@@ -8,10 +8,10 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"sps/internal/docker"
-	"sps/internal/project"
-	"sps/internal/state"
-	"sps/internal/state/statetest"
+	"pcoder/internal/docker"
+	"pcoder/internal/project"
+	"pcoder/internal/state"
+	"pcoder/internal/state/statetest"
 )
 
 // TestStateFileIsSingleSourceOfTruth drives the real HTTP surface over the
@@ -103,10 +103,10 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 	}
 
 	// --- 5. delete the project entirely ---
-	md.EXPECT().Stop(mock.Anything, "sps-"+proj.ID, mock.Anything).Return(nil)
-	md.EXPECT().Remove(mock.Anything, "sps-"+proj.ID, true).Return(nil)
-	md.EXPECT().RemoveVolume(mock.Anything, "sps-"+proj.ID+"-home").Return(nil)
-	md.EXPECT().RemoveVolume(mock.Anything, "sps-"+proj.ID+"-repo").Return(nil)
+	md.EXPECT().Stop(mock.Anything, "pcoder-"+proj.ID, mock.Anything).Return(nil)
+	md.EXPECT().Remove(mock.Anything, "pcoder-"+proj.ID, true).Return(nil)
+	md.EXPECT().RemoveVolume(mock.Anything, "pcoder-"+proj.ID+"-home").Return(nil)
+	md.EXPECT().RemoveVolume(mock.Anything, "pcoder-"+proj.ID+"-repo").Return(nil)
 	rec = authedRequest(t, h, cookie, "DELETE", "/api/projects/"+proj.ID+"?scope=all")
 	if rec.Code != 200 {
 		t.Fatalf("delete project: %d %s", rec.Code, rec.Body)

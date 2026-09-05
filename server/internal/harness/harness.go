@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"sps/internal/state"
+	"pcoder/internal/state"
 )
 
 // Harness is a CLI plugin: a global entry in "+ New Session".
@@ -143,7 +143,7 @@ func Slug(name string) string {
 //
 // Runtime requirements (visible failure with a hint comes free: the CLI
 // validation probe reports the missing interpreter): node and python3 ship
-// in the project image; the `sps-update-runtime` script inside every
+// in the project image; the `pcoder-update-runtime` script inside every
 // project brings them to the latest stable when run in a terminal.
 //
 // Where each records usage in its container's home volume (harvested by the

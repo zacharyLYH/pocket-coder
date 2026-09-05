@@ -11,8 +11,8 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"sps/internal/docker"
-	"sps/internal/project"
+	"pcoder/internal/docker"
+	"pcoder/internal/project"
 )
 
 // TestExecCommandEndpoint covers the generic "run in projects" endpoint:
@@ -26,12 +26,12 @@ func TestExecCommandEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Inspect(mock.Anything, "sps-def").Return(docker.Container{Running: true}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-abc",
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Inspect(mock.Anything, "pcoder-def").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"bash", "-lc", "echo hi"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "hi\n"}, nil)
-	md.EXPECT().Exec(mock.Anything, "sps-def",
+	md.EXPECT().Exec(mock.Anything, "pcoder-def",
 		[]string{"bash", "-lc", "echo hi"}, false).
 		Return(docker.ExecResult{ExitCode: 3, Output: "boom\n"}, nil)
 

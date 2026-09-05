@@ -4,20 +4,20 @@ services:
       context: ./server
       dockerfile: Dockerfile.dev
     environment:
-      SPS_DATA_DIR: /data
-      SPS_BIND: :8080
-      SPS_LOGIN_EMAIL: me@example.com
-      SPS_DOCKER_SOCK: unix:///var/run/docker.sock
+      PCODER_DATA_DIR: /data
+      PCODER_BIND: :8080
+      PCODER_LOGIN_EMAIL: me@example.com
+      PCODER_DOCKER_SOCK: unix:///var/run/docker.sock
       SMTP_USER: ""
       SMTP_PASSWORD: ""
     volumes:
-      - ${SPS_E2E_DATA_DIR}:/data
+      - ${PCODER_E2E_DATA_DIR}:/data
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      - "${SPS_E2E_API_PORT}:8080"
+      - "${PCODER_E2E_API_PORT}:8080"
     networks:
-      - sps-net
+      - pcoder-net
 
 networks:
-  sps-net:
+  pcoder-net:
     external: true

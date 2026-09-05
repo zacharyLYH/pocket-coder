@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"sps/internal/state"
-	"sps/internal/state/statetest"
+	"pcoder/internal/state"
+	"pcoder/internal/state/statetest"
 )
 
 func newStore(t *testing.T) (*state.Store, *StateStore) {

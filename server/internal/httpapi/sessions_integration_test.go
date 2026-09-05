@@ -18,9 +18,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"sps/internal/docker"
-	"sps/internal/harness"
-	"sps/internal/state"
+	"pcoder/internal/docker"
+	"pcoder/internal/harness"
+	"pcoder/internal/state"
 )
 
 // writePlugin adds a plugin to the live test's registry — the same path the
@@ -77,7 +77,7 @@ func TestHarnessConfigLandsInContainer(t *testing.T) {
 	ctx := context.Background()
 	var cat docker.ExecResult
 	for i := 0; i < 10; i++ {
-		res, err := dkr.Exec(ctx, "sps-"+id,
+		res, err := dkr.Exec(ctx, "pcoder-"+id,
 			[]string{"cat", "/root/.fakecli/config.json"}, false)
 		if err == nil && res.ExitCode == 0 {
 			cat = res
@@ -121,10 +121,10 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 	if code != http.StatusCreated || body["name"] != "fake-cli-1" {
 		t.Fatalf("launch: %d %v", code, body)
 	}
-	if res, err := dkr.Exec(ctx, "sps-"+id, []string{"tmux", "has-session", "-t", "fake-cli-1"}, false); err != nil || res.ExitCode != 0 {
+	if res, err := dkr.Exec(ctx, "pcoder-"+id, []string{"tmux", "has-session", "-t", "fake-cli-1"}, false); err != nil || res.ExitCode != 0 {
 		t.Fatalf("session missing after launch: %+v err=%v", res, err)
 	}
-	if res, err := dkr.Exec(ctx, "sps-"+id, []string{"bash", "-lc", "command -v fakecli"}, false); err != nil || res.ExitCode != 0 {
+	if res, err := dkr.Exec(ctx, "pcoder-"+id, []string{"bash", "-lc", "command -v fakecli"}, false); err != nil || res.ExitCode != 0 {
 		t.Fatalf("install did not put fakecli on PATH: %+v err=%v", res, err)
 	}
 	// launching an uninstalled harness is the 422 PRD rejection
@@ -145,7 +145,7 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("kill: %d", code)
 	}
-	if res, err := dkr.Exec(ctx, "sps-"+id, []string{"tmux", "has-session", "-t", "fake-cli-1"}, false); err == nil && res.ExitCode == 0 {
+	if res, err := dkr.Exec(ctx, "pcoder-"+id, []string{"tmux", "has-session", "-t", "fake-cli-1"}, false); err == nil && res.ExitCode == 0 {
 		t.Fatal("killed session still exists in tmux")
 	}
 
@@ -155,7 +155,7 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 	if code != http.StatusOK || body["name"] != "fake-cli-1" {
 		t.Fatalf("restart: %d %v", code, body)
 	}
-	if res, err := dkr.Exec(ctx, "sps-"+id, []string{"tmux", "has-session", "-t", "fake-cli-1"}, false); err != nil || res.ExitCode != 0 {
+	if res, err := dkr.Exec(ctx, "pcoder-"+id, []string{"tmux", "has-session", "-t", "fake-cli-1"}, false); err != nil || res.ExitCode != 0 {
 		t.Fatalf("restarted session missing: %+v err=%v", res, err)
 	}
 
@@ -164,7 +164,7 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 	var exitLine string
 	for i := 0; i < 24; i++ {
 		time.Sleep(250 * time.Millisecond)
-		capres, cerr := dkr.Exec(ctx, "sps-"+id,
+		capres, cerr := dkr.Exec(ctx, "pcoder-"+id,
 			[]string{"tmux", "capture-pane", "-t", "fake-cli-1", "-p"}, false)
 		if cerr == nil && capres.ExitCode == 0 && strings.Contains(capres.Output, "exited:") {
 			exitLine = capres.Output
@@ -282,7 +282,7 @@ func TestRealTUIGate(t *testing.T) {
 	// silent — that path is covered by the fakecli crash above.)
 	var cat docker.ExecResult
 	for i := 0; i < 15; i++ {
-		res, err := dkr.Exec(ctx, "sps-"+id, []string{"cat", "/workspace/hello.txt"}, false)
+		res, err := dkr.Exec(ctx, "pcoder-"+id, []string{"cat", "/workspace/hello.txt"}, false)
 		if err == nil && res.ExitCode == 0 && strings.Contains(res.Output, "hello from the tui gate") {
 			cat = res
 			break

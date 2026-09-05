@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"sps/internal/docker"
+	"pcoder/internal/docker"
 )
 
 func TestWaitForCDPRequiresDebuggerWebSocket(t *testing.T) {
@@ -72,11 +72,11 @@ func TestDockerFactoryUsesPrivateProjectNamespace(t *testing.T) {
 			Header: make(http.Header), Request: r}, nil
 	})}
 	factory := &DockerFactory{Docker: fake, HTTPClient: client, PollEvery: time.Millisecond}
-	w, err := factory.Start(context.Background(), Config{ProjectID: "p1", ContainerID: "sps-p1"})
+	w, err := factory.Start(context.Background(), Config{ProjectID: "p1", ContainerID: "pcoder-p1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.specs) != 1 || fake.specs[0].Network != "container:sps-p1" || fake.specs[0].Name != "sps-preview-p1" || fake.inspectCalls != 2 {
+	if len(fake.specs) != 1 || fake.specs[0].Network != "container:pcoder-p1" || fake.specs[0].Name != "pcoder-preview-p1" || fake.inspectCalls != 2 {
 		t.Fatalf("fake sidecar spec = %#v", fake.specs)
 	}
 	if got := w.Endpoint(); got.CDP != "http://10.0.0.8:9223" || got.Display != "http://10.0.0.8:6080" {

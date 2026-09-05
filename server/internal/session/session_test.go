@@ -9,9 +9,9 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"sps/internal/docker"
-	"sps/internal/harness"
-	dockermocks "sps/mocks/docker"
+	"pcoder/internal/docker"
+	"pcoder/internal/harness"
+	dockermocks "pcoder/mocks/docker"
 )
 
 func TestValidName(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"sps/internal/events"
+	"pcoder/internal/events"
 )
 
 func handleEvents(ev events.Reader) http.HandlerFunc {

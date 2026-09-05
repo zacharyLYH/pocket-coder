@@ -28,7 +28,7 @@ The user flow and expectations are inherited from Codespaces. Nothing gets reinv
 
 Each Codespaces concept maps 1:1 here.
 
-| GitHub Codespaces | Side Project Saviour |
+| GitHub Codespaces | Pocket Coder |
 |---|---|
 | Create a codespace (repo + branch) | Create a project (repo + branch, or blank) |
 | devcontainer.json builds the environment | a shared sandbox image; users install what they need inside |
@@ -81,7 +81,7 @@ Go server ───────► Docker Engine (unix socket)
 
 The only reason for system login is safe access to the self-hosted box over the internet.
 
-- Set once, in `.env` (`SPS_LOGIN_EMAIL`): the email that receives login codes.
+- Set once, in `.env` (`PCODER_LOGIN_EMAIL`): the email that receives login codes.
 - Log in: enter the email → a one-time PIN is emailed → enter the PIN → the browser gets a JWT.
 - Every request and WebSocket carries the JWT. A middleware checks it.
 - This is separate from harness auth (LLM credentials, see Harness auth).
