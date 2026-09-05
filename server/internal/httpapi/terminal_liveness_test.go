@@ -22,11 +22,8 @@ import (
 func waitForDetach(t *testing.T, d Deps) {
 	t.Helper()
 	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); {
-		evs, _ := d.Events.Read(0, 0)
-		for _, e := range evs {
-			if e.Type == "terminal.detach" {
-				return
-			}
+		if hasEventType(d, "terminal.detach") {
+			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

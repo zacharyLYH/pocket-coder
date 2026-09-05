@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 
 import { deleteAllProjects, engineUp } from './helpers'
-import { createReactProject, execInProject, openPreviewFromTerminal } from './preview.helpers'
+import { createReactProject, execInProject, openPreviewFromTerminal, waitForInspectContaining } from './preview.helpers'
 
 test.describe('preview HMR', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -121,19 +121,7 @@ test.describe('preview HMR', () => {
       )
 
       // ── Step 7: Wait for the visible value to change (section 6.4) ──
-      let found = false
-      for (let i = 0; i < 60; i++) {
-        await page.waitForTimeout(1000)
-        const res = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
-        if (res.ok()) {
-          const { html: h } = (await res.json()) as { html: string }
-          if (h.includes('HMR is working')) {
-            found = true
-            break
-          }
-        }
-      }
-      expect(found).toBeTruthy()
+      await waitForInspectContaining(request, projectID, 'HMR is working')
 
       // ── Step 8: Test must not ask SPS to reload (section 6.4) ──
       expect(navigations).toBe(0)

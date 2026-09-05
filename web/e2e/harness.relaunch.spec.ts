@@ -1,14 +1,5 @@
 import { expect, type APIRequestContext, test } from '@playwright/test'
-import { deleteAllProjects, engineUp, resetHarnessRegistry } from './helpers'
-
-async function waitForRunning(request: APIRequestContext, id: string) {
-  for (let i = 0; i < 60; i++) {
-    const res = await request.get(`/api/projects/${id}`)
-    if (res.ok() && ((await res.json()) as { status: string }).status === 'running') return
-    await new Promise((r) => setTimeout(r, 500))
-  }
-  throw new Error(`project ${id} never reached running`)
-}
+import { deleteAllProjects, engineUp, resetHarnessRegistry, waitForRunning } from './helpers'
 
 // Read a marker file's mtime from inside the container. Returns 0 if absent.
 async function markerMtime(request: APIRequestContext, id: string): Promise<number> {

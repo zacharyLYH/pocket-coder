@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { deleteAllProjects, engineUp } from './helpers'
+import { createBlankProject, deleteAllProjects, engineUp } from './helpers'
 
 test.describe('quick commands', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -11,9 +11,7 @@ test.describe('quick commands', () => {
     }
     await deleteAllProjects(request)
     try {
-      const res = await request.post('/api/projects', { data: {} })
-      expect(res.status()).toBe(201)
-      const { id } = (await res.json()) as { id: string }
+      const id = await createBlankProject(request)
       await page.goto('/')
       await expect(page.getByText('untitled')).toBeVisible({ timeout: 10_000 })
       const menu = page.getByTestId(`project-menu-${id}`)
@@ -47,8 +45,7 @@ test.describe('quick commands', () => {
     }
     await deleteAllProjects(request)
     try {
-      const res = await request.post('/api/projects', { data: {} })
-      const { id } = (await res.json()) as { id: string }
+      const id = await createBlankProject(request)
       await request.patch(`/api/projects/${id}`, { data: { quickCommands: { hello: 'echo hello-quick' } } })
       await page.goto('/')
       await expect(page.getByText('untitled')).toBeVisible({ timeout: 10_000 })
@@ -73,8 +70,7 @@ test.describe('quick commands', () => {
     }
     await deleteAllProjects(request)
     try {
-      const res = await request.post('/api/projects', { data: {} })
-      const { id } = (await res.json()) as { id: string }
+      const id = await createBlankProject(request)
       await request.patch(`/api/projects/${id}`, { data: { quickCommands: { a: 'echo a', b: 'echo b' } } })
       await page.goto('/')
       await page.getByTestId(`project-menu-${id}`).click()

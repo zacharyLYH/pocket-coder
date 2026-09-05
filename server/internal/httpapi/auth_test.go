@@ -3,7 +3,6 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
-	"regexp"
 	"testing"
 
 	"sps/internal/auth"
@@ -16,7 +15,7 @@ func TestRequestPIN(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if !regexp.MustCompile(`\d{6}`).MatchString(pinOut.String()) {
+	if !pinRe.MatchString(pinOut.String()) {
 		t.Fatalf("no pin printed: %q", pinOut.String())
 	}
 	ev := lastEvent(t, d)

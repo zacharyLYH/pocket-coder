@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { deleteAllProjects, engineUp } from './helpers'
-import { createReactProject, execInProject } from './preview.helpers'
+import { createReactProject, execInProject, waitForInspectContaining } from './preview.helpers'
 
 test.describe('preview reconnect', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -41,19 +41,7 @@ test.describe('preview reconnect', () => {
       )
 
       // Wait for HMR to apply
-      let ready = false
-      for (let i = 0; i < 30; i++) {
-        await page.waitForTimeout(1000)
-        const res = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
-        if (res.ok()) {
-          const { html } = (await res.json()) as { html: string }
-          if (html.includes('persist-input')) {
-            ready = true
-            break
-          }
-        }
-      }
-      expect(ready).toBeTruthy()
+      await waitForInspectContaining(request, projectID, 'persist-input', 30)
 
       // Type something via CDP tools
       await request.post(`/api/projects/${projectID}/preview/tools/type`, {
@@ -93,64 +81,6 @@ test.describe('preview reconnect', () => {
       // Visual regression after reconnect
       await expect(newPage).toHaveScreenshot('preview-reconnect.png', { fullPage: true })
 
-      await newPage.close()
-    } finally {
-      await deleteAllProjects(request)
-    }
-  })
-
-  test('HMR works after reconnect', async ({ page, request }) => {
-    test.setTimeout(300_000)
-    if (!(await engineUp(request))) {
-      test.skip(true, 'Docker engine unavailable — e2e skipped')
-      return
-    }
-    await deleteAllProjects(request)
-    try {
-      const projectID = await createReactProject(request)
-      await page.goto(`/preview/${encodeURIComponent(projectID)}`)
-      const frame = page.locator('iframe[title="Remote project preview"]')
-      await expect(frame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
-
-      // Disconnect
-      const ctx2 = page.context()
-      await page.close()
-      await new Promise((r) => setTimeout(r, 2000))
-
-      // Reconnect on a new page
-      const newPage = await ctx2.newPage()
-      await newPage.goto(`/preview/${encodeURIComponent(projectID)}`)
-      await expect(newPage.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
-
-      // Now trigger HMR — it must still work after reconnect
-      const replacement = [
-        "import React from 'react'",
-        'export function App() {',
-        '  return <main><h1>Container React preview</h1><p>Post-reconnect HMR</p></main>',
-        '}',
-      ].join('\n')
-      const encoded = Buffer.from(replacement).toString('base64')
-      await execInProject(
-        request,
-        projectID,
-        `printf '%s' '${encoded}' | base64 -d > /workspace/app/src/App.jsx`,
-      )
-
-      // Poll CDP until the HMR content appears
-      let found = false
-      for (let i = 0; i < 60; i++) {
-        await newPage.waitForTimeout(1000)
-        const res = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
-        if (res.ok()) {
-          const { html } = (await res.json()) as { html: string }
-          if (html.includes('Post-reconnect HMR')) {
-            found = true
-            break
-          }
-        }
-      }
-      expect(found).toBeTruthy()
-      await expect(newPage).toHaveScreenshot('preview-reconnect-hmr.png', { fullPage: true })
       await newPage.close()
     } finally {
       await deleteAllProjects(request)

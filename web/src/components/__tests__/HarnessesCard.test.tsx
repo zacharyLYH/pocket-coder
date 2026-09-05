@@ -1,11 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
-import { HarnessesCard } from '@/components/HarnessesCard'
+import { HarnessesCard, ProjectPicker } from '@/components/HarnessesCard'
+import { mockFetch } from '@/test/mockFetch'
 
 // Unit tests for the harness/command orchestration card. The backend is
 // mocked at the fetch level: these tests exist to pin edge-case behavior
 // (selective application, error surfacing, empty states) fast — the real
-// backend path is covered by the Playwright suite.
+// backend path is covered by the Playwright suite. ProjectPicker, whose
+// selection logic lives entirely in service of this card, is tested here too.
 
 const PROJECTS = [
   { id: 'p1', name: 'alpha' },
@@ -18,14 +20,6 @@ const HARNESS_RESPONSE = {
     { id: 'opencode', name: 'OpenCode', command: 'opencode', install: 'npm i -g opencode-ai' },
     { id: 'vi-demo', name: 'Vi Demo', command: 'vi notes.txt' },
   ],
-}
-
-function mockFetch(handler: (url: string, init?: RequestInit) => { status: number; body: unknown } | undefined) {
-  return vi.fn(async (url: string, init?: RequestInit) => {
-    const out = handler(url, init)
-    if (!out) throw new Error(`unexpected fetch: ${url}`)
-    return new Response(JSON.stringify(out.body), { status: out.status })
-  })
 }
 
 beforeEach(() => {
@@ -214,5 +208,39 @@ describe('HarnessesCard', () => {
     fireEvent.change(within(dialog).getByPlaceholderText('Command (e.g. my-agent)'), { target: { value: 'mine' } })
     fireEvent.click(dialogSubmit())
     expect(await screen.findByText('Mine')).toBeInTheDocument()
+  })
+})
+
+describe('ProjectPicker', () => {
+  it('apply is disabled with nothing selected and enabled otherwise', () => {
+    const projects = [{ id: 'a', name: 'alpha' }, { id: 'b', name: 'beta' }]
+    const base = { projects, onToggle: () => {}, busy: false, onApply: vi.fn(), onCancel: () => {} }
+
+    const { unmount } = render(<ProjectPicker {...base} picked={{ a: false, b: false }} applyLabel="Install in 0 project(s)" />)
+    expect(screen.getByRole('button', { name: /Install in 0/ })).toBeDisabled()
+    unmount()
+
+    render(<ProjectPicker {...base} picked={{ a: true, b: false }} applyLabel="Install in 1 project(s)" />)
+    fireEvent.click(screen.getByRole('button', { name: /Install in 1 project/ }))
+    expect(base.onApply).toHaveBeenCalledTimes(1)
+  })
+
+  it('installed projects are shown as Installed and cannot be toggled', () => {
+    const projects = [{ id: 'a', name: 'alpha' }, { id: 'b', name: 'beta' }]
+    const base = {
+      projects,
+      picked: { a: false, b: true },
+      onToggle: vi.fn(),
+      busy: false,
+      onApply: vi.fn(),
+      onCancel: () => {},
+      installed: { a: true, b: false },
+      applyLabel: 'Install in 1 project(s)',
+    }
+    render(<ProjectPicker {...base} />)
+    expect(screen.getByText('Installed')).toBeInTheDocument()
+    const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[]
+    expect(checkboxes[0].disabled).toBe(true) // alpha is installed
+    expect(checkboxes[1].disabled).toBe(false)
   })
 })

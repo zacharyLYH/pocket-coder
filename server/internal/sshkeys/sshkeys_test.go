@@ -94,42 +94,33 @@ func TestAddInvalidKeyRejected(t *testing.T) {
 	})
 }
 
-func TestAddRSAKey(t *testing.T) {
-	st, s := newState(t)
-	fp, err := s.Add("me@example.com", "ssh-rsa AAAAB3NzaC1yc2EAAAAITest user@host", "")
-	if err != nil {
-		t.Fatal(err)
+func TestAddKeyFormats(t *testing.T) {
+	cases := []struct {
+		name, key, fingerprint string
+	}{
+		{"RSA", "ssh-rsa AAAAB3NzaC1yc2EAAAAITest user@host", "sha256-gQzYj37RsTCoxQWZy3cF3w"},
+		{"ECDSA", "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAITest", "sha256-1wZmgswNte8_enve8t-vYQ"},
 	}
-	if fp == "" {
-		t.Fatal("empty fingerprint for RSA key")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st, s := newState(t)
+			fp, err := s.Add("me@example.com", tc.key, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fp == "" {
+				t.Fatalf("empty fingerprint for %s key", tc.name)
+			}
+			statetest.AssertEqual(t, st.Path(), map[string]any{
+				"user": map[string]any{"email": ""},
+				"sshKeys": []any{map[string]any{
+					"fingerprint": tc.fingerprint,
+					"publicKey":   tc.key,
+					"email":       "me@example.com",
+				}},
+			})
+		})
 	}
-	statetest.AssertEqual(t, st.Path(), map[string]any{
-		"user": map[string]any{"email": ""},
-		"sshKeys": []any{map[string]any{
-			"fingerprint": "sha256-gQzYj37RsTCoxQWZy3cF3w",
-			"publicKey":   "ssh-rsa AAAAB3NzaC1yc2EAAAAITest user@host",
-			"email":       "me@example.com",
-		}},
-	})
-}
-
-func TestAddECDSAKey(t *testing.T) {
-	st, s := newState(t)
-	fp, err := s.Add("me@example.com", "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAITest", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fp == "" {
-		t.Fatal("empty fingerprint for ECDSA key")
-	}
-	statetest.AssertEqual(t, st.Path(), map[string]any{
-		"user": map[string]any{"email": ""},
-		"sshKeys": []any{map[string]any{
-			"fingerprint": "sha256-1wZmgswNte8_enve8t-vYQ",
-			"publicKey":   "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAITest",
-			"email":       "me@example.com",
-		}},
-	})
 }
 
 func TestDeleteKey(t *testing.T) {
@@ -146,20 +137,16 @@ func TestDeleteKey(t *testing.T) {
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": ""},
 	})
-	// deleting again is idempotent
+	// deleting again is idempotent, as is deleting a never-existing key
 	if err := s.Delete("me@example.com", fp); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete("me@example.com", "sha256:nonexistent"); err != nil {
 		t.Fatal(err)
 	}
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": ""},
 	})
-}
-
-func TestDeleteMissingKeyIsIdempotent(t *testing.T) {
-	_, s := newState(t)
-	if err := s.Delete("me@example.com", "sha256:nonexistent"); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestListEmptyIsArray(t *testing.T) {

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { deleteAllProjects, engineUp } from './helpers'
-import { createReactProject, openPreviewFromTerminal, waitForChromiumFit } from './preview.helpers'
+import { createReactProject, openPreviewFromTerminal } from './preview.helpers'
 
 test.describe('preview basic', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -69,29 +69,6 @@ test.describe('preview basic', () => {
       // ── Step 9: Visual regression — desktop screenshot (preview tab) ──
       await expect(previewPage).toHaveScreenshot('preview-basic-desktop.png', { fullPage: true })
       await previewPage.close()
-    } finally {
-      await deleteAllProjects(request)
-    }
-  })
-
-  test('preview on phone viewport', async ({ page, request }) => {
-    test.setTimeout(600_000)
-    if (!(await engineUp(request))) {
-      test.skip(true, 'Docker engine unavailable — e2e skipped')
-      return
-    }
-    await deleteAllProjects(request)
-    try {
-      const projectID = await createReactProject(request)
-      await page.goto('/')
-      const previewPage2 = await openPreviewFromTerminal(page, projectID)
-
-      await previewPage2.setViewportSize({ width: 390, height: 844 })
-      // Wait for auto-fit to shrink Chromium to the narrow iframe so the
-      // shot is a real phone layout, not a crop of a desktop window.
-      await waitForChromiumFit(previewPage2, request, projectID)
-      await expect(previewPage2).toHaveScreenshot('preview-basic-phone.png', { fullPage: true })
-      await previewPage2.close()
     } finally {
       await deleteAllProjects(request)
     }

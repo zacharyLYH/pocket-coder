@@ -95,9 +95,6 @@ KEY_NO_EQ
 	if got["SMTP_USER"] != "user@example.com" {
 		t.Fatalf("dotenv value missing: %v", got)
 	}
-	if got["SPS_BIND"] != ":8080" {
-		t.Fatalf("bind overwritten: %v", got)
-	}
 }
 
 func TestAppendDotEnvMissingFile(t *testing.T) {

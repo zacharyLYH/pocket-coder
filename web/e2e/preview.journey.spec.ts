@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { deleteAllProjects, engineUp } from './helpers'
-import { createPrecreatedProject, execInProject } from './preview.helpers'
+import { createPrecreatedProject, execInProject, waitForInspectContaining } from './preview.helpers'
 
 test.describe('preview user journey', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -63,16 +63,7 @@ test.describe('preview user journey', () => {
       const newApp = `import React from 'react'; export function App(){ return <main><h1>HMR Journey Works</h1><p data-testid="hmr-marker">HMR is working</p></main>}`
       const enc = Buffer.from(newApp).toString('base64')
       await execInProject(request, projectID, `printf '%s' '${enc}' | base64 -d > /workspace/app/src/App.jsx`)
-      let found = false
-      for (let i = 0; i < 60; i++) {
-        await page.waitForTimeout(1000)
-        const r = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
-        if (r.ok() && ((await r.json()) as { html: string }).html.includes('HMR is working')) {
-          found = true
-          break
-        }
-      }
-      expect(found).toBeTruthy()
+      await waitForInspectContaining(request, projectID, 'HMR is working')
       await expect(previewPage).toHaveScreenshot('preview-journey-hmr.png', { fullPage: true })
     } finally {
       await deleteAllProjects(request)

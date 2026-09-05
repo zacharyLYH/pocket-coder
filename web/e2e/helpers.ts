@@ -97,3 +97,42 @@ function waitForPin(afterOffset: number): string {
   }
   throw new Error(`no PIN found in ${SERVER_LOG} — does the console mailer print it?`)
 }
+
+// createBlankProject makes an empty project via the API and returns its id.
+export async function createBlankProject(request: APIRequestContext): Promise<string> {
+  const res = await request.post('/api/projects', { data: {} })
+  expect(res.status()).toBe(201)
+  const { id } = (await res.json()) as { id: string }
+  return id
+}
+
+// createProjectViaUI creates a project through the real home-page form,
+// exactly as a user would, then returns its id once running.
+export async function createProjectViaUI(
+  page: Page,
+  request: APIRequestContext,
+  repoUrl: string,
+  expectedName: string,
+): Promise<string> {
+  await page.getByPlaceholder(/Repo URL/).fill(repoUrl)
+  await page.getByRole('button', { name: 'Create project' }).click()
+  await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 30_000 })
+  await page.reload()
+  await expect(page.getByText(expectedName)).toBeVisible({ timeout: 10_000 })
+  const orderRes = await request.get('/api/projects')
+  const orderBody = (await orderRes.json()) as { projects: { id: string; name: string }[] }
+  const created = orderBody.projects.find((p) => p.name === expectedName)
+  if (!created) throw new Error(`project ${expectedName} not found after create`)
+  await waitForRunning(request, created.id)
+  return created.id
+}
+
+// waitForRunning polls a project until its container reports running.
+export async function waitForRunning(request: APIRequestContext, id: string): Promise<void> {
+  for (let i = 0; i < 60; i++) {
+    const res = await request.get(`/api/projects/${id}`)
+    if (res.ok() && ((await res.json()) as { status: string }).status === 'running') return
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  throw new Error(`project ${id} never reached running`)
+}

@@ -49,6 +49,16 @@ func expectProjectReady(d *dockermocks.MockClient, id *string) {
 	})).Return("cid123", nil)
 }
 
+// expectReconcile pins the missing-container recovery chain: first Inspect
+// misses, the container is recreated, the second Inspect reports running.
+func expectReconcile(d *dockermocks.MockClient) {
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
+	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
+	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
+	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
+	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+}
+
 func eventsOf(t *testing.T, s *Service) []events.Event {
 	t.Helper()
 	l, ok := s.ev.(*events.Log)
@@ -271,7 +281,8 @@ func TestDeleteScopes(t *testing.T) {
 			if metadataGone != tc.metadata {
 				t.Fatalf("metadata gone = %v, want %v", metadataGone, tc.metadata)
 			}
-			last := eventsOf(t, s)[len(eventsOf(t, s))-1]
+			evs := eventsOf(t, s)
+			last := evs[len(evs)-1]
 			if last.Type != "project.delete" || last.Data["scope"] != string(tc.scope) {
 				t.Fatalf("delete event: %+v", last)
 			}
@@ -404,14 +415,7 @@ func TestEnsureContainerMissingReconciles(t *testing.T) {
 	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	// first Inspect: missing → triggers reconciliation
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
-	// reconciliation recreates the container
-	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
-	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
-	// second Inspect: report the reconciled container as running
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	expectReconcile(d)
 	if st, err := s.EnsureContainer(t.Context(), "abc"); err != nil || st.State != StateRunning {
 		t.Fatalf("st=%+v err=%v", st, err)
 	}
@@ -441,11 +445,7 @@ func TestEnsureContainerReconcileEvent(t *testing.T) {
 	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
-	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
-	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	expectReconcile(d)
 	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
 		t.Fatal(err)
 	}
@@ -516,11 +516,7 @@ func TestEnsureContainerReinstallsHarnesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Container is missing → triggers reconciliation
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
-	d.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
-	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
-	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
-	d.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	expectReconcile(d)
 
 	inst := &fakeInstaller{}
 	s.SetInstaller(inst)

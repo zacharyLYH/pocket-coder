@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,9 +13,24 @@ import (
 
 	"sps/internal/auth"
 	"sps/internal/events"
+	"sps/internal/harness"
+	"sps/internal/preview"
+	"sps/internal/project"
+	"sps/internal/session"
+	"sps/internal/sshkeys"
+	"sps/internal/state"
+	dockermocks "sps/mocks/docker"
 )
 
 const testSecret = "0123456789abcdef0123456789abcdef"
+
+// wantFakeHarnessEntry is the seeded "Fake" harness's state-file shape,
+// shared by every AssertSection that includes the registry seed.
+var wantFakeHarnessEntry = map[string]any{"id": "fake", "name": "Fake", "command": "fakecli", "install": "npm i -g fakecli"}
+
+// pinRe extracts the 6-digit PIN from console-mailer output. Hoisted so the
+// per-login regexp isn't recompiled dozens of times per suite run.
+var pinRe = regexp.MustCompile(`\d{6}`)
 
 func newTestDeps(t *testing.T) (Deps, *bytes.Buffer) {
 	t.Helper()
@@ -60,7 +76,7 @@ func loginCookie(t *testing.T, h http.Handler, pinOut *bytes.Buffer) *http.Cooki
 	if rec.Code != http.StatusOK {
 		t.Fatalf("request pin: %d body=%s", rec.Code, rec.Body)
 	}
-	pin := regexp.MustCompile(`\d{6}`).FindString(pinOut.String())
+	pin := pinRe.FindString(pinOut.String())
 	if pin == "" {
 		t.Fatalf("no pin in mailer output: %q", pinOut.String())
 	}
@@ -86,9 +102,86 @@ func lastEvent(t *testing.T, d Deps) events.Event {
 	return evs[len(evs)-1]
 }
 
+// ── shared fixtures (used across feature test files) ─────────────────
+
+// newProjectDeps wires the real project.Service over a mocked Docker client
+// into the handler, so the HTTP layer is tested against the actual pipeline.
+// Returns the shared state store so tests can seed it directly.
+func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer, *state.Store) {
+	t.Helper()
+	d, pinOut := newTestDeps(t)
+	md := dockermocks.NewMockClient(t)
+	st, err := state.Open(t.TempDir(), state.Bootstrap{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Projects = project.NewService(project.Open(st), md, d.Events)
+	d.State = st
+	return d, md, pinOut, st
+}
+
+func newSessionDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer, *state.Store) {
+	t.Helper()
+	d, md, pinOut, st := newProjectDeps(t)
+	d.Sessions = session.New(md)
+
+	// a plugin in the registry, as if added by the user
+	hs := harness.New(st)
+	if _, err := hs.Save(harness.Harness{Name: "Fake", Command: "fakecli", Install: "npm i -g fakecli"}); err != nil {
+		t.Fatal(err)
+	}
+	d.Harnesses = hs
+	d.SSHKeys = sshkeys.New(st)
+	return d, md, pinOut, st
+}
+
+func seedProject(t *testing.T, st *state.Store, id string) {
+	t.Helper()
+	if err := project.Open(st).Create(id, project.Project{Name: "x"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func authedPostCtx(t *testing.T, h http.Handler, cookie *http.Cookie, ctx context.Context, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)).WithContext(ctx)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func authedPost(t *testing.T, h http.Handler, cookie *http.Cookie, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return authedPostCtx(t, h, cookie, context.Background(), path, body)
+}
+
+func authedRequest(t *testing.T, h http.Handler, cookie *http.Cookie, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(method, path, nil)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// previewTestWorker/Factory are a no-op Docker-like runtime for manager-level
+// tests: they report a fixed private endpoint and Close immediately.
+type previewTestWorker struct{ ep preview.Endpoint }
+
+func (w previewTestWorker) Endpoint() preview.Endpoint  { return w.ep }
+func (w previewTestWorker) Close(context.Context) error { return nil }
+
+type previewTestFactory struct{ ep preview.Endpoint }
+
+func (f previewTestFactory) Start(context.Context, preview.Config) (preview.Worker, error) {
+	return previewTestWorker{ep: f.ep}, nil
+}
+
 func TestHealth(t *testing.T) {
 	d, _ := newTestDeps(t)
-	rec := get(t, New(d), "/health")
+	h := New(d)
+	rec := get(t, h, "/health")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
@@ -99,13 +192,10 @@ func TestHealth(t *testing.T) {
 	if body["status"] != "ok" {
 		t.Fatalf("status field = %q, want %q", body["status"], "ok")
 	}
-}
-
-func TestMethodNotAllowed(t *testing.T) {
-	d, _ := newTestDeps(t)
-	rec := httptest.NewRecorder()
-	New(d).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/health", nil))
+	// the mux rejects wrong methods on known routes (stdlib behavior pin)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/health", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+		t.Fatalf("POST status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
 }

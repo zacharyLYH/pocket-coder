@@ -15,14 +15,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sps/internal/auth"
-	"sps/internal/docker"
-	"sps/internal/events"
-	"sps/internal/harness"
-	"sps/internal/project"
-	"sps/internal/session"
-	"sps/internal/sshkeys"
-	"sps/internal/state"
 	"sps/internal/state/statetest"
 	"strings"
 	"testing"
@@ -44,32 +36,9 @@ func TestStateMockRecovery(t *testing.T) {
 	wantDoc := statetest.Read(t, statePath)
 
 	// same wiring as newLiveDeps, but over the seeded store
-	ev, err := events.Open(filepath.Join(dataDir, "events.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { ev.Close() })
-	dkr, err := docker.New(os.Getenv("SPS_DOCKER_SOCK"))
-	if err != nil {
-		t.Fatalf("new docker client: %v", err)
-	}
-	ctx := t.Context()
-	if err := dkr.Ping(ctx); err != nil {
-		t.Skipf("docker unavailable: %v", err)
-	}
-	st, err := state.Open(dataDir, state.Bootstrap{})
-	if err != nil {
-		t.Fatalf("open seeded state: %v", err)
-	}
-	var pinOut bytes.Buffer
-	authSvc := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut})
-	sshKeyStore := sshkeys.New(st)
-	svc := project.NewService(project.Open(st), dkr, ev)
-	svc.SetSSHKeys(sshKeyStore)
-	h := New(Deps{Events: ev, Version: "itest", Auth: authSvc, Projects: svc,
-		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore, State: st})
+	h, _, _, pinOut, _, _ := newLiveDepsOnDir(t, dataDir)
 
-	cookie := login(t, h, &pinOut)
+	cookie := login(t, h, pinOut)
 	const id = "deadbeef"
 
 	// desired state survived the boot untouched

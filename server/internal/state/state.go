@@ -46,13 +46,13 @@ type SMTP struct {
 // Project is one project. Only what cannot be defaulted; the
 // container/volumes are derived from the id and reconciled from here.
 type Project struct {
-	Name           string             `json:"name"`
-	Repo           string             `json:"repo"`
-	Branch         string             `json:"branch,omitempty"`
-	CloneMethod    string             `json:"cloneMethod,omitempty"`    // "ssh" or "http" (default)
-	Harnesses      []string           `json:"harnesses,omitempty"`      // installed harness ids, ordered by install
-	Sessions       map[string]Session `json:"sessions,omitempty"`       // keyed by session name
-	QuickCommands  map[string]string  `json:"quickCommands,omitempty"`  // alias → command
+	Name          string             `json:"name"`
+	Repo          string             `json:"repo"`
+	Branch        string             `json:"branch,omitempty"`
+	CloneMethod   string             `json:"cloneMethod,omitempty"`   // "ssh" or "http" (default)
+	Harnesses     []string           `json:"harnesses,omitempty"`     // installed harness ids, ordered by install
+	Sessions      map[string]Session `json:"sessions,omitempty"`      // keyed by session name
+	QuickCommands map[string]string  `json:"quickCommands,omitempty"` // alias → command
 }
 
 // Session is high-level metadata about a tmux session. Stored in
@@ -208,5 +208,3 @@ func (s *Store) seed(b Bootstrap) {
 		s.doc.SMTP = b.SMTP
 	}
 }
-
-

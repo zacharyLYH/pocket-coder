@@ -27,23 +27,7 @@ export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; on
     return () => clearInterval(id)
   }, [refresh])
 
-  // Early launch: as soon as a port appears, start its sidecar in background.
-  // Lowest port first: ss order is arbitrary and often leads with ephemeral
-  // junk (vite HMR, inspectors), while real servers live down low.
-  // The latch resets on failure so a transient start error retries when
-  // ports/ready state changes instead of requiring a manual click.
-  const hasAutoStarted = useRef(false)
-  useEffect(() => {
-    if (!hasAutoStarted.current && ports.length > 0 && readyPort === null && loadingPort === null) {
-      hasAutoStarted.current = true
-      const first = [...ports].sort((a, b) => a.port - b.port)[0]
-      void start(first.port).then((ok) => {
-        if (!ok) hasAutoStarted.current = false
-      })
-    }
-  }, [ports, readyPort, loadingPort])
-
-  async function start(port: number): Promise<boolean> {
+  const start = useCallback(async (port: number): Promise<boolean> => {
     setLoadingPort(port)
     setReadyPort(null)
     setError(null)
@@ -59,7 +43,23 @@ export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; on
     } finally {
       setLoadingPort(null)
     }
-  }
+  }, [projectId])
+
+  // Early launch: as soon as a port appears, start its sidecar in background.
+  // Lowest port first: ss order is arbitrary and often leads with ephemeral
+  // junk (vite HMR, inspectors), while real servers live down low.
+  // The latch resets on failure so a transient start error retries when
+  // ports/ready state changes instead of requiring a manual click.
+  const hasAutoStarted = useRef(false)
+  useEffect(() => {
+    if (!hasAutoStarted.current && ports.length > 0 && readyPort === null && loadingPort === null) {
+      hasAutoStarted.current = true
+      const first = [...ports].sort((a, b) => a.port - b.port)[0]
+      void start(first.port).then((ok) => {
+        if (!ok) hasAutoStarted.current = false
+      })
+    }
+  }, [ports, readyPort, loadingPort, start])
 
   async function closePreview() {
     try {

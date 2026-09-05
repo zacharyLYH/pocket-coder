@@ -1,14 +1,5 @@
 import { expect, type APIRequestContext, type Page, test } from '@playwright/test'
-import { deleteAllProjects, engineUp, resetHarnessRegistry } from './helpers'
-
-async function waitForRunning(request: APIRequestContext, id: string) {
-  for (let i = 0; i < 60; i++) {
-    const res = await request.get(`/api/projects/${id}`)
-    if (res.ok() && ((await res.json()) as { status: string }).status === 'running') return
-    await new Promise((r) => setTimeout(r, 500))
-  }
-  throw new Error(`project ${id} never reached running`)
-}
+import { createProjectViaUI, deleteAllProjects, engineUp, resetHarnessRegistry, waitForRunning } from './helpers'
 
 async function fetchState(request: APIRequestContext) {
   const res = await request.get('/api/state')
@@ -25,20 +16,6 @@ async function gateShot(page: Page, gate: string) {
   await page.waitForTimeout(300)
   await expect(page).toHaveScreenshot(`harness-orchestration-${gate}-mobile.png`, { fullPage: true })
   await page.setViewportSize({ width: 1280, height: 720 })
-}
-
-async function createProjectViaUI(page: Page, request: APIRequestContext, repoUrl: string, expectedName: string) {
-  await page.getByPlaceholder(/Repo URL/).fill(repoUrl)
-  await page.getByRole('button', { name: 'Create project' }).click()
-  await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 30_000 })
-  await page.reload()
-  await expect(page.getByText(expectedName)).toBeVisible({ timeout: 10_000 })
-  const orderRes = await request.get('/api/projects')
-  const orderBody = (await orderRes.json()) as { projects: { id: string; name: string }[] }
-  const created = orderBody.projects.find((p) => p.name === expectedName)
-  if (!created) throw new Error(`project ${expectedName} not found after create`)
-  await waitForRunning(request, created.id)
-  return created.id
 }
 
 test.describe('harness installs are desired state', () => {

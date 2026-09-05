@@ -113,7 +113,7 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 		t.Fatalf("duplicate harness: %d, want 400", rec.Code)
 	}
 	statetest.AssertSection(t, st.Path(), "harnesses", map[string]any{
-		"fake":      map[string]any{"id": "fake", "name": "Fake", "command": "fakecli", "install": "npm i -g fakecli"},
+		"fake":      wantFakeHarnessEntry,
 		"my-agent":  map[string]any{"id": "my-agent", "name": "My Agent", "command": "my-agent", "install": "npm i -g my-agent"},
 		"cfg-agent": map[string]any{"id": "cfg-agent", "name": "Cfg Agent", "command": "cfg-agent", "install": "pip install cfg-agent"},
 	})
@@ -152,11 +152,11 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 	}
 	idE := projectIDByRepo(t, d, "https://fail.example/x.git")
 	statetest.AssertSection(t, st.Path(), "projects", map[string]any{
-		idA: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http",},
-		idB: map[string]any{"name": "untitled", "repo": "", "cloneMethod": "http",},
-		idC: map[string]any{"name": "private", "repo": "git@github.com:me/private.git", "cloneMethod": "ssh",},
-		idD: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "branch": "dev", "cloneMethod": "http",},
-		idE: map[string]any{"name": "x", "repo": "https://fail.example/x.git", "cloneMethod": "http",},
+		idA: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
+		idB: map[string]any{"name": "untitled", "repo": "", "cloneMethod": "http"},
+		idC: map[string]any{"name": "private", "repo": "git@github.com:me/private.git", "cloneMethod": "ssh"},
+		idD: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "branch": "dev", "cloneMethod": "http"},
+		idE: map[string]any{"name": "x", "repo": "https://fail.example/x.git", "cloneMethod": "http"},
 	})
 
 	// ─── 4. interleaved operations ───────────────────────────────────────
@@ -227,7 +227,7 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": "me@example.com"},
 		"harnesses": map[string]any{
-			"fake":      map[string]any{"id": "fake", "name": "Fake", "command": "fakecli", "install": "npm i -g fakecli"},
+			"fake":      wantFakeHarnessEntry,
 			"cfg-agent": map[string]any{"id": "cfg-agent", "name": "Cfg Agent", "command": "cfg-agent", "install": "pip install cfg-agent"},
 		},
 		"sshKeys": []any{

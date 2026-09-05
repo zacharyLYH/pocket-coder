@@ -30,7 +30,10 @@ describe('useQuickCommands', () => {
     const fetch = vi.fn(async () => new Response('{}', { status: 200 }))
     vi.stubGlobal('fetch', fetch)
     renderHook(() => useQuickCommands(null))
-    await new Promise((r) => setTimeout(r, 50))
-    expect(fetch).not.toHaveBeenCalled()
+    // Negative assertion: the mount effect must settle with zero fetches.
+    // waitFor flushes the effect queue; the timeout only matters if the
+    // hook ever fetches (then the inner expect throws and waitFor retries
+    // until timeout, failing the test as it should).
+    await waitFor(() => expect(fetch).not.toHaveBeenCalled(), { timeout: 100 })
   })
 })

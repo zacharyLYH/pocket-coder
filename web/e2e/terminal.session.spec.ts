@@ -66,11 +66,10 @@ test.describe('session switcher', () => {
   })
 
   test('after installing, the harness appears in the new-session picker', async ({ page }) => {
+    await createProjectAndOpenTerminal(page)
+
+    // install opencode into the project from the home card
     await page.goto('/')
-    await deleteAllProjects(page.request)
-    await page.getByRole('button', { name: 'Create project' }).click()
-    await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
-    // install opencode into the new project from the home card
     const row = page.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
     await row.getByRole('button', { name: 'Install…' }).click()
     await page.getByRole('button', { name: /Install in 1 project/ }).click()

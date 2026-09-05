@@ -121,15 +121,40 @@ const files: Record<string, string> = {
   ].join('\n'),
 }
 
-export async function createReactProject(request: APIRequestContext): Promise<string> {
+// ── shared project-creation plumbing ──────────────────────────────────
+// createProject makes a blank project and returns its id. writeFilesCmd
+// writes file contents into /workspace/app. The running-Vite and
+// preinstalled flows below reuse these, so each framework fixture is just
+// its file map plus a readiness variant.
+async function createProject(request: APIRequestContext): Promise<string> {
   const created = await request.post('/api/projects', { data: {} })
   expect(created.status()).toBe(201)
   const { id } = (await created.json()) as { id: string }
-  const writes = Object.entries(files).map(([name, content]) => {
+  return id
+}
+
+function writeFilesCmd(files: Record<string, string>): string {
+  return Object.entries(files).map(([name, content]) => {
     const encoded = Buffer.from(content).toString('base64')
     return `mkdir -p /workspace/app/$(dirname '${name}'); printf '%s' '${encoded}' | base64 -d > /workspace/app/'${name}'`
   }).join('; ')
-  const command = `${writes}; nohup bash -lc '
+}
+
+async function waitForNpmInstall(request: APIRequestContext, id: string) {
+  for (let i = 0; i < 60; i++) {
+    const s = await execInProject(request, id, 'cat /tmp/sps-npm.status 2>/dev/null || echo pending')
+    if (s.trim() === '0') return
+    if (s.trim() === '1') throw new Error('npm install failed')
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+  throw new Error(`npm install in project ${id} timed out`)
+}
+
+// Vite dev server on :3000 plus the shared Node backend on :4000, started
+// immediately and held until both answer. Used by the React/Htmx/Vue fixtures.
+async function createRunningViteProject(request: APIRequestContext, files: Record<string, string>): Promise<string> {
+  const id = await createProject(request)
+  const command = `${writeFilesCmd(files)}; nohup bash -lc '
     cd /workspace/app;
     npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/sps-npm.log 2>&1;
     echo $? >/tmp/sps-npm.status;
@@ -142,27 +167,28 @@ export async function createReactProject(request: APIRequestContext): Promise<st
   return id
 }
 
-// Precreated project with code but no running servers — quickCommands are set
-// so the test can start them via inject (user-driven flow).
-export async function createPrecreatedProject(request: APIRequestContext): Promise<string> {
-  const created = await request.post('/api/projects', { data: {} })
-  expect(created.status()).toBe(201)
-  const { id } = (await created.json()) as { id: string }
-  const writes = Object.entries(files).map(([name, content]) => {
-    const encoded = Buffer.from(content).toString('base64')
-    return `mkdir -p /workspace/app/$(dirname '${name}'); printf '%s' '${encoded}' | base64 -d > /workspace/app/'${name}'`
-  }).join('; ')
-  const install = `${writes}; cd /workspace/app && npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/sps-npm.log 2>&1; echo $? >/tmp/sps-npm.status`
+// Preinstalled project with code but no running servers, plus quickCommands
+// so a test can start them via inject (the user-driven flow).
+async function createPreinstalledProject(request: APIRequestContext, files: Record<string, string>): Promise<string> {
+  const id = await createProject(request)
+  const install = `${writeFilesCmd(files)}; cd /workspace/app && npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/sps-npm.log 2>&1; echo $? >/tmp/sps-npm.status`
   const res = await request.post('/api/projects/exec', { data: { projectIds: [id], command: install } })
   expect(res.ok()).toBeTruthy()
-  for (let i = 0; i < 60; i++) {
-    const s = await execInProject(request, id, 'cat /tmp/sps-npm.status 2>/dev/null || echo pending')
-    if (s.trim() === '0') break
-    if (s.trim() === '1') throw new Error('npm install failed')
-    await new Promise((r) => setTimeout(r, 2000))
-  }
-  await request.patch(`/api/projects/${id}`, { data: { quickCommands: { dev: 'cd /workspace/app && npm run dev -- --host 0.0.0.0 --port 3000', backend: 'cd /workspace/app && nohup node server.js >/tmp/sps-backend.log 2>&1 &' } } })
+  await waitForNpmInstall(request, id)
+  await request.patch(`/api/projects/${id}`, {
+    data: { quickCommands: { dev: 'cd /workspace/app && npm run dev -- --host 0.0.0.0 --port 3000', backend: 'cd /workspace/app && nohup node server.js >/tmp/sps-backend.log 2>&1 &' } },
+  })
   return id
+}
+
+// React fixture: full-stack app (frontend 3000, backend 4000, counter, HMR).
+export async function createReactProject(request: APIRequestContext): Promise<string> {
+  return createRunningViteProject(request, files)
+}
+
+// Precreated React project with code but no running servers.
+export async function createPrecreatedProject(request: APIRequestContext): Promise<string> {
+  return createPreinstalledProject(request, files)
 }
 
 export async function execInProject(request: APIRequestContext, id: string, command: string): Promise<string> {
@@ -171,6 +197,23 @@ export async function execInProject(request: APIRequestContext, id: string, comm
   const body = (await response.json()) as { results: { status: string; detail?: string }[] }
   expect(body.results[0]?.status).toBe('ok')
   return body.results[0]?.detail ?? ''
+}
+
+// waitForInspectContaining polls CDP inspect until the page HTML contains
+// the marker (e.g. HMR applied). Shared by every spec that edits container
+// files and waits for the sidecar to pick it up.
+export async function waitForInspectContaining(
+  request: APIRequestContext,
+  projectID: string,
+  marker: string,
+  attempts = 60,
+): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    const res = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
+    if (res.ok() && ((await res.json()) as { html: string }).html.includes(marker)) return
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+  throw new Error(`inspect for ${projectID} never contained ${marker}`)
 }
 
 async function waitForProjectApp(request: APIRequestContext, id: string) {
@@ -282,45 +325,7 @@ const htmxFiles: Record<string, string> = {
 }
 
 export async function createHtmxProject(request: APIRequestContext): Promise<string> {
-  const created = await request.post('/api/projects', { data: {} })
-  expect(created.status()).toBe(201)
-  const { id } = (await created.json()) as { id: string }
-  const writes = Object.entries(htmxFiles).map(([name, content]) => {
-    const encoded = Buffer.from(content).toString('base64')
-    return `mkdir -p /workspace/app/$(dirname '${name}'); printf '%s' '${encoded}' | base64 -d > /workspace/app/'${name}'`
-  }).join('; ')
-  const command = `${writes}; nohup bash -lc '
-    cd /workspace/app;
-    npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/sps-npm.log 2>&1;
-    echo $? >/tmp/sps-npm.status;
-    node server.js >/tmp/sps-backend.log 2>&1 &
-    exec npm run dev -- --host 0.0.0.0 --port 3000 >/tmp/sps-vite.log 2>&1
-  ' >/dev/null 2>&1 </dev/null &`
-  const setup = await request.post('/api/projects/exec', { data: { projectIds: [id], command } })
-  expect(setup.ok()).toBeTruthy()
-  await waitForProjectApp(request, id)
-  return id
-}
-
-export async function createHtmxPrecreatedProject(request: APIRequestContext): Promise<string> {
-  const created = await request.post('/api/projects', { data: {} })
-  expect(created.status()).toBe(201)
-  const { id } = (await created.json()) as { id: string }
-  const writes = Object.entries(htmxFiles).map(([name, content]) => {
-    const encoded = Buffer.from(content).toString('base64')
-    return `mkdir -p /workspace/app/$(dirname '${name}'); printf '%s' '${encoded}' | base64 -d > /workspace/app/'${name}'`
-  }).join('; ')
-  const install = `${writes}; cd /workspace/app && npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/sps-npm.log 2>&1; echo $? >/tmp/sps-npm.status`
-  const res = await request.post('/api/projects/exec', { data: { projectIds: [id], command: install } })
-  expect(res.ok()).toBeTruthy()
-  for (let i = 0; i < 60; i++) {
-    const s = await execInProject(request, id, 'cat /tmp/sps-npm.status 2>/dev/null || echo pending')
-    if (s.trim() === '0') break
-    if (s.trim() === '1') throw new Error('npm install failed')
-    await new Promise((r) => setTimeout(r, 2000))
-  }
-  await request.patch(`/api/projects/${id}`, { data: { quickCommands: { dev: 'cd /workspace/app && npm run dev -- --host 0.0.0.0 --port 3000', backend: 'cd /workspace/app && nohup node server.js >/tmp/sps-backend.log 2>&1 &' } } })
-  return id
+  return createRunningViteProject(request, htmxFiles)
 }
 
 // ── vanilla HTML fixture ──
@@ -360,35 +365,38 @@ const vanillaFiles: Record<string, string> = {
   ].join('\n'),
 }
 
-export async function createVanillaProject(request: APIRequestContext): Promise<string> {
-  const created = await request.post('/api/projects', { data: {} })
-  expect(created.status()).toBe(201)
-  const { id } = (await created.json()) as { id: string }
-  const writes = Object.entries(vanillaFiles).map(([name, content]) => {
-    const encoded = Buffer.from(content).toString('base64')
-    return `mkdir -p /workspace/app/$(dirname '${name}'); printf '%s' '${encoded}' | base64 -d > /workspace/app/'${name}'`
-  }).join('; ')
-  const command = `${writes}; nohup bash -lc '
-    cd /workspace/app;
-    node server.js >/tmp/sps-backend.log 2>&1 &
-    exec node static-server.js >/tmp/sps-vite.log 2>&1
-  ' >/dev/null 2>&1 </dev/null &`
+// ── static-file fixtures (no npm/Vite) ────────────────────────────────
+// Vanilla (static server :3000 + Node backend :4000) and responsive (static
+// server only) share this: write files, launch, wait until the ports answer.
+async function createStaticProject(
+  request: APIRequestContext,
+  label: string,
+  fixtureFiles: Record<string, string>,
+  launch: string,
+  probes: string[],
+): Promise<string> {
+  const id = await createProject(request)
+  const command = `${writeFilesCmd(fixtureFiles)}; ${launch}`
   const setup = await request.post('/api/projects/exec', { data: { projectIds: [id], command } })
   expect(setup.ok()).toBeTruthy()
-  await waitForVanillaApp(request, id)
-  return id
-}
-
-async function waitForVanillaApp(request: APIRequestContext, id: string) {
+  const check = probes.map((p) => `curl -fsS http://127.0.0.1:${p} >/dev/null`).join(' && ')
   for (let attempt = 0; attempt < 60; attempt++) {
     try {
-      await execInProject(request, id, 'curl -fsS http://127.0.0.1:3000/ >/dev/null && curl -fsS http://127.0.0.1:4000/api/data >/dev/null')
-      return
+      await execInProject(request, id, check)
+      return id
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 1000))
     }
   }
-  throw new Error(`Vanilla app in project ${id} never became ready`)
+  throw new Error(`${label} app in project ${id} never became ready`)
+}
+
+export async function createVanillaProject(request: APIRequestContext): Promise<string> {
+  return createStaticProject(request, 'Vanilla', vanillaFiles, `nohup bash -lc '
+    cd /workspace/app;
+    node server.js >/tmp/sps-backend.log 2>&1 &
+    exec node static-server.js >/tmp/sps-vite.log 2>&1
+  ' >/dev/null 2>&1 </dev/null &`, ['3000/', '4000/api/data'])
 }
 
 // ── responsive fit fixture ──
@@ -431,28 +439,10 @@ const responsiveFiles: Record<string, string> = {
 }
 
 export async function createResponsiveProject(request: APIRequestContext): Promise<string> {
-  const created = await request.post('/api/projects', { data: {} })
-  expect(created.status()).toBe(201)
-  const { id } = (await created.json()) as { id: string }
-  const writes = Object.entries(responsiveFiles).map(([name, content]) => {
-    const encoded = Buffer.from(content).toString('base64')
-    return `mkdir -p /workspace/app/$(dirname '${name}'); printf '%s' '${encoded}' | base64 -d > /workspace/app/'${name}'`
-  }).join('; ')
-  const command = `${writes}; nohup bash -lc '
+  return createStaticProject(request, 'Responsive', responsiveFiles, `nohup bash -lc '
     cd /workspace/app;
     exec node static-server.js >/tmp/sps-vite.log 2>&1
-  ' >/dev/null 2>&1 </dev/null &`
-  const setup = await request.post('/api/projects/exec', { data: { projectIds: [id], command } })
-  expect(setup.ok()).toBeTruthy()
-  for (let attempt = 0; attempt < 60; attempt++) {
-    try {
-      await execInProject(request, id, 'curl -fsS http://127.0.0.1:3000/ >/dev/null')
-      return id
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-    }
-  }
-  throw new Error(`Responsive app in project ${id} never became ready`)
+  ' >/dev/null 2>&1 </dev/null &`, ['3000/'])
 }
 
 // ── Vue.js fixture ──
@@ -503,22 +493,5 @@ const vueFiles: Record<string, string> = {
 }
 
 export async function createVueProject(request: APIRequestContext): Promise<string> {
-  const created = await request.post('/api/projects', { data: {} })
-  expect(created.status()).toBe(201)
-  const { id } = (await created.json()) as { id: string }
-  const writes = Object.entries(vueFiles).map(([name, content]) => {
-    const encoded = Buffer.from(content).toString('base64')
-    return `mkdir -p /workspace/app/$(dirname '${name}'); printf '%s' '${encoded}' | base64 -d > /workspace/app/'${name}'`
-  }).join('; ')
-  const command = `${writes}; nohup bash -lc '
-    cd /workspace/app;
-    npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/sps-npm.log 2>&1;
-    echo $? >/tmp/sps-npm.status;
-    node server.js >/tmp/sps-backend.log 2>&1 &
-    exec npm run dev -- --host 0.0.0.0 --port 3000 >/tmp/sps-vite.log 2>&1
-  ' >/dev/null 2>&1 </dev/null &`
-  const setup = await request.post('/api/projects/exec', { data: { projectIds: [id], command } })
-  expect(setup.ok()).toBeTruthy()
-  await waitForProjectApp(request, id)
-  return id
+  return createRunningViteProject(request, vueFiles)
 }

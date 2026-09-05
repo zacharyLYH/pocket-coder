@@ -241,24 +241,12 @@ func TestRealTUIGate(t *testing.T) {
 
 	dial := func(name string) *websocket.Conn {
 		t.Helper()
-		conn, resp, err := websocket.DefaultDialer.Dial(
-			"ws://"+ts.Listener.Addr().String()+"/ws/projects/"+id+"/sessions/"+name,
-			http.Header{"Cookie": []string{cookie.Name + "=" + cookie.Value}})
-		if err != nil {
-			t.Fatalf("dial: %v (resp %v)", err, resp)
-		}
-		return conn
+		return dialSessionWS(t, "ws://"+ts.Listener.Addr().String()+"/ws/projects/"+id+"/sessions/"+name, cookie)
 	}
 
 	conn := dial(sessionName)
 	defer conn.Close()
-	sendFrame := func(f map[string]any) {
-		t.Helper()
-		raw, _ := json.Marshal(f)
-		if err := conn.WriteMessage(websocket.TextMessage, raw); err != nil {
-			t.Fatalf("send %v: %v", f, err)
-		}
-	}
+	sendFrame := func(f map[string]any) { wsSend(t, conn, f) }
 	readUntilOutputContains := func(want string) string {
 		t.Helper()
 		var seen strings.Builder

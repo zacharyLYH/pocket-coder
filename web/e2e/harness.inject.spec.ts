@@ -1,5 +1,5 @@
-import { expect, type APIRequestContext, type Page, test } from '@playwright/test'
-import { deleteAllProjects, engineUp } from './helpers'
+import { expect, type APIRequestContext, test } from '@playwright/test'
+import { createProjectViaUI, deleteAllProjects, engineUp } from './helpers'
 
 // The home-page injection flow, end to end against the real backend:
 //
@@ -13,12 +13,6 @@ import { deleteAllProjects, engineUp } from './helpers'
 // Crasher Demo is the vehicle: its "download" is a local script — instant,
 // while still exercising the real install+validate pipeline. Installed state
 // is verified through the backend's own per-project probe.
-
-async function createProjectViaUI(page: Page) {
-  await page.getByPlaceholder(/Repo URL/).fill('')
-  await page.getByRole('button', { name: 'Create project' }).click()
-  await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 30_000 })
-}
 
 async function projectOrder(request: APIRequestContext): Promise<string[]> {
   const res = await request.get('/api/projects')
@@ -43,9 +37,9 @@ test.describe('harness injection orchestration', () => {
     try {
       await page.goto('/')
       await expect(page.getByText('No projects yet.')).toBeVisible()
-      await createProjectViaUI(page)
+      await createProjectViaUI(page, page.request, '', 'untitled')
       await expect(page.getByText('untitled')).toHaveCount(1)
-      await createProjectViaUI(page)
+      await createProjectViaUI(page, page.request, '', 'untitled')
       await expect(page.getByText('untitled')).toHaveCount(2)
       const order1 = await projectOrder(page.request)
       const a = order1[0]
@@ -63,7 +57,7 @@ test.describe('harness injection orchestration', () => {
       expect(await crasherInstalled(page.request, b)).toBe(false)
 
       // --- a NEW project is not auto-injected ---
-      await createProjectViaUI(page)
+      await createProjectViaUI(page, page.request, '', 'untitled')
       await expect(page.getByText('untitled')).toHaveCount(3)
       const order2 = await projectOrder(page.request)
       const c = order2.find((id) => id !== a && id !== b)!

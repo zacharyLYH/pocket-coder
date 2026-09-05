@@ -83,6 +83,10 @@ export default defineConfig({
       command:
         // fresh backend state every run — the data dir is e2e-only
         `bash -c 'trap "docker compose -f ../docker-compose.e2e.yml -p ${COMPOSE_PROJECT} down 2>/dev/null" EXIT; ` +
+        // the compose stack attaches to the shared sps-net bridge, declared
+        // external — on a fresh engine (CI) it does not exist yet, so create
+        // it first; idempotent when it already does
+        `docker network create sps-net 2>/dev/null || true; ` +
         `rm -rf ${DATA_DIR} ${SERVER_LOG} && mkdir -p ${DATA_DIR} && ` +
         `env SPS_E2E_API_PORT=${API_PORT} SPS_E2E_DATA_DIR=$PWD/${DATA_DIR} ` +
         `docker compose -f ../docker-compose.e2e.yml -p ${COMPOSE_PROJECT} up --build > ${SERVER_LOG} 2>&1'`,

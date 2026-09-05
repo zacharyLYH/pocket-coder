@@ -188,33 +188,31 @@ func TestMiddleware(t *testing.T) {
 	})
 	h := svc.RequireAuth(next)
 
-	// no cookie → 401
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("no cookie: %d, want 401", rec.Code)
-	}
-
-	// garbage cookie → 401
-	rec = httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: CookieName, Value: "garbage"})
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("garbage cookie: %d, want 401", rec.Code)
-	}
-
-	// valid token → passes through
 	tok, err := svc.issueToken("me@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: CookieName, Value: tok})
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("valid cookie: %d, want 200", rec.Code)
+	cases := []struct {
+		name   string
+		cookie *http.Cookie
+		want   int
+	}{
+		{"no cookie", nil, http.StatusUnauthorized},
+		{"garbage cookie", &http.Cookie{Name: CookieName, Value: "garbage"}, http.StatusUnauthorized},
+		{"valid cookie", &http.Cookie{Name: CookieName, Value: tok}, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tc.cookie != nil {
+				req.AddCookie(tc.cookie)
+			}
+			h.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("%s: %d, want %d", tc.name, rec.Code, tc.want)
+			}
+		})
 	}
 }
 

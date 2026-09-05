@@ -10,180 +10,29 @@ package httpapi
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"sps/internal/auth"
 	"sps/internal/docker"
 	"sps/internal/events"
-	"sps/internal/harness"
 	"sps/internal/project"
-	"sps/internal/session"
-	"sps/internal/sshkeys"
-	"sps/internal/state"
 )
-
-var pinRe = regexp.MustCompile(`\d{6}`)
-
-func newLiveDeps(t *testing.T) (http.Handler, *docker.Docker, *project.Service, *bytes.Buffer, *events.Log, *state.Store) {
-	t.Helper()
-	dataDir := t.TempDir()
-	ev, err := events.Open(filepath.Join(dataDir, "events.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { ev.Close() })
-
-	dkr, err := docker.New(os.Getenv("SPS_DOCKER_SOCK"))
-	if err != nil {
-		t.Fatalf("new docker client: %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := dkr.Ping(ctx); err != nil {
-		t.Skipf("docker unavailable: %v", err)
-	}
-
-	st, err := state.Open(dataDir, state.Bootstrap{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var pinOut bytes.Buffer
-	authSvc := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut})
-	sshKeyStore := sshkeys.New(st)
-	svc := project.NewService(project.Open(st), dkr, ev)
-	svc.SetSSHKeys(sshKeyStore)
-	h := New(Deps{Events: ev, Version: "itest", Auth: authSvc, Projects: svc,
-		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore, State: st})
-	return h, dkr, svc, &pinOut, ev, st
-}
-
-func login(t *testing.T, h http.Handler, pinOut *bytes.Buffer) *http.Cookie {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/request-pin",
-		bytes.NewBufferString(`{"email":"me@example.com"}`))
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("request pin: %d", rec.Code)
-	}
-	pin := pinRe.FindString(pinOut.String())
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/auth/verify",
-		strings.NewReader(fmt.Sprintf(`{"email":"me@example.com","pin":%q}`, pin)))
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("verify: %d", rec.Code)
-	}
-	for _, c := range rec.Result().Cookies() {
-		if c.Name == auth.CookieName {
-			return c
-		}
-	}
-	t.Fatal("no session cookie")
-	return nil
-}
-
-func doJSON(t *testing.T, h http.Handler, cookie *http.Cookie, method, path, body string) (int, map[string]any) {
-	t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
-	req.AddCookie(cookie)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	var out map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	return rec.Code, out
-}
 
 // deleteProjectAll registers scope=all deletion as test cleanup, so a failed
 // assertion can never leak a project (and its volumes) on the
 // engine. Safe to call even when the test itself deletes the project: the
 // final cleanup delete is a no-op 404.
-func deleteProjectAll(t *testing.T, h http.Handler, cookie *http.Cookie, id string) {
-	t.Helper()
-	t.Cleanup(func() {
-		code, _ := doJSON(t, h, cookie, http.MethodDelete, "/api/projects/"+id+"?scope=all", "")
-		if code != http.StatusOK && code != http.StatusNotFound {
-			t.Errorf("cleanup: delete project %s → %d", id, code)
-		}
-	})
-}
 
 // fixtureRepo creates a one-commit git repo under dir/repo and serves it
 // with git daemon, returning a git:// URL reachable from containers via the
 // sps-net gateway.
-func fixtureRepo(t *testing.T, dkr *docker.Docker) string {
-	t.Helper()
-	if err := dkr.EnsureNetwork(context.Background(), docker.DefaultNetwork); err != nil {
-		t.Fatalf("ensure network: %v", err)
-	}
-
-	dir := t.TempDir()
-	repo := filepath.Join(dir, "repo")
-	if out, err := exec.Command("git", "init", "-b", "main", repo).CombinedOutput(); err != nil {
-		t.Fatalf("init: %v\n%s", err, out)
-	}
-	if err := os.WriteFile(filepath.Join(repo, "hello.txt"), []byte("hi\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		env := append(cmd.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-		cmd.Env = env
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	run("-C", repo, "add", "-A")
-	run("-C", repo, "commit", "-m", "first")
-	run("-C", repo, "branch", "dev") // for branch-pinning tests
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-
-	daemon := exec.Command("git", "daemon",
-		"--base-path="+dir, "--export-all", "--reuseaddr",
-		"--listen=0.0.0.0", "--port="+fmt.Sprint(port))
-	if err := daemon.Start(); err != nil {
-		t.Fatalf("git daemon: %v", err)
-	}
-	t.Cleanup(func() { _ = daemon.Process.Kill(); _, _ = daemon.Process.Wait() })
-
-	return fmt.Sprintf("git://host.docker.internal:%d/repo", port)
-}
-
-func waitForStatus(t *testing.T, h http.Handler, cookie *http.Cookie, id, want string) {
-	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		code, body := doJSON(t, h, cookie, http.MethodGet, "/api/projects/"+id, "")
-		if code == http.StatusOK && body["status"] == want {
-			return
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("project %s never reached status %q within 30s", id, want)
-}
 
 func TestProjectPipelineLifecycle(t *testing.T) {
 	h, dkr, svc, pinOut, _, _ := newLiveDeps(t)
@@ -298,19 +147,6 @@ func TestBlankProjectLifecycle(t *testing.T) {
 }
 
 // hasEvent reports whether the event log contains a type with matching id.
-func hasEvent(t *testing.T, ev *events.Log, typ, id string) bool {
-	t.Helper()
-	evs, err := ev.Read(0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range evs {
-		if e.Type == typ && e.Data["id"] == id {
-			return true
-		}
-	}
-	return false
-}
 
 func TestProjectBranchPinning(t *testing.T) {
 	h, dkr, _, pinOut, _, _ := newLiveDeps(t)

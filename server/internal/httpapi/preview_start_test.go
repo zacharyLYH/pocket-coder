@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,16 +15,8 @@ import (
 	"sps/internal/preview"
 )
 
-type endpointWorker struct{ ep preview.Endpoint }
-
-func (w endpointWorker) Endpoint() preview.Endpoint  { return w.ep }
-func (w endpointWorker) Close(context.Context) error { return nil }
-
-type endpointFactory struct{ ep preview.Endpoint }
-
-func (f endpointFactory) Start(context.Context, preview.Config) (preview.Worker, error) {
-	return endpointWorker{f.ep}, nil
-}
+// endpointWorker/Factory and authedPostCtx live in httpapi_test.go now:
+// previewTestFactory{ep} and authedPostCtx.
 
 // scriptedCDP is a fake Chromium: /json/list advertises one page target and
 // the websocket answers Page.navigate / Runtime.evaluate from scripts.
@@ -88,7 +79,7 @@ func startTestDeps(t *testing.T, script *scriptedCDP, projectID string) (http.Ha
 	t.Cleanup(srv.Close)
 
 	d, pinOut := newTestDeps(t)
-	m := preview.NewManager(endpointFactory{ep: preview.Endpoint{CDP: srv.URL}})
+	m := preview.NewManager(previewTestFactory{ep: preview.Endpoint{CDP: srv.URL}})
 	if _, err := m.Ensure(context.Background(), preview.Config{ProjectID: projectID, ContainerID: "sps-" + projectID}); err != nil {
 		t.Fatal(err)
 	}
@@ -98,14 +89,7 @@ func startTestDeps(t *testing.T, script *scriptedCDP, projectID string) (http.Ha
 	return h, loginCookie(t, h, pinOut)
 }
 
-func authedPostCtx(t *testing.T, h http.Handler, cookie *http.Cookie, ctx context.Context, path, body string) *httptest.ResponseRecorder {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)).WithContext(ctx)
-	req.AddCookie(cookie)
-	h.ServeHTTP(rec, req)
-	return rec
-}
+// (authedPostCtx lives in httpapi_test.go; authedPost delegates to it.)
 
 func TestPreviewStartHappy(t *testing.T) {
 	script := &scriptedCDP{navigateResult: `{}`}

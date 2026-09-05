@@ -52,7 +52,7 @@ func cachedSession(t *testing.T, projectID string) *cdpSession {
 
 func TestPreviewCloseEvictsCDPSession(t *testing.T) {
 	d, pinOut := newTestDeps(t)
-	m := preview.NewManager(previewTestFactory{})
+	m := preview.NewManager(previewTestFactory{ep: privatePreviewEndpoint})
 	d.Preview = m
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
@@ -73,7 +73,7 @@ func TestPreviewCloseEvictsCDPSession(t *testing.T) {
 func TestProjectStopEvictsCDPSession(t *testing.T) {
 	d, md, pinOut, _ := newProjectDeps(t)
 	d.Sessions = session.New(md)
-	d.Preview = preview.NewManager(previewTestFactory{})
+	d.Preview = preview.NewManager(previewTestFactory{ep: privatePreviewEndpoint})
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 

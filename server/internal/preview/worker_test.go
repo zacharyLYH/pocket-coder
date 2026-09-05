@@ -26,16 +26,30 @@ func (w *fakeWorker) Close(context.Context) error {
 type fakeFactory struct {
 	mu      sync.Mutex
 	starts  int
+	delay   time.Duration
 	workers []*fakeWorker
 }
 
 func (f *fakeFactory) Start(context.Context, Config) (Worker, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.starts++
+	f.mu.Unlock()
+	// A nonzero delay holds the start open so concurrent callers pile onto
+	// the same in-flight call instead of running sequentially.
+	if f.delay > 0 {
+		time.Sleep(f.delay)
+	}
 	w := &fakeWorker{}
+	f.mu.Lock()
 	f.workers = append(f.workers, w)
+	f.mu.Unlock()
 	return w, nil
+}
+
+func (f *fakeFactory) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.starts
 }
 
 func TestManagerEnsuresOneWorkerPerProject(t *testing.T) {
@@ -56,29 +70,8 @@ func TestManagerEnsuresOneWorkerPerProject(t *testing.T) {
 	}
 }
 
-type slowFactory struct {
-	mu     sync.Mutex
-	starts int
-}
-
-func (f *slowFactory) Start(context.Context, Config) (Worker, error) {
-	f.mu.Lock()
-	f.starts++
-	f.mu.Unlock()
-	// Hold the start open so all 20 callers pile onto the same in-flight
-	// call instead of running sequentially.
-	time.Sleep(50 * time.Millisecond)
-	return &fakeWorker{}, nil
-}
-
-func (f *slowFactory) count() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.starts
-}
-
 func TestManagerConcurrentEnsureStartsOnce(t *testing.T) {
-	f := &slowFactory{}
+	f := &fakeFactory{delay: 50 * time.Millisecond}
 	m := NewManager(f)
 	cfg := Config{ProjectID: "p1", ContainerID: "container-p1"}
 	results := make([]Worker, 20)

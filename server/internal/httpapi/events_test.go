@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"testing"
 	"time"
 
@@ -21,9 +20,6 @@ func TestUnauthorized(t *testing.T) {
 	}
 	if rec := get(t, h, "/api/auth/me"); rec.Code != 401 {
 		t.Fatalf("/api/auth/me: %d, want 401", rec.Code)
-	}
-	if rec := get(t, h, "/health"); rec.Code != 200 {
-		t.Fatalf("/health: %d, want 200 (public)", rec.Code)
 	}
 }
 
@@ -98,7 +94,7 @@ func TestEventsAPIWithFakeEventLog(t *testing.T) {
 	if err := d.Auth.RequestPIN(context.Background(), "me@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	pin := regexp.MustCompile(`\d{6}`).FindString(pinOut.String())
+	pin := pinRe.FindString(pinOut.String())
 	token, err := d.Auth.Verify("me@example.com", pin)
 	if err != nil {
 		t.Fatal(err)

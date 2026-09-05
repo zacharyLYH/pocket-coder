@@ -113,19 +113,6 @@ func TestCloneMethodHTTP(t *testing.T) {
 	}
 }
 
-func TestCloneMethodSSHRejectsWithoutKeys(t *testing.T) {
-	h, _, _, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
-
-	// create with ssh cloneMethod but no keys registered
-	code, _ := doJSON(t, h, cookie, http.MethodPost, "/api/projects",
-		`{"repoUrl":"git@github.com:x/hello.git","cloneMethod":"ssh"}`)
-	// ssh cloneMethod is accepted; keys are injected best-effort.
-	if code != http.StatusCreated {
-		t.Logf("cloneMethod=ssh: %d (may reject if no keys)", code)
-	}
-}
-
 func TestReconcileMissingContainer(t *testing.T) {
 	h, dkr, _, pinOut, _, _ := newLiveDeps(t)
 	cookie := login(t, h, pinOut)

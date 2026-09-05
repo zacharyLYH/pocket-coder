@@ -50,20 +50,9 @@ func TestTerminalLiveLifecycle(t *testing.T) {
 
 	dial := func() *websocket.Conn {
 		t.Helper()
-		conn, resp, err := websocket.DefaultDialer.Dial(ws,
-			http.Header{"Cookie": []string{cookie.Name + "=" + cookie.Value}})
-		if err != nil {
-			t.Fatalf("dial %s: %v (resp %v)", ws, err, resp)
-		}
-		return conn
+		return dialSessionWS(t, ws, cookie)
 	}
-	send := func(conn *websocket.Conn, f map[string]any) {
-		t.Helper()
-		raw, _ := json.Marshal(f)
-		if err := conn.WriteMessage(websocket.TextMessage, raw); err != nil {
-			t.Fatalf("send: %v", err)
-		}
-	}
+	send := func(conn *websocket.Conn, f map[string]any) { wsSend(t, conn, f) }
 	readUntilOutputContains := func(conn *websocket.Conn, want string) string {
 		t.Helper()
 		deadline := time.Now().Add(15 * time.Second)

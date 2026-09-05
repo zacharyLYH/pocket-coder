@@ -1,57 +1,21 @@
 package httpapi
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
 
 	"sps/internal/docker"
 	"sps/internal/project"
-	"sps/internal/state"
 	"sps/internal/state/statetest"
-	dockermocks "sps/mocks/docker"
 )
 
-// newProjectDeps wires the real project.Service over a mocked Docker client
-// into the handler, so the HTTP layer is tested against the actual pipeline.
-// Returns the shared state store so tests can seed it directly.
-func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer, *state.Store) {
-	t.Helper()
-	d, pinOut := newTestDeps(t)
-	md := dockermocks.NewMockClient(t)
-	st, err := state.Open(t.TempDir(), state.Bootstrap{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	d.Projects = project.NewService(project.Open(st), md, d.Events)
-	d.State = st
-	return d, md, pinOut, st
-}
-
-func authedPost(t *testing.T, h http.Handler, cookie *http.Cookie, path, body string) *httptest.ResponseRecorder {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
-	req.AddCookie(cookie)
-	h.ServeHTTP(rec, req)
-	return rec
-}
-
-func authedRequest(t *testing.T, h http.Handler, cookie *http.Cookie, method, path string) *httptest.ResponseRecorder {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(method, path, nil)
-	req.AddCookie(cookie)
-	h.ServeHTTP(rec, req)
-	return rec
-}
+// newProjectDeps, authedPost and authedRequest live in httpapi_test.go
+// (shared fixtures).
 
 func TestProjectsRequireAuth(t *testing.T) {
 	d, _, _, _ := newProjectDeps(t)
@@ -98,7 +62,7 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": ""},
 		"projects": map[string]any{
-			created.ID: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http",},
+			created.ID: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
 		},
 	})
 
@@ -147,18 +111,6 @@ func TestCreateInvalidBodyIs400(t *testing.T) {
 	want := "{\"error\":\"invalid JSON body\"}\n"
 	if rec.Code != http.StatusBadRequest || rec.Body.String() != want {
 		t.Fatalf("got %d %q, want 400 %q", rec.Code, rec.Body, want)
-	}
-}
-
-func TestListEmptyIsArrayNotNUll(t *testing.T) {
-	d, _, pinOut, _ := newProjectDeps(t)
-	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
-	rec := authedGet(t, h, cookie, "/api/projects")
-	// the frontend iterates the array; a JSON null would crash it
-	want := "{\"projects\":[]}\n"
-	if rec.Code != http.StatusOK || rec.Body.String() != want {
-		t.Fatalf("got %d %q, want 200 %q", rec.Code, rec.Body, want)
 	}
 }
 
@@ -214,6 +166,8 @@ func TestProjectOpsAndScopesAPI(t *testing.T) {
 		{http.MethodDelete, "/api/projects/ghost?scope=everything", http.StatusBadRequest, "{\"error\":\"invalid delete scope: \\\"everything\\\"\"}\n"},
 		{http.MethodDelete, "/api/projects/ghost?scope=all", http.StatusNotFound, "{\"error\":\"no such project\"}\n"},
 		{http.MethodDelete, "/api/projects/ghost", http.StatusNotFound, "{\"error\":\"no such project\"}\n"},
+		// the frontend iterates the array; a JSON null would crash it
+		{http.MethodGet, "/api/projects", http.StatusOK, "{\"projects\":[]}\n"},
 	}
 	for _, tc := range cases {
 		rec := authedRequest(t, h, cookie, tc.method, tc.path)
@@ -221,5 +175,45 @@ func TestProjectOpsAndScopesAPI(t *testing.T) {
 			t.Fatalf("%s %s: got %d %q, want %d %q",
 				tc.method, tc.path, rec.Code, rec.Body, tc.wantStatus, tc.wantBody)
 		}
+	}
+}
+
+// TestLazyReconciliationViaSessionHandler moved from httpapi_sessions_test.go:
+// project-container recovery, observed through the session list handler.
+// TestLazyReconciliationViaSessionHandler proves the disk-is-truth
+// guarantee: when a container is missing but the project exists on disk,
+// EnsureContainer inside the handler recreates it.
+func TestLazyReconciliationViaSessionHandler(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	// first call: container missing → triggers reconciliation
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
+	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
+	md.EXPECT().InspectImage(mock.Anything, project.ProjectImage).Return(nil)
+	md.EXPECT().Run(mock.Anything, mock.Anything).Return("new-cid", nil)
+	// EnsureContainer re-inspects after reconciling: now running
+	md.EXPECT().Inspect(mock.Anything, "sps-abc").Return(docker.Container{Running: true}, nil).Once()
+	// after reconciliation, the session list uses the container NAME (not cid)
+	md.EXPECT().Exec(mock.Anything, "sps-abc",
+		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
+		Return(docker.ExecResult{ExitCode: 1, Output: "no server running"}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedGet(t, h, cookie, "/api/projects/abc/sessions")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list sessions after reconcile: %d %s", rec.Code, rec.Body)
+	}
+	// the reconcile event should have been emitted
+	evs, _ := d.Events.Read(0, 0)
+	found := false
+	for _, e := range evs {
+		if e.Type == "project.reconcile" && e.Data["id"] == "abc" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no project.reconcile event after lazy reconciliation")
 	}
 }

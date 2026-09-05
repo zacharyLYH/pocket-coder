@@ -146,9 +146,7 @@ func TestListStableOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, _ := s.List()
-	for i := range first {
-		if !reflect.DeepEqual(first[i], second[i]) {
-			t.Fatalf("list order unstable: %+v vs %+v", first, second)
-		}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("list order unstable: %+v vs %+v", first, second)
 	}
 }

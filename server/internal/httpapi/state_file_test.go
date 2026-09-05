@@ -82,7 +82,7 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": "me@example.com"},
 		"harnesses": map[string]any{
-			"fake":     map[string]any{"id": "fake", "name": "Fake", "command": "fakecli", "install": "npm i -g fakecli"},
+			"fake":     wantFakeHarnessEntry,
 			"my-agent": map[string]any{"id": "my-agent", "name": "My Agent", "command": "my-agent", "install": "npm i -g my-agent"},
 		},
 		"sshKeys": []any{map[string]any{
@@ -92,7 +92,7 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 			"email":       "me@example.com",
 		}},
 		"projects": map[string]any{
-			proj.ID: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http",},
+			proj.ID: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
 		},
 	})
 
@@ -117,7 +117,7 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": "me@example.com"},
 		"harnesses": map[string]any{
-			"fake":     map[string]any{"id": "fake", "name": "Fake", "command": "fakecli", "install": "npm i -g fakecli"},
+			"fake":     wantFakeHarnessEntry,
 			"my-agent": map[string]any{"id": "my-agent", "name": "My Agent", "command": "my-agent", "install": "npm i -g my-agent"},
 		},
 	})

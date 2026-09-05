@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { deleteAllProjects, engineUp } from './helpers'
-import { createVueProject, execInProject, openPreviewFromTerminal } from './preview.helpers'
+import { createVueProject, execInProject, openPreviewFromTerminal, waitForInspectContaining } from './preview.helpers'
 
 test.describe('preview Vue.js', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -59,19 +59,7 @@ test.describe('preview Vue.js', () => {
       )
 
       // Wait for HMR to apply
-      let found = false
-      for (let i = 0; i < 60; i++) {
-        await page.waitForTimeout(1000)
-        const res = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
-        if (res.ok()) {
-          const { html: h } = (await res.json()) as { html: string }
-          if (h.includes('Vue HMR is working')) {
-            found = true
-            break
-          }
-        }
-      }
-      expect(found).toBeTruthy()
+      await waitForInspectContaining(request, projectID, 'Vue HMR is working')
 
       // Verify no page reload (HMR, not full refresh)
       // Capture after HMR screenshot

@@ -45,10 +45,12 @@ type Client interface {
 
 // Container is the inspect summary the server needs — never the raw docker type.
 type Container struct {
-	ID        string
-	Running   bool
-	Status    string
-	Image     string
+	ID      string
+	Running bool
+	Status  string
+	Image   string
+	// NetworkIP is empty while Docker is restarting or when a mock does not
+	// model networking — callers must treat "" as "unknown", not an error.
 	NetworkIP string
 }
 

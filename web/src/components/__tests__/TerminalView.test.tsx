@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { TerminalView } from '@/components/terminal/TerminalView'
+import { mockFetch, type FetchCall } from '@/test/mockFetch'
 
 // Unit tests for TerminalView session management — restart, kill, and
 // switching sessions. The backend is mocked at the fetch/WebSocket level;
@@ -13,16 +14,7 @@ const SESSIONS_RESPONSE = { sessions: [{ name: 'helper-1' }, { name: 'main' }] }
 const HARNESS_RESPONSE = { harnesses: [{ id: 'helper', name: 'Helper', command: 'helper' }] }
 
 // Track all fetch calls for assertions.
-let fetchCalls: { url: string; method: string; body?: string }[] = []
-
-function mockFetch(handler: (url: string, init?: RequestInit) => { status: number; body: unknown } | undefined) {
-  return vi.fn(async (url: string, init?: RequestInit) => {
-    fetchCalls.push({ url, method: init?.method ?? 'GET', body: init?.body as string | undefined })
-    const out = handler(url, init)
-    if (!out) throw new Error(`unexpected fetch: ${url}`)
-    return new Response(JSON.stringify(out.body), { status: out.status })
-  })
-}
+let fetchCalls: FetchCall[] = []
 
 // Minimal WebSocket mock that captures open/message/close.
 // Does NOT auto-open to avoid triggering xterm.js term.open() which
@@ -69,10 +61,30 @@ afterEach(() => {
 
 describe('TerminalView session management', () => {
   function renderView(fetchHandler: (url: string, init?: RequestInit) => { status: number; body: unknown } | undefined) {
-    vi.stubGlobal('fetch', mockFetch(fetchHandler))
+    vi.stubGlobal('fetch', mockFetch(fetchHandler, (c) => fetchCalls.push(c)))
     return render(
       <TerminalView projectId={PROJECT_ID} initialSession={SESSION} onBack={vi.fn()} onOpenPreview={vi.fn()} />
     )
+  }
+
+  // Every test needs the session list + harness list; per-test extras
+  // (restart/kill endpoints) layer on top via the spread.
+  type Handler = (url: string, init?: RequestInit) => { status: number; body: unknown } | undefined
+  function baseHandler(extra?: Handler): Handler {
+    return (url, init) => {
+      if (url.endsWith('/sessions')) return { status: 200, body: SESSIONS_RESPONSE }
+      if (url.endsWith('/harnesses')) return { status: 200, body: HARNESS_RESPONSE }
+      return extra?.(url, init)
+    }
+  }
+
+  function sessionDeleteHandler(): Handler {
+    return (url) => {
+      if (url.includes('/sessions/') && url.endsWith(`/${SESSION}`) && !url.includes('restart') && !url.includes('rename')) {
+        return { status: 200, body: { ok: true } }
+      }
+      return undefined
+    }
   }
 
   // Radix menus open on pointerdown; fireEvent.click alone never opens them
@@ -84,12 +96,10 @@ describe('TerminalView session management', () => {
   }
 
   it('restart calls POST /restart then triggers redial', async () => {
-    renderView((url) => {
+    renderView(baseHandler((url) => {
       if (url.includes('/sessions') && url.includes('/restart')) return { status: 200, body: { name: SESSION } }
-      if (url.endsWith('/sessions')) return { status: 200, body: SESSIONS_RESPONSE }
-      if (url.endsWith('/harnesses')) return { status: 200, body: HARNESS_RESPONSE }
       return undefined
-    })
+    }))
 
     // Wait for initial render + session list fetch
     await waitFor(() => {
@@ -108,14 +118,7 @@ describe('TerminalView session management', () => {
   })
 
   it('kill calls DELETE /sessions/{name}', async () => {
-    renderView((url) => {
-      if (url.endsWith('/sessions')) return { status: 200, body: SESSIONS_RESPONSE }
-      if (url.endsWith('/harnesses')) return { status: 200, body: HARNESS_RESPONSE }
-      if (url.includes('/sessions/') && url.endsWith(`/${SESSION}`) && !url.includes('restart') && !url.includes('rename')) {
-        return { status: 200, body: { ok: true } }
-      }
-      return undefined
-    })
+    renderView(baseHandler(sessionDeleteHandler()))
 
     await waitFor(() => {
       expect(fetchCalls.some(c => c.url.includes('/sessions'))).toBe(true)
@@ -131,11 +134,7 @@ describe('TerminalView session management', () => {
   })
 
   it('ensure call POSTs session name without harnessId', async () => {
-    renderView((url) => {
-      if (url.endsWith('/sessions')) return { status: 200, body: SESSIONS_RESPONSE }
-      if (url.endsWith('/harnesses')) return { status: 200, body: HARNESS_RESPONSE }
-      return undefined
-    })
+    renderView(baseHandler())
 
     // The TerminalPane's ensureSessionThenDial fires on mount
     await waitFor(() => {
@@ -151,14 +150,7 @@ describe('TerminalView session management', () => {
   })
 
   it('kill then re-enter same session triggers a new ensure call', async () => {
-    renderView((url) => {
-      if (url.endsWith('/sessions')) return { status: 200, body: SESSIONS_RESPONSE }
-      if (url.endsWith('/harnesses')) return { status: 200, body: HARNESS_RESPONSE }
-      if (url.includes('/sessions/') && url.includes(`/${SESSION}`) && !url.includes('restart') && !url.includes('rename')) {
-        return { status: 200, body: { ok: true } }
-      }
-      return undefined
-    })
+    renderView(baseHandler(sessionDeleteHandler()))
 
     await waitFor(() => {
       expect(fetchCalls.some(c => c.url.includes('/sessions'))).toBe(true)
@@ -189,11 +181,7 @@ describe('TerminalView session management', () => {
   })
 
   it('loads sessions and shows current session name', async () => {
-    renderView((url) => {
-      if (url.endsWith('/sessions')) return { status: 200, body: SESSIONS_RESPONSE }
-      if (url.endsWith('/harnesses')) return { status: 200, body: HARNESS_RESPONSE }
-      return undefined
-    })
+    renderView(baseHandler())
 
     // Wait for session list to be fetched
     await waitFor(() => {
