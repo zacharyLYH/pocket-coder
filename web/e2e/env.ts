@@ -23,3 +23,8 @@ export const RUN_DIR = process.env.E2E_RUN_ID
 export const DATA_DIR = `${RUN_DIR}/sps-stack-data`
 export const SERVER_LOG = `${RUN_DIR}/sps-stack-server.log`
 export const AUTH_STATE = `${RUN_DIR}/auth-state.json`
+
+// Compose project name for this run's backend stack. Single source of truth
+// shared by playwright.config.ts (webServer up) and global-teardown.ts
+// (deterministic down even if the webServer's EXIT trap never fires).
+export const COMPOSE_PROJECT = `sps-e2e-${process.env.E2E_RUN_ID ?? 'default'}`

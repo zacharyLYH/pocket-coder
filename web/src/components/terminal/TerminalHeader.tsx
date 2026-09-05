@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { api, errMsg } from '@/lib/api'
+import { useQuickCommands } from '@/hooks/useQuickCommands'
 import { QuickCommandsModal } from '@/components/QuickCommandsModal'
 import type { ConnStatus } from '@/components/terminal/TerminalPane'
 
@@ -40,14 +41,8 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
   const [renameBusy, setRenameBusy] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
   const [qcOpen, setQcOpen] = useState(false)
-  const [quickCommands, setQuickCommands] = useState<Record<string, string>>({})
+  const { commands: quickCommands, reload: reloadQuickCommands } = useQuickCommands(projectId)
   const [injectError, setInjectError] = useState<string | null>(null)
-
-  useEffect(() => {
-    api<{ quickCommands?: Record<string, string> }>(`/api/projects/${projectId}`)
-      .then((d) => setQuickCommands(d.quickCommands ?? {}))
-      .catch(() => {})
-  }, [projectId])
 
   async function inject(command: string) {
     setInjectError(null)
@@ -153,14 +148,8 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
             <DropdownMenuItem onSelect={() => setQcOpen(true)} data-testid="qc-manage">Update quick commands…</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {/* Fallback hidden buttons for unit tests that query by role */}
-        <div className="hidden" data-testid="terminal-actions-fallback">
-          <button onClick={onRestart}>Restart</button>
-          <button onClick={openRename}>Rename</button>
-          <button onClick={onKill}>Kill</button>
-        </div>
 
-        <QuickCommandsModal projectId={projectId} open={qcOpen} onOpenChange={setQcOpen} onSaved={() => api<{ quickCommands?: Record<string, string> }>(`/api/projects/${projectId}`).then((d) => setQuickCommands(d.quickCommands ?? {})).catch(() => {})} />
+        <QuickCommandsModal projectId={projectId} open={qcOpen} onOpenChange={setQcOpen} onSaved={reloadQuickCommands} />
       </header>
       {injectError && <p className="text-xs text-destructive" data-testid="qc-inject-error">{injectError}</p>}
 

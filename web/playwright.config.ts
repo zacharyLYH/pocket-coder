@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test'
 
-import { API_PORT, AUTH_STATE, DATA_DIR, RUN_DIR, SERVER_LOG, WEB_PORT } from './e2e/env'
+import { API_PORT, AUTH_STATE, COMPOSE_PROJECT, DATA_DIR, RUN_DIR, SERVER_LOG, WEB_PORT } from './e2e/env'
 
 // One real backend for every test. Each Playwright process boots its own Go
 // server + Vite dev server as webServers (needs the Go toolchain + a running
@@ -41,6 +41,7 @@ export default defineConfig({
   fullyParallel: true,
   workers: 1,
   outputDir: RUN_DIR,
+  globalTeardown: './e2e/global-teardown.ts',
   // Generous default: journeys do synchronous project-image builds and real
   // npm installs, and e2e-parallel.sh stacks FOUR groups (each with its own
   // Go server, Vite, and browser) on one machine — an unrelated group's
@@ -81,10 +82,10 @@ export default defineConfig({
     {
       command:
         // fresh backend state every run — the data dir is e2e-only
-        `bash -c 'trap "docker compose -f ../docker-compose.e2e.yml -p sps-e2e-${process.env.E2E_RUN_ID ?? 'default'} down 2>/dev/null" EXIT; ` +
+        `bash -c 'trap "docker compose -f ../docker-compose.e2e.yml -p ${COMPOSE_PROJECT} down 2>/dev/null" EXIT; ` +
         `rm -rf ${DATA_DIR} ${SERVER_LOG} && mkdir -p ${DATA_DIR} && ` +
         `env SPS_E2E_API_PORT=${API_PORT} SPS_E2E_DATA_DIR=$PWD/${DATA_DIR} ` +
-        `docker compose -f ../docker-compose.e2e.yml -p sps-e2e-${process.env.E2E_RUN_ID ?? 'default'} up --build > ${SERVER_LOG} 2>&1'`,
+        `docker compose -f ../docker-compose.e2e.yml -p ${COMPOSE_PROJECT} up --build > ${SERVER_LOG} 2>&1'`,
       url: `http://localhost:${API_PORT}/health`,
       reuseExistingServer: false,
       timeout: 60_000,

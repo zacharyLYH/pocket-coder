@@ -499,3 +499,21 @@ func TestLaunchNamedPinsRestartArgv(t *testing.T) {
 		t.Fatalf("got (%q, %v), want fake-1", name, err)
 	}
 }
+
+func TestInjectValidation(t *testing.T) {
+	ctx := context.Background()
+	t.Run("invalid name", func(t *testing.T) {
+		d := dockermocks.NewMockClient(t)
+		if err := New(d).Inject(ctx, "c1", "-bad", "echo hi"); !errors.Is(err, ErrInvalidName) {
+			t.Fatalf("err = %v, want ErrInvalidName", err)
+		}
+	})
+	t.Run("blank command is a sentinel and never touches docker", func(t *testing.T) {
+		d := dockermocks.NewMockClient(t)
+		for _, cmd := range []string{"", "   "} {
+			if err := New(d).Inject(ctx, "c1", "main", cmd); !errors.Is(err, ErrEmptyCommand) {
+				t.Fatalf("err = %v, want ErrEmptyCommand", err)
+			}
+		}
+	})
+}

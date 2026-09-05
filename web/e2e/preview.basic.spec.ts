@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test'
 
 import { deleteAllProjects, engineUp } from './helpers'
-import { createReactProject, openPreviewFromTerminal } from './preview.helpers'
+import { createReactProject, openPreviewFromTerminal, waitForChromiumFit } from './preview.helpers'
 
 test.describe('preview basic', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
-  test('full E2E: create project, terminal → Preview tab → Open, verify frontend+backend, interact, screenshot', async ({ page, request }, testInfo) => {
+  test('full E2E: create project, terminal → Preview tab → Open, verify frontend+backend, interact, screenshot', async ({ page, request }) => {
     test.setTimeout(600_000)
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
@@ -87,7 +87,9 @@ test.describe('preview basic', () => {
       const previewPage2 = await openPreviewFromTerminal(page, projectID)
 
       await previewPage2.setViewportSize({ width: 390, height: 844 })
-      await previewPage2.waitForTimeout(1000)
+      // Wait for auto-fit to shrink Chromium to the narrow iframe so the
+      // shot is a real phone layout, not a crop of a desktop window.
+      await waitForChromiumFit(previewPage2, request, projectID)
       await expect(previewPage2).toHaveScreenshot('preview-basic-phone.png', { fullPage: true })
       await previewPage2.close()
     } finally {

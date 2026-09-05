@@ -33,6 +33,9 @@ var ErrNotInstalled = errors.New("not installed in this project — install it f
 // ErrDuplicate means a session with that name already exists in tmux.
 var ErrDuplicate = errors.New("duplicate session")
 
+// ErrEmptyCommand means inject got a blank command.
+var ErrEmptyCommand = errors.New("empty command")
+
 const (
 	installTimeout  = 2 * time.Minute
 	validateTimeout = 15 * time.Second // CLIs like freebuff download a platform binary on first run
@@ -456,7 +459,7 @@ func (s *Service) Inject(ctx context.Context, container, name, command string) e
 		return fmt.Errorf("%w: %q", ErrInvalidName, name)
 	}
 	if strings.TrimSpace(command) == "" {
-		return errors.New("empty command")
+		return ErrEmptyCommand
 	}
 	exists, err := s.Exists(ctx, container, name)
 	if err != nil {

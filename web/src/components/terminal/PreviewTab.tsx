@@ -16,7 +16,8 @@ export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; on
       const d = await api<{ ports: { port: number; status: string }[] }>(`/api/projects/${projectId}/preview/ports`)
       setPorts(d.ports ?? [])
     } catch {
-      setPorts([])
+      // Keep the last-known list: a transient probe failure shouldn't
+      // blink the ports (and their start buttons) away mid-read.
     }
   }, [projectId])
 
@@ -26,34 +27,35 @@ export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; on
     return () => clearInterval(id)
   }, [refresh])
 
-  // Early launch: as soon as a port appears, start its sidecar in background
+  // Early launch: as soon as a port appears, start its sidecar in background.
+  // Lowest port first: ss order is arbitrary and often leads with ephemeral
+  // junk (vite HMR, inspectors), while real servers live down low.
+  // The latch resets on failure so a transient start error retries when
+  // ports/ready state changes instead of requiring a manual click.
   const hasAutoStarted = useRef(false)
   useEffect(() => {
     if (!hasAutoStarted.current && ports.length > 0 && readyPort === null && loadingPort === null) {
       hasAutoStarted.current = true
-      start(ports[0].port)
+      const first = [...ports].sort((a, b) => a.port - b.port)[0]
+      void start(first.port).then((ok) => {
+        if (!ok) hasAutoStarted.current = false
+      })
     }
   }, [ports, readyPort, loadingPort])
 
-  async function start(port: number) {
+  async function start(port: number): Promise<boolean> {
     setLoadingPort(port)
     setReadyPort(null)
     setError(null)
     try {
+      // POST blocks until the sidecar proves the page (or fails loudly) —
+      // no client-side guessing, no force-ready.
       await api(`/api/projects/${projectId}/preview/start`, { method: 'POST', body: JSON.stringify({ port }) })
-      for (let i = 0; i < 30; i++) {
-        try {
-          const s = await api<{ status: string }>(`/api/projects/${projectId}/preview`)
-          if (s.status === 'ready') {
-            setReadyPort(port)
-            break
-          }
-        } catch {}
-        await new Promise((r) => setTimeout(r, 1000))
-      }
-      setReadyPort((prev) => prev ?? port)
+      setReadyPort(port)
+      return true
     } catch (e) {
       setError(errMsg(e))
+      return false
     } finally {
       setLoadingPort(null)
     }
@@ -85,7 +87,7 @@ export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; on
           </Button>
         </div>
         <CardDescription>
-          Scanning for <span className="font-mono">localhost</span> only — only active ports bound to <span className="font-mono">127.0.0.1</span> / <span className="font-mono">::1</span> are shown. Run a server via quick commands, then pick a port. Chromium runs beside your project — <span className="font-mono">localhost</span> just works.
+          Listening ports in your project — including servers bound to all interfaces (<span className="font-mono">vite --host 0.0.0.0</span> shows up here). The previewer's own ports stay hidden. Pick a port, then Open it: Chromium runs beside your project, so <span className="font-mono">localhost</span> just works.
         </CardDescription>
       </CardHeader>
       <Separator />

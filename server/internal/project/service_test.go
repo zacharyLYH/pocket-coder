@@ -368,6 +368,26 @@ func TestDeletePartialFailureReportsFirstError(t *testing.T) {
 	}
 }
 
+func TestDeleteAllKeepsRecordWhenDockerCleanupFails(t *testing.T) {
+	s, d, _, _ := newService(t)
+	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	d.EXPECT().Stop(mock.Anything, "sps-abc", stopWait).Return(nil)
+	d.EXPECT().Remove(mock.Anything, "sps-abc", true).Return(nil)
+	d.EXPECT().RemoveVolume(mock.Anything, "sps-abc-home").Return(errors.New("volume busy"))
+	d.EXPECT().RemoveVolume(mock.Anything, "sps-abc-repo").Return(nil)
+
+	if err := s.Delete(t.Context(), "abc", ScopeAll); err == nil {
+		t.Fatal("expected the volume failure to surface")
+	}
+	// The record must survive so the project stays listed (and deletable
+	// on retry) instead of becoming an invisible volume orphan.
+	if _, err := s.store.Get("abc"); err != nil {
+		t.Fatalf("record dropped despite failed cleanup: %v", err)
+	}
+}
+
 func TestEnsureContainerRunningIsNoop(t *testing.T) {
 	s, d, _, _ := newService(t)
 	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {

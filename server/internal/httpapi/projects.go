@@ -152,6 +152,10 @@ func handleProjectOp(d Deps, op string) http.HandlerFunc {
 		ctx := r.Context()
 		if d.Preview != nil && (op == "stop" || op == "restart") {
 			_ = d.Preview.Stop(ctx, id)
+			// Drop the CDP session too: it points at the stopped worker's
+			// websocket, and the next tools call would dial into the void
+			// until its 30s timeout instead of failing fast.
+			evictCDP(id)
 		}
 		var err error
 		switch op {
@@ -174,6 +178,7 @@ func handleDeleteProject(d Deps) http.HandlerFunc {
 		if d.Preview != nil {
 			_ = d.Preview.Stop(r.Context(), r.PathValue("id"))
 		}
+		evictCDP(r.PathValue("id"))
 		scope := project.Scope(r.URL.Query().Get("scope"))
 		if scope == "" {
 			scope = project.ScopeAll

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 )
 
 type fakeWorker struct {
@@ -55,36 +56,57 @@ func TestManagerEnsuresOneWorkerPerProject(t *testing.T) {
 	}
 }
 
-func TestManagerConcurrentEnsureClosesLosingWorker(t *testing.T) {
-	f := &fakeFactory{}
+type slowFactory struct {
+	mu     sync.Mutex
+	starts int
+}
+
+func (f *slowFactory) Start(context.Context, Config) (Worker, error) {
+	f.mu.Lock()
+	f.starts++
+	f.mu.Unlock()
+	// Hold the start open so all 20 callers pile onto the same in-flight
+	// call instead of running sequentially.
+	time.Sleep(50 * time.Millisecond)
+	return &fakeWorker{}, nil
+}
+
+func (f *slowFactory) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.starts
+}
+
+func TestManagerConcurrentEnsureStartsOnce(t *testing.T) {
+	f := &slowFactory{}
 	m := NewManager(f)
+	cfg := Config{ProjectID: "p1", ContainerID: "container-p1"}
+	results := make([]Worker, 20)
 	var wg sync.WaitGroup
-	for range 20 {
+	for i := range results {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := m.Ensure(context.Background(), Config{ProjectID: "p1", ContainerID: "container-p1"}); err != nil {
+			w, err := m.Ensure(context.Background(), cfg)
+			if err != nil {
 				t.Errorf("ensure: %v", err)
+				return
 			}
+			results[i] = w
 		}()
 	}
 	wg.Wait()
 
-	f.mu.Lock()
-	starts := f.starts
-	workers := append([]*fakeWorker(nil), f.workers...)
-	f.mu.Unlock()
-	if starts < 1 {
-		t.Fatal("factory was never called")
+	for i, w := range results {
+		if w == nil || w != results[0] {
+			t.Fatalf("result %d got worker %p; want shared worker %p", i, w, results[0])
+		}
 	}
-	closed := 0
-	for _, w := range workers {
-		w.mu.Lock()
-		closed += w.closed
-		w.mu.Unlock()
+	if f.count() != 1 {
+		t.Fatalf("starts=%d; want exactly one shared start", f.count())
 	}
-	if closed != starts-1 {
-		t.Fatalf("closed=%d starts=%d; want every losing worker closed", closed, starts)
+	if got, err := m.Get("p1"); err != nil || got != results[0] {
+		t.Fatalf("manager holds %p (err %v); want shared worker %p", got, err, results[0])
 	}
 }
 

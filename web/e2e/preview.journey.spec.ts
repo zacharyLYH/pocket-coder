@@ -109,6 +109,15 @@ test.describe('preview user journey', () => {
         page.getByTestId('preview-open-3000').click(),
       ])
       await expect(previewPage2.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: 30_000 })
+      // The iframe element exists before noVNC connects — wait for its
+      // canvas (surface connected) and for the app inside the sidecar,
+      // otherwise the shot enshrines a gray "Loading" frame.
+      await expect(previewPage2.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
+      await expect(async () => {
+        const r = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
+        expect(r.ok()).toBeTruthy()
+        expect(((await r.json()) as { html: string }).html).toContain('Full-Stack App')
+      }).toPass({ timeout: 60_000 })
       await expect(previewPage2).toHaveScreenshot('preview-multi-first.png', { fullPage: true })
       await expect(page).toHaveScreenshot('preview-multi-second-ready.png', { fullPage: true })
       const portsRes = await request.get(`/api/projects/${projectID}/preview/ports`)
@@ -146,6 +155,15 @@ test.describe('preview user journey', () => {
         page.getByTestId('preview-open-3000').click(),
       ])
       await expect(previewPage3.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: 30_000 })
+      // Wait for the surface (canvas) and the app inside the sidecar before
+      // screenshotting — otherwise the baseline enshrines a black
+      // "Connecting" frame and flakes with sidecar startup speed.
+      await expect(previewPage3.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
+      await expect(async () => {
+        const r = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
+        expect(r.ok()).toBeTruthy()
+        expect(((await r.json()) as { html: string }).html).toContain('Full-Stack App')
+      }).toPass({ timeout: 60_000 })
       await expect(previewPage3).toHaveScreenshot('preview-close-before.png', { fullPage: true })
       await page.getByTestId('preview-close-3000').click()
       await page.waitForTimeout(2000)

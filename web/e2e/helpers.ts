@@ -32,11 +32,22 @@ export async function engineUp(request: APIRequestContext): Promise<boolean> {
 // deleteAllProjects removes every project (data + volumes + metadata).
 // Call it before tests that need a clean slate AND in `finally`, so a
 // failed test never leaks projects into later tests or the next run.
+// Deletions retry (the engine can hiccup under parallel load) and then
+// throw: a silent cleanup failure is how invisible volume orphans happen.
 export async function deleteAllProjects(request: APIRequestContext): Promise<void> {
   const res = await request.get('/api/projects')
   if (!res.ok()) return
+  const failures: string[] = []
   for (const p of ((await res.json()) as { projects: { id: string }[] }).projects) {
-    await request.delete(`/api/projects/${p.id}?scope=all`)
+    let ok = false
+    for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1000))
+      ok = (await request.delete(`/api/projects/${p.id}?scope=all`)).ok()
+    }
+    if (!ok) failures.push(p.id)
+  }
+  if (failures.length > 0) {
+    throw new Error(`deleteAllProjects failed for: ${failures.join(', ')} — retrying keeps them listed, investigate the engine`)
   }
 }
 

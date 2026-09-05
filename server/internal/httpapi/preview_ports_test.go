@@ -16,6 +16,8 @@ func TestParseListeningPorts(t *testing.T) {
 		{name: "wildcard *", output: "*:5173", want: []int{5173}},
 		{name: "netstat style", output: "tcp 0 0 127.0.0.1:8000 0.0.0.0:* LISTEN", want: []int{8000}},
 		{name: "multiple distinct", output: "127.0.0.1:3000\n127.0.0.1:4000\n127.0.0.1:5173", want: []int{3000, 4000, 5173}},
+		{name: "sidecar ports hidden", output: "LISTEN 0 128 127.0.0.1:5900 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:6080 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:9222 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:9223 0.0.0.0:*\nLISTEN 0 128 127.0.0.1:3000 0.0.0.0:*", want: []int{3000}},
+		{name: "only sidecar ports", output: "LISTEN 0 128 0.0.0.0:6080 0.0.0.0:*", want: nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

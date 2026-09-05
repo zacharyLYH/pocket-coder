@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -24,10 +27,21 @@ func handlePreviewStatus(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "get preview", err)
 			return
 		}
-		_ = worker
-		writeJSON(w, http.StatusOK, map[string]any{
-			"project": id, "status": "ready", "surface": "/api/projects/" + id + "/preview/vnc.html",
-		})
+		// "ready" means the browser actually answers, not just that a
+		// worker record exists: ping CDP briefly, report degraded if dead.
+		ep := worker.Endpoint()
+		s, err := getCDP(id, ep.CDP)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "degraded"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), statusPingTimeout)
+		defer cancel()
+		if _, err := s.call(ctx, "Runtime.evaluate", map[string]any{"expression": "1", "returnByValue": true}); err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "degraded"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "ready"})
 	}
 }
 
@@ -58,8 +72,32 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "cdp connect", err)
 			return
 		}
-		url := "http://127.0.0.1:" + strconv.Itoa(body.Port)
-		_, _ = s.call(r.Context(), "Page.navigate", map[string]any{"url": url})
+		target := "http://127.0.0.1:" + strconv.Itoa(body.Port)
+		raw, err := s.call(r.Context(), "Page.navigate", map[string]any{"url": target})
+		if err != nil {
+			writeInternalErr(w, "cdp navigate", err)
+			return
+		}
+		var nav struct {
+			ErrorText string `json:"errorText"`
+		}
+		if err := json.Unmarshal(raw, &nav); err != nil {
+			writeInternalErr(w, "decode navigate", err)
+			return
+		}
+		if nav.ErrorText != "" {
+			writeErr(w, http.StatusBadGateway, nav.ErrorText)
+			return
+		}
+		// Synchronous readiness: Open only lights up for a verified page.
+		// The client used to guess with a 30s poll plus a force-ready
+		// fallback; now a failed/dead target fails loudly here instead.
+		ctx, cancel := context.WithTimeout(r.Context(), previewReadyTimeout)
+		defer cancel()
+		if err := waitForPageReady(ctx, s, target); err != nil {
+			writeErr(w, http.StatusBadGateway, "preview target never became ready")
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "port": body.Port, "status": "ready"})
 	}
 }
@@ -67,6 +105,10 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 func handlePreviewClose(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		// Clear cached CDP session first: it dangles whenever the worker
+		// is already gone (stop/restart/delete raced close), and a stale
+		// entry makes the next tools call dial a dead socket.
+		evictCDP(id)
 		if err := d.Preview.Stop(r.Context(), id); err != nil {
 			if errors.Is(err, preview.ErrNotFound) {
 				writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "stopped"})
@@ -75,13 +117,6 @@ func handlePreviewClose(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "stop preview", err)
 			return
 		}
-		// clear cached CDP session
-		cdpMu.Lock()
-		if s, ok := cdpCache[id]; ok {
-			_ = s.ws.Close()
-			delete(cdpCache, id)
-		}
-		cdpMu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "stopped"})
 	}
 }
@@ -149,13 +184,28 @@ func handlePreviewPorts(d Deps) http.HandlerFunc {
 		cid := project.ContainerName(id)
 		output, err := d.Sessions.ExecCommand(r.Context(), cid, "ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || true")
 		if err != nil {
-			// Container may not be running — return empty slots.
-			writeJSON(w, http.StatusOK, map[string]any{"ports": []map[string]any{}})
+			// Probe failure is not "no ports": return an error so the UI
+			// keeps its last-known list instead of blinking ports away.
+			slog.Warn("preview ports probe failed", "project", id, "err", err)
+			writeErr(w, http.StatusBadGateway, "ports probe failed")
 			return
 		}
 		ports := parseListeningPorts(output)
 		writeJSON(w, http.StatusOK, map[string]any{"ports": ports})
 	}
+}
+
+// sidecarPorts belong to the preview browser itself (see preview package
+// Sidecar*Port constants and preview/image/start-browser). The sidecar
+// shares the project's network namespace, so ss lists them; showing them
+// would invite previewing the previewer, and auto-start could even pick one.
+// NOTE: a user service that binds one of these ports collides with the
+// sidecar and is hidden by design — pick another port for app servers.
+var sidecarPorts = map[int]bool{
+	preview.SidecarVNCPort:      true,
+	preview.SidecarNoVNCPort:    true,
+	preview.SidecarChromiumPort: true,
+	preview.SidecarCDPProxyPort: true,
 }
 
 // parseListeningPorts extracts port numbers from ss/netstat output.
@@ -170,7 +220,7 @@ func parseListeningPorts(output string) []map[string]any {
 		for _, field := range strings.Fields(line) {
 			if i := strings.LastIndex(field, ":"); i > 0 {
 				p, err := strconv.Atoi(field[i+1:])
-				if err == nil && p > 0 && p < 65536 && !seen[p] {
+				if err == nil && p > 0 && p < 65536 && !seen[p] && !sidecarPorts[p] {
 					seen[p] = true
 					slots = append(slots, map[string]any{"port": p, "status": "live"})
 				}

@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { api, errMsg } from '@/lib/api'
+import { useQuickCommands } from '@/hooks/useQuickCommands'
+import { validateQuickCommandRows } from '@/lib/quickcommands'
 
 type Row = { alias: string; command: string }
 
@@ -15,31 +17,20 @@ export function QuickCommandsModal({ projectId, open, onOpenChange, onSaved }: {
   const [rows, setRows] = useState<Row[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Load lazily on open (null projectId fetches nothing while closed).
+  const { commands } = useQuickCommands(open ? projectId : null)
 
   useEffect(() => {
     if (!open) return
     setError(null)
-    api<{ quickCommands?: Record<string, string> }>(`/api/projects/${projectId}`)
-      .then((d) => {
-        const qc = d.quickCommands ?? {}
-        setRows(Object.entries(qc).map(([alias, command]) => ({ alias, command })))
-      })
-      .catch((e) => setError(errMsg(e)))
-  }, [open, projectId])
+    setRows(Object.entries(commands).map(([alias, command]) => ({ alias, command })))
+  }, [open, commands])
 
   async function save() {
     setBusy(true)
     setError(null)
     try {
-      const map: Record<string, string> = {}
-      for (const r of rows) {
-        const a = r.alias.trim()
-        const c = r.command.trim()
-        if (!a || !c) throw new Error('alias and command must be non-empty')
-        if (map[a]) throw new Error(`duplicate alias: ${a}`)
-        if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(a)) throw new Error(`invalid alias: ${a}`)
-        map[a] = c
-      }
+      const map = validateQuickCommandRows(rows)
       await api(`/api/projects/${projectId}`, { method: 'PATCH', body: JSON.stringify({ quickCommands: map }) })
       onOpenChange(false)
       onSaved?.()

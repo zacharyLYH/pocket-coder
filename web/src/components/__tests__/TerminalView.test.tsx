@@ -75,6 +75,14 @@ describe('TerminalView session management', () => {
     )
   }
 
+  // Radix menus open on pointerdown; fireEvent.click alone never opens them
+  // in jsdom, so tests drive the real Actions trigger like a mouse would.
+  function openActionsMenu() {
+    const trigger = screen.getByTestId('terminal-actions-trigger')
+    fireEvent.pointerDown(trigger)
+    fireEvent.click(trigger)
+  }
+
   it('restart calls POST /restart then triggers redial', async () => {
     renderView((url) => {
       if (url.includes('/sessions') && url.includes('/restart')) return { status: 200, body: { name: SESSION } }
@@ -88,8 +96,9 @@ describe('TerminalView session management', () => {
       expect(fetchCalls.some(c => c.url.includes('/sessions'))).toBe(true)
     })
 
-    // Find and click Restart button (hidden fallback for test)
-    const restartBtn = screen.getByRole('button', { name: /Restart/ })
+    // Open the Actions menu and click the real Restart item.
+    openActionsMenu()
+    const restartBtn = await screen.findByTestId('terminal-action-restart')
     await act(async () => { fireEvent.click(restartBtn) })
 
     // Verify restart API was called
@@ -112,7 +121,8 @@ describe('TerminalView session management', () => {
       expect(fetchCalls.some(c => c.url.includes('/sessions'))).toBe(true)
     })
 
-    const killBtn = screen.getByRole('button', { name: /Kill/ })
+    openActionsMenu()
+    const killBtn = await screen.findByTestId('terminal-action-kill')
     await act(async () => { fireEvent.click(killBtn) })
 
     await waitFor(() => {
@@ -154,8 +164,9 @@ describe('TerminalView session management', () => {
       expect(fetchCalls.some(c => c.url.includes('/sessions'))).toBe(true)
     })
 
-    // Kill the session
-    const killBtn = screen.getByRole('button', { name: /Kill/ })
+    // Kill the session via the real Actions menu.
+    openActionsMenu()
+    const killBtn = await screen.findByTestId('terminal-action-kill')
     await act(async () => { fireEvent.click(killBtn) })
 
     await waitFor(() => {

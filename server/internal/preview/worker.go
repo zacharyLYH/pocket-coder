@@ -45,59 +45,83 @@ type WorkerFactory interface {
 // Manager owns at most one browser worker per project. It is safe for HTTP
 // handlers, reconnects, and project lifecycle events to call concurrently.
 type Manager struct {
-	mu      sync.RWMutex
-	factory WorkerFactory
-	workers map[string]Worker
-	closed  bool
+	mu       sync.RWMutex
+	factory  WorkerFactory
+	workers  map[string]Worker
+	inflight map[string]*startCall
+	closed   bool
+}
+
+// startCall deduplicates concurrent Ensure starts for the same project: the
+// preview surface iframe and the viewport auto-fit POST arrive together on
+// every fresh PreviewSurface mount, and without this the losing starter
+// fails on the duplicate sidecar container name.
+type startCall struct {
+	done   chan struct{}
+	worker Worker
+	err    error
 }
 
 func NewManager(factory WorkerFactory) *Manager {
 	if factory == nil {
 		panic("preview: nil worker factory")
 	}
-	return &Manager{factory: factory, workers: make(map[string]Worker)}
+	return &Manager{factory: factory, workers: make(map[string]Worker), inflight: make(map[string]*startCall)}
 }
 
 // Ensure returns the existing worker or starts exactly one worker for the
 // project. Starting happens outside the lock so a slow Chromium launch does
-// not block unrelated projects; the losing concurrent starter is closed.
+// not block unrelated projects; concurrent starters for the SAME project
+// share one start instead of racing on the sidecar container name.
 func (m *Manager) Ensure(ctx context.Context, cfg Config) (Worker, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
-	m.mu.RLock()
-	if m.closed {
-		m.mu.RUnlock()
-		return nil, ErrClosed
-	}
-	if w := m.workers[cfg.ProjectID]; w != nil {
-		m.mu.RUnlock()
-		return w, nil
-	}
-	m.mu.RUnlock()
-
-	w, err := m.factory.Start(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("start preview worker for %s: %w", cfg.ProjectID, err)
-	}
-	if w == nil {
-		return nil, fmt.Errorf("start preview worker for %s: factory returned nil worker", cfg.ProjectID)
-	}
-
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		_ = w.Close(context.Background())
 		return nil, ErrClosed
 	}
-	if existing := m.workers[cfg.ProjectID]; existing != nil {
+	if w := m.workers[cfg.ProjectID]; w != nil {
+		m.mu.Unlock()
+		return w, nil
+	}
+	if c := m.inflight[cfg.ProjectID]; c != nil {
+		m.mu.Unlock()
+		<-c.done
+		return c.worker, c.err
+	}
+	c := &startCall{done: make(chan struct{})}
+	m.inflight[cfg.ProjectID] = c
+	m.mu.Unlock()
+
+	w, err := m.factory.Start(ctx, cfg)
+	if err != nil {
+		err = fmt.Errorf("start preview worker for %s: %w", cfg.ProjectID, err)
+	}
+	if err == nil && w == nil {
+		err = fmt.Errorf("start preview worker for %s: factory returned nil worker", cfg.ProjectID)
+	}
+
+	m.mu.Lock()
+	delete(m.inflight, cfg.ProjectID)
+	if err == nil && !m.closed {
+		// No existing-worker check here: the inflight map guarantees a
+		// single starter per project and the lock is held from delete to
+		// insert, so workers[id] cannot appear while Start runs.
+		m.workers[cfg.ProjectID] = w
+	}
+	if m.closed && err == nil {
 		m.mu.Unlock()
 		_ = w.Close(context.Background())
-		return existing, nil
+		c.worker, c.err = nil, ErrClosed
+		close(c.done)
+		return nil, ErrClosed
 	}
-	m.workers[cfg.ProjectID] = w
 	m.mu.Unlock()
-	return w, nil
+	c.worker, c.err = w, err
+	close(c.done)
+	return w, err
 }
 
 func (m *Manager) Get(projectID string) (Worker, error) {

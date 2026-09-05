@@ -210,6 +210,10 @@ export async function openPreviewFromTerminal(page: Page, projectId: string): Pr
     openBtn.click(),
   ])
   await waitForPreview(previewPage)
+  // The fresh popup may open behind the terminal tab, and background tabs
+  // get their timers throttled — foreground it like a real user click would
+  // so the preview page's fit-to-window sync runs promptly.
+  await previewPage.bringToFront()
   return previewPage
 }
 
@@ -221,6 +225,33 @@ export async function waitForPreview(page: Page) {
     await connectBtn.click()
   }
   await page.waitForTimeout(5000)
+}
+
+export function pngSize(png: Buffer): { width: number; height: number } {
+  // IHDR chunk: width at bytes 16-19, height at 20-23 (big-endian).
+  return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) }
+}
+
+// Poll the sidecar screenshot until the Chromium window matches the noVNC
+// iframe box (the preview page auto-fits on open/resize, debounced). Without
+// this, surface screenshots race the fit and flake between fitted/cropped.
+export async function waitForChromiumFit(page: Page, request: APIRequestContext, projectId: string) {
+  // Foreground the tab first: background tabs get their timers throttled,
+  // which stalls the preview page's debounced fit sync nondeterministically.
+  await page.bringToFront()
+  await expect(async () => {
+    expect(await page.evaluate(() => document.visibilityState)).toBe('visible')
+  }).toPass({ timeout: 10_000 })
+  const box = await page.locator('iframe[title="Remote project preview"]').boundingBox()
+  const want = { width: Math.round(box?.width ?? 0), height: Math.round(box?.height ?? 0) }
+  await expect(async () => {
+    const res = await request.get(`/api/projects/${projectId}/preview/tools/screenshot`)
+    expect(res.ok()).toBeTruthy()
+    const { width, height } = pngSize(Buffer.from(await res.body()))
+    expect(Math.abs(width - want.width) <= 4).toBe(true)
+    expect(Math.abs(height - want.height) <= 4).toBe(true)
+  }).toPass({ timeout: 60_000 })
+  return want
 }
 
 // ── htmx fixture ──
@@ -358,6 +389,70 @@ async function waitForVanillaApp(request: APIRequestContext, id: string) {
     }
   }
   throw new Error(`Vanilla app in project ${id} never became ready`)
+}
+
+// ── responsive fit fixture ──
+// Deliberately loud media-query styles (blue DESKTOP row vs red PHONE
+// column) plus a matchMedia-driven data-mode marker, so screenshots AND
+// inspect HTML prove which layout viewport Chromium is really using.
+// No timestamps anywhere — pixel baselines stay stable run to run.
+const responsiveFiles: Record<string, string> = {
+  'index.html': [
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
+    '<title>Fit check</title>',
+    '<style>',
+    '  body { margin: 0; font-family: sans-serif; background: #1d4ed8; color: #fff; }',
+    '  .wrap { padding: 32px; }',
+    '  .mode { font-size: 40px; font-weight: 800; }',
+    '  .cards { display: flex; gap: 16px; margin-top: 24px; }',
+    '  .card { flex: 1; background: #fff; color: #111; border-radius: 12px; padding: 24px; font-size: 20px; }',
+    '  @media (max-width: 600px) {',
+    '    body { background: #b91c1c; }',
+    '    .cards { flex-direction: column; }',
+    '  }',
+    '</style></head>',
+    '<body data-mode="unknown">',
+    '  <div class="wrap">',
+    '    <div class="mode" data-testid="mode">...</div>',
+    '    <div class="cards"><div class="card">Alpha</div><div class="card">Beta</div><div class="card">Gamma</div></div>',
+    '  </div>',
+    '  <script>',
+    '    function sync() {',
+    "      var phone = matchMedia('(max-width: 600px)').matches;",
+    "      document.body.dataset.mode = phone ? 'phone' : 'desktop';",
+    "      document.querySelector('[data-testid=\"mode\"]').textContent = phone ? 'PHONE' : 'DESKTOP';",
+    '    }',
+    "    matchMedia('(max-width: 600px)').addEventListener('change', sync);",
+    '    sync();',
+    '  </script>',
+    '</body></html>',
+  ].join('\n'),
+  'static-server.js': vanillaFiles['static-server.js'],
+}
+
+export async function createResponsiveProject(request: APIRequestContext): Promise<string> {
+  const created = await request.post('/api/projects', { data: {} })
+  expect(created.status()).toBe(201)
+  const { id } = (await created.json()) as { id: string }
+  const writes = Object.entries(responsiveFiles).map(([name, content]) => {
+    const encoded = Buffer.from(content).toString('base64')
+    return `mkdir -p /workspace/app/$(dirname '${name}'); printf '%s' '${encoded}' | base64 -d > /workspace/app/'${name}'`
+  }).join('; ')
+  const command = `${writes}; nohup bash -lc '
+    cd /workspace/app;
+    exec node static-server.js >/tmp/sps-vite.log 2>&1
+  ' >/dev/null 2>&1 </dev/null &`
+  const setup = await request.post('/api/projects/exec', { data: { projectIds: [id], command } })
+  expect(setup.ok()).toBeTruthy()
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {
+      await execInProject(request, id, 'curl -fsS http://127.0.0.1:3000/ >/dev/null')
+      return id
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
+  }
+  throw new Error(`Responsive app in project ${id} never became ready`)
 }
 
 // ── Vue.js fixture ──

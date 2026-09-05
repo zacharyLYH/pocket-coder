@@ -411,6 +411,12 @@ func (s *Service) Delete(ctx context.Context, id string, scope Scope) error {
 	if scope == ScopeRepo || scope == ScopeAll {
 		fail(s.dkr.RemoveVolume(ctx, repoVolume(id)))
 	}
+	// Only drop the record when docker cleanup actually succeeded: a
+	// half-deleted project must stay listed (and retryable) instead of
+	// becoming an invisible orphan the next cleanup can no longer see.
+	if scope == ScopeAll && firstErr != nil {
+		return firstErr
+	}
 	if scope == ScopeMetadata || scope == ScopeAll {
 		fail(s.store.Delete(id))
 	}

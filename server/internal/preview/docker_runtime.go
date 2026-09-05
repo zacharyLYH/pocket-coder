@@ -6,15 +6,36 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"sps/internal/docker"
 )
 
 const (
-	DefaultBrowserImage = "sps-browser:v5"
-	cdpPort             = 9223
-	novncPort           = 6080
+	DefaultBrowserImage = "sps-browser:v12"
+	// SidecarPorts are the preview browser's own ports. The sidecar shares
+	// the project's network namespace, so ss lists them alongside user
+	// ports. Keep this as the single source of truth — preview port
+	// filtering must derive from here, not duplicate literals.
+	SidecarVNCPort      = 5900 // x11vnc -rfbport (see image/start-browser)
+	SidecarChromiumPort = 9222 // Chromium --remote-debugging-port (CDP_PORT)
+	SidecarCDPProxyPort = 9223 // socat forward (CDP_PROXY_PORT, reachable from server netns)
+	SidecarNoVNCPort    = 6080 // websockify (VNC_WEB_PORT)
+
+	// CDP goes through the socat forward: Chromium's DevTools server only
+	// binds localhost, which the Go server (different netns) can't reach.
+	cdpPort   = SidecarCDPProxyPort
+	novncPort = SidecarNoVNCPort
+)
+
+// DisplayWidth/Height is the sidecar's X screen size. The preview page
+// fits the Chromium window to the noVNC iframe (see tools/viewport), so
+// this is the cap for auto-fit: big enough for desktop browser windows,
+// small enough to stay cheap. window == screen == iframe at 1:1.
+const (
+	DisplayWidth  = 1920
+	DisplayHeight = 1080
 )
 
 type containerRuntime interface {
@@ -50,7 +71,7 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 			return nil, fmt.Errorf("ensure browser image: %w", err)
 		}
 	}
-	cid, err := f.Docker.Run(ctx, docker.Spec{
+	spec := docker.Spec{
 		Name:     "sps-preview-" + cfg.ProjectID,
 		Image:    image,
 		Writable: true,
@@ -58,9 +79,21 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 		Env: []string{
 			"BROWSER_TARGET=http://127.0.0.1:3000",
 			"BROWSER_PROFILE=/tmp/sps-browser-profile",
-			"WIDTH=1280", "HEIGHT=800", "CDP_PORT=9222", "CDP_PROXY_PORT=9223", "VNC_WEB_PORT=6080",
+			"WIDTH=" + strconv.Itoa(DisplayWidth), "HEIGHT=" + strconv.Itoa(DisplayHeight),
+			"CDP_PORT=" + strconv.Itoa(SidecarChromiumPort),
+			"CDP_PROXY_PORT=" + strconv.Itoa(SidecarCDPProxyPort),
+			"VNC_WEB_PORT=" + strconv.Itoa(SidecarNoVNCPort),
 		},
-	})
+	}
+	cid, err := f.Docker.Run(ctx, spec)
+	if err != nil && strings.Contains(err.Error(), "already exists") {
+		// A previous sidecar leaked its container (e.g. a failed Stop
+		// deregistered the worker but left the runtime behind). Clear the
+		// stale same-name container once and retry instead of deadlocking
+		// every future preview of this project.
+		_ = f.Docker.Remove(ctx, spec.Name, true)
+		cid, err = f.Docker.Run(ctx, spec)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("run browser sidecar: %w", err)
 	}

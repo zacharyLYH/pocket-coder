@@ -588,7 +588,7 @@ func handleInjectSession(d Deps) http.HandlerFunc {
 			return
 		}
 		if err := d.Sessions.Inject(r.Context(), project.ContainerName(id), name, body.Command); err != nil {
-			if errors.Is(err, session.ErrInvalidName) || err.Error() == "empty command" || strings.Contains(err.Error(), "command is required") {
+			if errors.Is(err, session.ErrInvalidName) || errors.Is(err, session.ErrEmptyCommand) {
 				writeErr(w, http.StatusBadRequest, err.Error())
 				return
 			}

@@ -4,7 +4,7 @@ import { TerminalView } from '@/components/terminal/TerminalView'
 import { LoginForm } from '@/components/LoginForm'
 import { Home } from '@/components/Home'
 import { PreviewSurface } from '@/components/PreviewSurface'
-import { parseTerminalPath } from '@/lib/paths'
+import { parsePreviewPath, parseTerminalPath } from '@/lib/paths'
 
 type AuthState = 'loading' | 'out' | 'in'
 
@@ -60,9 +60,9 @@ export default function App() {
       />
     )
   }
-  const preview = path.match(/^\/preview\/([^/]+)$/)
-  if (preview) {
-    return <PreviewSurface projectId={decodeURIComponent(preview[1])} onBack={() => navigate('/')} />
+  const previewId = parsePreviewPath(path)
+  if (previewId !== null) {
+    return <PreviewSurface projectId={previewId} onBack={() => navigate('/')} />
   }
   return <Home email={email} onLogout={() => setState('out')} navigate={navigate} />
 }
