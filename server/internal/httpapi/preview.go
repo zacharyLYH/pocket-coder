@@ -57,7 +57,7 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "invalid port")
 			return
 		}
-		worker, err := ensurePreviewWorker(d, r)
+		worker, err := ensurePreviewWorker(d, r, body.Port)
 		if err != nil {
 			if errors.Is(err, project.ErrNotFound) || errors.Is(err, preview.ErrNotFound) {
 				writeErr(w, http.StatusNotFound, "project not found")
@@ -230,7 +230,7 @@ func parseListeningPorts(output string) []map[string]any {
 	return slots
 }
 
-func ensurePreviewWorker(d Deps, r *http.Request) (preview.Worker, error) {
+func ensurePreviewWorker(d Deps, r *http.Request, port ...int) (preview.Worker, error) {
 	id := r.PathValue("id")
 	if d.Projects == nil {
 		return d.Preview.Get(id)
@@ -238,7 +238,11 @@ func ensurePreviewWorker(d Deps, r *http.Request) (preview.Worker, error) {
 	if _, _, err := d.Projects.Get(r.Context(), id); err != nil {
 		return nil, err
 	}
-	return d.Preview.Ensure(r.Context(), preview.Config{
+	cfg := preview.Config{
 		ProjectID: id, ContainerID: project.ContainerName(id),
-	})
+	}
+	if len(port) > 0 && port[0] > 0 {
+		cfg.Port = port[0]
+	}
+	return d.Preview.Ensure(r.Context(), cfg)
 }

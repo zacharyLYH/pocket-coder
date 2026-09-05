@@ -71,13 +71,17 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 			return nil, fmt.Errorf("ensure browser image: %w", err)
 		}
 	}
+	targetURL := "http://127.0.0.1:3000"
+	if cfg.Port > 0 {
+		targetURL = "http://127.0.0.1:" + strconv.Itoa(cfg.Port)
+	}
 	spec := docker.Spec{
 		Name:     "pcoder-preview-" + cfg.ProjectID,
 		Image:    image,
 		Writable: true,
 		Network:  docker.NetworkNamespace(cfg.ContainerID),
 		Env: []string{
-			"BROWSER_TARGET=http://127.0.0.1:3000",
+			"BROWSER_TARGET=" + targetURL,
 			"BROWSER_PROFILE=/tmp/pcoder-browser-profile",
 			"WIDTH=" + strconv.Itoa(DisplayWidth), "HEIGHT=" + strconv.Itoa(DisplayHeight),
 			"CDP_PORT=" + strconv.Itoa(SidecarChromiumPort),

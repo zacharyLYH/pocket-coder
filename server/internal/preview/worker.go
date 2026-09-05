@@ -20,6 +20,7 @@ var (
 type Config struct {
 	ProjectID   string
 	ContainerID string
+	Port        int
 }
 
 // Endpoint describes a private worker endpoint. These values are server-side

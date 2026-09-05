@@ -84,6 +84,52 @@ func TestDockerFactoryUsesPrivateProjectNamespace(t *testing.T) {
 	}
 }
 
+func TestDockerFactoryBrowserTarget(t *testing.T) {
+	cases := []struct {
+		name       string
+		port       int
+		wantTarget string
+	}{
+		{"zero_defaults_to_3000", 0, "BROWSER_TARGET=http://127.0.0.1:3000"},
+		{"explicit_3000", 3000, "BROWSER_TARGET=http://127.0.0.1:3000"},
+		{"vite_default_5173", 5173, "BROWSER_TARGET=http://127.0.0.1:5173"},
+		{"common_8080", 8080, "BROWSER_TARGET=http://127.0.0.1:8080"},
+		{"min_port", 1, "BROWSER_TARGET=http://127.0.0.1:1"},
+		{"max_port", 65535, "BROWSER_TARGET=http://127.0.0.1:65535"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &runtimeDockerFake{}
+			client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if !strings.HasSuffix(r.URL.Path, "/json/version") {
+					return nil, context.Canceled
+				}
+				return &http.Response{StatusCode: http.StatusOK,
+					Body:   io.NopCloser(strings.NewReader(`{"webSocketDebuggerUrl":"ws://10.0.0.8:9222/devtools/browser/1"}`)),
+					Header: make(http.Header), Request: r}, nil
+			})}
+			factory := &DockerFactory{Docker: fake, HTTPClient: client, PollEvery: time.Millisecond}
+			_, err := factory.Start(context.Background(), Config{ProjectID: "bt", ContainerID: "pcoder-bt", Port: tc.port})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(fake.specs) != 1 {
+				t.Fatalf("specs=%d, want 1", len(fake.specs))
+			}
+			var found string
+			for _, env := range fake.specs[0].Env {
+				if strings.HasPrefix(env, "BROWSER_TARGET=") {
+					found = env
+					break
+				}
+			}
+			if found != tc.wantTarget {
+				t.Fatalf("BROWSER_TARGET=%q, want %q", found, tc.wantTarget)
+			}
+		})
+	}
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
