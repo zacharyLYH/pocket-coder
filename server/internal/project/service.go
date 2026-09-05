@@ -447,13 +447,13 @@ func defaultName(repoURL string) string {
 	return name
 }
 
-// newID returns 8 hex characters of crypto/rand.
+// newID returns 8 hex characters of crypto/rand (prefixed by PCODER_ID_PREFIX if set).
 func newID() (string, error) {
 	var b [4]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", fmt.Errorf("generate id: %w", err)
 	}
-	return hex.EncodeToString(b[:]), nil
+	return os.Getenv("PCODER_ID_PREFIX") + hex.EncodeToString(b[:]), nil
 }
 
 // ReconcileState syncs every running container to match state.json.

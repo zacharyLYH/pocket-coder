@@ -22,12 +22,15 @@ import (
 
 func TestStateMockRecovery(t *testing.T) {
 	// seed a fresh data dir with the committed mock, retargeting the login
-	// email to the one the test auth service expects
+	// email to the one the test auth service expects and the project key
+	// to a random test id so reruns never collide on a leftover container
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "dev", "state.mock.json"))
 	if err != nil {
 		t.Fatalf("read mock state: %v", err)
 	}
 	raw = bytes.ReplaceAll(raw, []byte("dev@example.com"), []byte("me@example.com"))
+	id := newTestID(t)
+	raw = bytes.ReplaceAll(raw, []byte("deadbeef"), []byte(id))
 	dataDir := t.TempDir()
 	statePath := filepath.Join(dataDir, "state.json")
 	if err := os.WriteFile(statePath, raw, 0o600); err != nil {
@@ -39,7 +42,7 @@ func TestStateMockRecovery(t *testing.T) {
 	h, _, _, pinOut, _, _ := newLiveDepsOnDir(t, dataDir)
 
 	cookie := login(t, h, pinOut)
-	const id = "deadbeef"
+	deleteTestProject(t, h, cookie, id)
 
 	// desired state survived the boot untouched
 	statetest.AssertEqual(t, statePath, wantDoc)
@@ -80,7 +83,11 @@ func TestStateMockRecovery(t *testing.T) {
 		t.Fatalf("repo not re-cloned: ls /workspace/repo = %q, want it to contain README", detail)
 	}
 
-	// recovery is derived state only: the on-disk desired state is untouched
+	// recovery is derived state only: the on-disk desired state is untouched,
+	// except for the session metadata this test itself created above —
+	// sessions are persisted by design, so expect exactly that one addition.
+	proj := wantDoc["projects"].(map[string]any)[id].(map[string]any)
+	proj["sessions"].(map[string]any)["main"] = map[string]any{}
 	statetest.AssertEqual(t, statePath, wantDoc)
 
 	// the reconcile + re-clone is visible in the audit trail
@@ -93,6 +100,4 @@ func TestStateMockRecovery(t *testing.T) {
 			t.Fatalf("events.log missing %s:\n%s", typ, logged)
 		}
 	}
-
-	deleteProjectAll(t, h, cookie, id)
 }

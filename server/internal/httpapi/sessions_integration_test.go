@@ -53,16 +53,11 @@ func TestHarnessConfigLandsInContainer(t *testing.T) {
 	}
 	cookie := login(t, h, pinOut)
 
-	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/projects", `{}`)
-	if code != http.StatusCreated {
-		t.Fatalf("create project: %d %v", code, body)
-	}
-	id := body["id"].(string)
-	deleteProjectAll(t, h, cookie, id)
+	id, _ := createTestProject(t, h, cookie, "", "", "")
 	waitForStatus(t, h, cookie, id, "running")
 
 	// installs are explicit: inject the CLI before launching
-	code, body = doJSON(t, h, cookie, http.MethodPost,
+	code, body := doJSON(t, h, cookie, http.MethodPost,
 		"/api/harnesses/cfg-cli/install", fmt.Sprintf(`{"projectIds":[%q]}`, id))
 	if code != http.StatusOK {
 		t.Fatalf("install: %d %v", code, body)
@@ -99,19 +94,14 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 
 	cookie := login(t, h, pinOut)
 
-	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/projects", `{}`)
-	if code != http.StatusCreated {
-		t.Fatalf("create project: %d %v", code, body)
-	}
-	id := body["id"].(string)
-	deleteProjectAll(t, h, cookie, id)
+	id, _ := createTestProject(t, h, cookie, "", "", "")
 	waitForStatus(t, h, cookie, id, "running")
 
 	ctx := context.Background()
 
 	// --- explicit install, then launch: installs never happen implicitly
 	// at launch (the 422 story) — the home page injects them first ---
-	code, body = doJSON(t, h, cookie, http.MethodPost,
+	code, body := doJSON(t, h, cookie, http.MethodPost,
 		"/api/harnesses/fake-cli/install", fmt.Sprintf(`{"projectIds":[%q]}`, id))
 	if code != http.StatusOK {
 		t.Fatalf("install: %d %v", code, body)
@@ -219,17 +209,12 @@ func TestRealTUIGate(t *testing.T) {
 	writePlugin(t, st, "Vi", "vi hello.txt", "")
 	cookie := login(t, h, pinOut)
 
-	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/projects", `{}`)
-	if code != http.StatusCreated {
-		t.Fatalf("create project: %d %v", code, body)
-	}
-	id := body["id"].(string)
-	deleteProjectAll(t, h, cookie, id)
+	id, _ := createTestProject(t, h, cookie, "", "", "")
 	waitForStatus(t, h, cookie, id, "running")
 	ctx := context.Background()
 
 	// launch the vi harness session
-	code, body = doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions",
+	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions",
 		`{"harnessId":"vi"}`)
 	if code != http.StatusCreated {
 		t.Fatalf("launch vi: %d %v", code, body)

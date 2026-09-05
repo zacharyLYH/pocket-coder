@@ -22,16 +22,11 @@ func TestTerminalLiveLifecycle(t *testing.T) {
 	cookie := login(t, h, pinOut)
 
 	// blank project (embedded image ships tmux)
-	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/projects", `{}`)
-	if code != http.StatusCreated {
-		t.Fatalf("create project: %d %v", code, body)
-	}
-	id := body["id"].(string)
-	deleteProjectAll(t, h, cookie, id)
+	id, _ := createTestProject(t, h, cookie, "", "", "")
 	waitForStatus(t, h, cookie, id, "running")
 
 	// create → 201 + event; duplicate → 409; list → [main]
-	code, body = doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions", `{"name":"main"}`)
+	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions", `{"name":"main"}`)
 	if code != http.StatusCreated || body["name"] != "main" {
 		t.Fatalf("create session: %d %v", code, body)
 	}
