@@ -5,7 +5,7 @@ import { expect, type APIRequestContext, type Page } from '@playwright/test'
 //   fetch("http://localhost:4000/api/data") — DIRECT, not through proxy.
 // This proves Chromium shares the project's network namespace.`  
 // Also includes login form, counter, and HMR (section 6.4).
-const files: Record<string, string> = {
+export const reactFiles: Record<string, string> = {
   'package.json': JSON.stringify({
     private: true,
     scripts: { dev: 'vite' },
@@ -126,7 +126,7 @@ const files: Record<string, string> = {
 // writes file contents into /workspace/app. The running-Vite and
 // preinstalled flows below reuse these, so each framework fixture is just
 // its file map plus a readiness variant.
-async function createProject(request: APIRequestContext): Promise<string> {
+export async function createProject(request: APIRequestContext): Promise<string> {
   const created = await request.post('/api/projects', { data: {} })
   expect(created.status()).toBe(201)
   const { id } = (await created.json()) as { id: string }
@@ -153,17 +153,24 @@ async function waitForNpmInstall(request: APIRequestContext, id: string) {
 // Vite dev server on :3000 plus the shared Node backend on :4000, started
 // immediately and held until both answer. Used by the React/Htmx/Vue fixtures.
 async function createRunningViteProject(request: APIRequestContext, files: Record<string, string>): Promise<string> {
+  return createRunningViteProjectOnPort(request, 3000, files)
+}
+
+// createRunningViteProjectOnPort is the parameterized version: spins up the
+// same Vite + Node backend fixture on an arbitrary port, so e2e tests can
+// exercise BROWSER_TARGET paths other than the historical :3000 default.
+export async function createRunningViteProjectOnPort(request: APIRequestContext, port: number, files: Record<string, string>): Promise<string> {
   const id = await createProject(request)
   const command = `${writeFilesCmd(files)}; nohup bash -lc '
     cd /workspace/app;
     npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/pcoder-npm.log 2>&1;
     echo $? >/tmp/pcoder-npm.status;
     node server.js >/tmp/pcoder-backend.log 2>&1 &
-    exec npm run dev -- --host 0.0.0.0 --port 3000 >/tmp/pcoder-vite.log 2>&1
+    exec npm run dev -- --host 0.0.0.0 --port ${port} >/tmp/pcoder-vite.log 2>&1
   ' >/dev/null 2>&1 </dev/null &`
   const setup = await request.post('/api/projects/exec', { data: { projectIds: [id], command } })
   expect(setup.ok()).toBeTruthy()
-  await waitForProjectApp(request, id)
+  await waitForProjectAppOnPort(request, id, port)
   return id
 }
 
@@ -183,12 +190,12 @@ async function createPreinstalledProject(request: APIRequestContext, files: Reco
 
 // React fixture: full-stack app (frontend 3000, backend 4000, counter, HMR).
 export async function createReactProject(request: APIRequestContext): Promise<string> {
-  return createRunningViteProject(request, files)
+  return createRunningViteProject(request, reactFiles)
 }
 
 // Precreated React project with code but no running servers.
 export async function createPrecreatedProject(request: APIRequestContext): Promise<string> {
-  return createPreinstalledProject(request, files)
+  return createPreinstalledProject(request, reactFiles)
 }
 
 export async function execInProject(request: APIRequestContext, id: string, command: string): Promise<string> {
@@ -216,10 +223,10 @@ export async function waitForInspectContaining(
   throw new Error(`inspect for ${projectID} never contained ${marker}`)
 }
 
-async function waitForProjectApp(request: APIRequestContext, id: string) {
+async function waitForProjectAppOnPort(request: APIRequestContext, id: string, port: number) {
   for (let attempt = 0; attempt < 180; attempt++) {
     try {
-      await execInProject(request, id, 'curl -fsS http://127.0.0.1:3000/ >/dev/null && curl -fsS http://127.0.0.1:4000/api/data >/dev/null')
+      await execInProject(request, id, `curl -fsS http://127.0.0.1:${port}/ >/dev/null && curl -fsS http://127.0.0.1:4000/api/data >/dev/null`)
       return
     } catch {
       if (attempt % 10 === 0) {
@@ -238,15 +245,16 @@ async function waitForProjectApp(request: APIRequestContext, id: string) {
 
 // Navigate from home to terminal view and open preview via the Preview tab.
 // Real user flow: home → terminal → Preview tab → port → start → Open (new tab).
-export async function openPreviewFromTerminal(page: Page, projectId: string): Promise<Page> {
+// port defaults to 3000 (the historical fixture default).
+export async function openPreviewFromTerminal(page: Page, projectId: string, port = 3000): Promise<Page> {
   const card = page.getByTestId(`project-card-${projectId}`)
   await card.getByRole('button', { name: 'Terminal' }).click()
   await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
   await page.getByTestId('tab-preview').click()
-  const portBtn = page.getByTestId('preview-port-3000')
+  const portBtn = page.getByTestId(`preview-port-${port}`)
   await expect(portBtn).toBeVisible({ timeout: 60_000 })
   await portBtn.click()
-  const openBtn = page.getByTestId('preview-open-3000')
+  const openBtn = page.getByTestId(`preview-open-${port}`)
   await expect(openBtn).toBeVisible({ timeout: 30_000 })
   const [previewPage] = await Promise.all([
     page.context().waitForEvent('page'),
@@ -321,7 +329,7 @@ const htmxFiles: Record<string, string> = {
     "fetch('http://localhost:4000/api/data').then(r=>r.json()).then(d=>{ el.textContent = JSON.stringify(d) }).catch(()=>el.textContent='fetch failed')",
     "if (import.meta.hot) import.meta.hot.accept()",
   ].join('\n'),
-  'server.js': files['server.js'],
+  'server.js': reactFiles['server.js'],
 }
 
 export async function createHtmxProject(request: APIRequestContext): Promise<string> {
@@ -346,7 +354,7 @@ const vanillaFiles: Record<string, string> = {
     '  </script>',
     '</body></html>',
   ].join('\n'),
-  'server.js': files['server.js'],
+  'server.js': reactFiles['server.js'],
   'static-server.js': [
     'const http = require("http")',
     'const fs = require("fs")',
@@ -489,7 +497,7 @@ const vueFiles: Record<string, string> = {
     '}',
     '</script>',
   ].join('\n'),
-  'server.js': files['server.js'],
+  'server.js': reactFiles['server.js'],
 }
 
 export async function createVueProject(request: APIRequestContext): Promise<string> {
