@@ -208,6 +208,13 @@ var sidecarPorts = map[int]bool{
 	preview.SidecarCDPProxyPort: true,
 }
 
+// dockerEmbeddedDNS is the address Docker's embedded DNS resolver listens
+// on in every container network namespace (see the embedded DNS docs). It
+// is an artifact of the namespace, not a user server: reporting it made the
+// UI show a fake "live" port (the port number itself is engine-chosen) and
+// the auto-start effect kicked off previews of nothing.
+const dockerEmbeddedDNS = "127.0.0.11"
+
 // parseListeningPorts extracts port numbers from ss/netstat output.
 func parseListeningPorts(output string) []map[string]any {
 	seen := map[int]bool{}
@@ -215,6 +222,11 @@ func parseListeningPorts(output string) []map[string]any {
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "State") || strings.HasPrefix(line, "Netid") {
+			continue
+		}
+		if strings.Contains(line, dockerEmbeddedDNS+":") {
+			// Docker's embedded DNS resolver, never a user server. Checked
+			// on the whole line: ss leads with the state, netstat trails it.
 			continue
 		}
 		for _, field := range strings.Fields(line) {

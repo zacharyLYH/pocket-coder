@@ -13,10 +13,11 @@ export PCODER_LOGIN_EMAIL SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD SMTP_FROM
 help: ## Show available commands
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-setup: ## First-time setup: check tools, create server/.env, install deps, seed demo data
+setup: ## First-time setup: check tools, purge stale pcoder containers, create server/.env, install deps, seed demo data
 	@command -v go >/dev/null 2>&1 || { echo "missing: go (https://go.dev/dl/)"; exit 1; }
 	@command -v node >/dev/null 2>&1 || { echo "missing: node (https://nodejs.org/)"; exit 1; }
 	@command -v docker >/dev/null 2>&1 || { echo "missing: docker (https://docs.docker.com/get-docker/)"; exit 1; }
+	@-docker rm -f $$(docker ps -aq --filter name=pcoder-) >/dev/null 2>&1 || true
 	@if [ ! -f server/.env ]; then \
 		echo "PCODER_LOGIN_EMAIL=you@example.com" > server/.env; \
 		echo "created server/.env — edit PCODER_LOGIN_EMAIL, then re-run make setup"; \

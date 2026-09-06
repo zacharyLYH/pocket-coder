@@ -18,6 +18,9 @@ func TestParseListeningPorts(t *testing.T) {
 		{name: "multiple distinct", output: "127.0.0.1:3000\n127.0.0.1:4000\n127.0.0.1:5173", want: []int{3000, 4000, 5173}},
 		{name: "sidecar ports hidden", output: "LISTEN 0 128 127.0.0.1:5900 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:6080 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:9222 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:9223 0.0.0.0:*\nLISTEN 0 128 127.0.0.1:3000 0.0.0.0:*", want: []int{3000}},
 		{name: "only sidecar ports", output: "LISTEN 0 128 0.0.0.0:6080 0.0.0.0:*", want: nil},
+		{name: "docker embedded dns hidden", output: "LISTEN 0 4096 127.0.0.11:41801 0.0.0.0:*", want: nil},
+		{name: "docker dns plus real server", output: "LISTEN 0 4096 127.0.0.11:41801 0.0.0.0:*\nLISTEN 0 128 127.0.0.1:3000 0.0.0.0:*", want: []int{3000}},
+		{name: "port number equal to dns port on a real bind is kept", output: "LISTEN 0 128 127.0.0.1:41801 0.0.0.0:*", want: []int{41801}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

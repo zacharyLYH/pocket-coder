@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	dockerclient "github.com/fsouza/go-dockerclient"
@@ -52,6 +53,10 @@ type Container struct {
 	// NetworkIP is empty while Docker is restarting or when a mock does not
 	// model networking — callers must treat "" as "unknown", not an error.
 	NetworkIP string
+	// Published maps container ports to the host ports Docker assigned for
+	// them on the server host's loopback interface (Spec.PublishLoopback).
+	// Always empty for containers without loopback publications.
+	Published map[int]int
 }
 
 // Docker implements Client over go-dockerclient.
@@ -177,7 +182,37 @@ func (d *Docker) Inspect(ctx context.Context, id string) (Container, error) {
 		Status:    c.State.Status,
 		Image:     c.Config.Image,
 		NetworkIP: networkIP,
+		Published: publishedPorts(c.NetworkSettings.Ports),
 	}, nil
+}
+
+// publishedPorts extracts container→host port assignments for publications
+// on the loopback interface (the only interface this server ever asks Docker
+// to publish on). Engine-assigned host ports land here after start.
+func publishedPorts(bindings map[dockerclient.Port][]dockerclient.PortBinding) map[int]int {
+	published := map[int]int{}
+	for port, binds := range bindings {
+		cp, err := strconv.Atoi(port.Port())
+		if err != nil || cp <= 0 {
+			continue
+		}
+		for _, b := range binds {
+			// We only ever request loopback publications, but engines report
+			// the empty or unspecified address for default bindings; only
+			// bindings on a concrete non-loopback IP belong to someone else.
+			if b.HostIP != "" && b.HostIP != loopbackIP && b.HostIP != "0.0.0.0" {
+				continue
+			}
+			if hp, err := strconv.Atoi(b.HostPort); err == nil && hp > 0 {
+				published[cp] = hp
+				break
+			}
+		}
+	}
+	if len(published) == 0 {
+		return nil
+	}
+	return published
 }
 
 // InspectImage reports whether an image exists locally. ErrNotFound when

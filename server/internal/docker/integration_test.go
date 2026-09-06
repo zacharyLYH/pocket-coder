@@ -10,7 +10,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,4 +176,62 @@ func TestDockerLifecycle(t *testing.T) {
 	if _, err := d.Inspect(ctx, id); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("inspect after remove: %v (want ErrNotFound)", err)
 	}
+}
+
+// TestDockerPublishLoopback exercises loopback publications: run a container
+// with PublishLoopback, read the engine-assigned host port back from
+// Inspect, and fetch the service from the host over 127.0.0.1. This is the
+// exact mechanism the preview sidecar uses to make CDP/noVNC reachable from
+// a host-run server on every engine (including Docker Desktop).
+func TestDockerPublishLoopback(t *testing.T) {
+	d := newTestDocker(t)
+	ctx := context.Background()
+
+	if err := d.EnsureNetwork(ctx, itNetwork); err != nil {
+		t.Fatalf("ensure network: %v", err)
+	}
+	var buildLog bytes.Buffer
+	if err := d.Build(ctx, BuildOptions{Tag: itImage, ContextDir: fixtureDir(t)}, &buildLog); err != nil {
+		t.Fatalf("build: %v\nbuild log:\n%s", err, buildLog.String())
+	}
+	id, err := d.Run(ctx, Spec{
+		Name: itName + "-pub", Image: itImage, Network: itNetwork, Writable: true,
+		Cmd:             []string{"sh", "-c", "python3 -m http.server 8000 >/dev/null 2>&1 & echo started; sleep infinity"},
+		PublishLoopback: []int{8000},
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx2, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = d.Remove(ctx2, id, true)
+	})
+
+	ins, err := d.Inspect(ctx, id)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	hostPort := ins.Published[8000]
+	if hostPort <= 0 {
+		t.Fatalf("no loopback publication for 8000: %v", ins.Published)
+	}
+	// The engine-assigned host port must answer from this process (host
+	// netns) — a container IP would not on Docker Desktop.
+	client := &http.Client{Timeout: 3 * time.Second}
+	var lastErr error
+	for attempt := 0; attempt < 20; attempt++ {
+		res, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/", hostPort))
+		if err == nil {
+			res.Body.Close()
+			if res.StatusCode == 200 {
+				return
+			}
+			lastErr = fmt.Errorf("status %d", res.StatusCode)
+		} else {
+			lastErr = err
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("published port 127.0.0.1:%d never answered: %v", hostPort, lastErr)
 }

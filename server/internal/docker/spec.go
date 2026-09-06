@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	dockerclient "github.com/fsouza/go-dockerclient"
@@ -9,6 +10,10 @@ import (
 
 // Safe container defaults: one shared bridge network, 512 MiB memory cap.
 const DefaultNetwork = "pcoder-net"
+
+// loopbackIP is the host side of every loopback publication: ports are
+// reachable from the server host only, never from the LAN.
+const loopbackIP = "127.0.0.1"
 
 // Mount is a volume mounted into a container.
 type Mount struct {
@@ -40,6 +45,18 @@ type Spec struct {
 	Network  string // "" = DefaultNetwork; container:<id> shares another container's namespace
 	Volumes  []Mount
 	Binds    []string // host path:container path[:ro] (e.g. an SSH key)
+	// Entrypoint overrides the image's default entrypoint (e.g. the relay
+	// runs sh instead of the browser launcher).
+	Entrypoint []string
+	// PublishLoopback lists container ports to publish on the server
+	// host's loopback interface. Host ports are engine-assigned at start;
+	// read the assignments back via Inspect (Container.Published). Only
+	// usable on containers with their own network namespace (Docker rejects
+	// publications on container:<id> network mode) — the preview relay uses
+	// it so the server can reach CDP/noVNC over 127.0.0.1 on hosts where
+	// bridge IPs are unroutable (Docker Desktop). Never for project ports,
+	// which stay private.
+	PublishLoopback []int
 }
 
 // containerOptions translates a Spec into go-dockerclient options. Pure, so
@@ -55,6 +72,19 @@ func containerOptions(ctx context.Context, spec Spec) dockerclient.CreateContain
 		Memory:         spec.Memory,
 		Binds:          spec.Binds,
 	}
+	var exposed map[dockerclient.Port]struct{}
+	if len(spec.PublishLoopback) > 0 {
+		exposed = make(map[dockerclient.Port]struct{}, len(spec.PublishLoopback))
+		bindings := make(map[dockerclient.Port][]dockerclient.PortBinding, len(spec.PublishLoopback))
+		for _, p := range spec.PublishLoopback {
+			port := dockerclient.Port(strconv.Itoa(p) + "/tcp")
+			exposed[port] = struct{}{}
+			// Empty HostPort: engine-assigned, so concurrent sidecars never
+			// collide on a fixed value. Inspect reads the assignment back.
+			bindings[port] = []dockerclient.PortBinding{{HostIP: loopbackIP, HostPort: ""}}
+		}
+		host.PortBindings = bindings
+	}
 	if !strings.HasPrefix(network, "container:") {
 		// Projects reach host services (e.g. a local git remote) through
 		// the conventional name; on Linux it maps to the bridge gateway,
@@ -67,7 +97,7 @@ func containerOptions(ctx context.Context, spec Spec) dockerclient.CreateContain
 	}
 	return dockerclient.CreateContainerOptions{
 		Name:       spec.Name,
-		Config:     &dockerclient.Config{Image: spec.Image, Cmd: spec.Cmd, Env: spec.Env, WorkingDir: spec.WorkDir},
+		Config:     &dockerclient.Config{Image: spec.Image, Cmd: spec.Cmd, Env: spec.Env, WorkingDir: spec.WorkDir, ExposedPorts: exposed, Entrypoint: spec.Entrypoint},
 		HostConfig: host,
 		Context:    ctx,
 	}
