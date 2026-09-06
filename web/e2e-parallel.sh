@@ -39,6 +39,10 @@ mkdir -p test-results
 #   fit         ~15s  1 static + 2 screenshots
 #   vanilla     ~15s  1 static (no Vite/npm)
 #   quickcmds   ~10s  1 blank project, API-only
+#   bootstrap   ~120s 1 seeded project (opencode download at boot)
+# The bootstrap group boots from a SEEDED state.json (E2E_SEED): state has a
+# project with opencode recorded while Docker is empty, so the server must
+# finish its boot bootstrap (container + harness install) before serving.
 ALL_GROUPS='
 app|1|e2e/app.spec.ts e2e/preview.basic.spec.ts e2e/preview.hmr.spec.ts e2e/sshkeys.e2e.spec.ts
 stack|2|e2e/terminal.stack.spec.ts
@@ -47,6 +51,7 @@ visual|4|e2e/home.visual.spec.ts
 preview.a|5|e2e/preview.tools.spec.ts
 preview.b|6|e2e/preview.journey.spec.ts e2e/preview.auth.spec.ts e2e/preview.port.spec.ts
 preview.c|7|e2e/preview.viewport.spec.ts e2e/preview.fit.spec.ts e2e/preview.htmx.spec.ts e2e/preview.vue.spec.ts e2e/preview.reconnect.spec.ts e2e/preview.vanilla.spec.ts e2e/quickcommands.spec.ts
+bootstrap|8|e2e/bootstrap.spec.ts
 '
 
 # Groups we started during this run — for the EXIT trap.
@@ -56,10 +61,13 @@ run_group() {
   name="$1"; offset="$2"; specs="$3"
   api=$((8080 + offset * 10))
   web=$((5170 + offset * 10))
+  # bootstrap boots from a seeded state.json (see ALL_GROUPS above)
+  seed=""
+  [ "$name" = "bootstrap" ] && seed="E2E_SEED=bootstrap.seed.json"
   # Clean up any leftover containers from crashed runs
   docker compose -f ../docker-compose.e2e.yml -p "pcoder-e2e-$name" down 2>/dev/null
   echo "[$name] starting: api:$api web:$web → test-results/$name.log"
-  E2E_RUN_ID="$name" E2E_API_PORT="$api" E2E_WEB_PORT="$web" \
+  env E2E_RUN_ID="$name" E2E_API_PORT="$api" E2E_WEB_PORT="$web" $seed \
     npx playwright test --config=playwright.config.ts $specs > "test-results/$name.log" 2>&1 &
   STARTED_GROUPS="$STARTED_GROUPS $name"
 }
@@ -90,7 +98,7 @@ wait
 
 echo
 fail=0
-for name in app stack sessions visual preview.a preview.b preview.c; do
+for name in app stack sessions visual preview.a preview.b preview.c bootstrap; do
   case " $WANTED " in *" $name "*|"  ") ;; *) continue ;; esac
   log="test-results/$name.log"
   tail -n 3 "$log" | sed "s/^/[$name] /"

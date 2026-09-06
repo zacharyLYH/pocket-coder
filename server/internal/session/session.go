@@ -37,7 +37,7 @@ var ErrDuplicate = errors.New("duplicate session")
 var ErrEmptyCommand = errors.New("empty command")
 
 const (
-	installTimeout  = 2 * time.Minute
+	installTimeout  = 10 * time.Minute // npm/pip downloads are slow; boot bootstrap runs them synchronously
 	validateTimeout = 15 * time.Second // CLIs like freebuff download a platform binary on first run
 	repoDir         = "/workspace/repo"
 	fallbackRepoDir = "/workspace"

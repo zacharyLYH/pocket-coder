@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test'
 
-import { API_PORT, AUTH_STATE, COMPOSE_PROJECT, DATA_DIR, RUN_DIR, SERVER_LOG, WEB_PORT } from './e2e/env'
+import { API_PORT, AUTH_STATE, COMPOSE_PROJECT, DATA_DIR, RUN_DIR, SEED_FILE, SERVER_LOG, WEB_PORT } from './e2e/env'
 
 // One real backend for every test. Each Playwright process boots its own Go
 // server + Vite dev server as webServers (needs the Go toolchain + a running
@@ -88,11 +88,18 @@ export default defineConfig({
         // it first; idempotent when it already does
         `docker network create pcoder-net 2>/dev/null || true; ` +
         `rm -rf ${DATA_DIR} ${SERVER_LOG} && mkdir -p ${DATA_DIR} && ` +
+        // E2E_SEED names a fixture copied in as state.json before boot, so a
+        // run can start from a pre-existing state (bootstrap.spec needs a
+        // project whose Docker state is gone). Default: fresh user, no projects.
+        `cp e2e/${SEED_FILE} ${DATA_DIR}/state.json && ` +
         `env PCODER_E2E_API_PORT=${API_PORT} PCODER_E2E_DATA_DIR=$PWD/${DATA_DIR} ` +
         `docker compose -f ../docker-compose.e2e.yml -p ${COMPOSE_PROJECT} up --build > ${SERVER_LOG} 2>&1'`,
       url: `http://localhost:${API_PORT}/health`,
       reuseExistingServer: false,
-      timeout: 60_000,
+      // Boot now BLOCKS on the bootstrap pass (container recreate + harness
+      // installs, e.g. a real npm download for the bootstrap seed), so the
+      // stack can legitimately take minutes to answer /health on a cold run.
+      timeout: 420_000,
       stdout: 'ignore' as const,
       stderr: 'pipe' as const,
     },

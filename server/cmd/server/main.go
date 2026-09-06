@@ -92,11 +92,16 @@ func main() {
 	svc.SetInstaller(&harnessInstaller{harnesses: harnesses, sessions: sessions})
 	previewManager := preview.NewManager(&preview.DockerFactory{Docker: dkr})
 
-	// Sync running containers to match state.json (harness installs,
-	// etc.). state.json is the source of truth; this one-pass reconcile
-	// at boot replaces per-handler workarounds for container/state drift.
+	// Bootstrap before serving: make live Docker match state.json for every
+	// project — containers running, recorded harnesses installed. Blocking on
+	// purpose: slow installs (npm downloads) happen here, on the boot log,
+	// so no request can ever observe a missing container or binary.
 	if err := dkr.Ping(context.Background()); err == nil {
-		svc.ReconcileState(context.Background())
+		if err := svc.BringAllUp(context.Background()); err != nil {
+			slog.Warn("bootstrap finished with errors — serving anyway; the per-request safety net (EnsureContainer) will retry", "err", err)
+		}
+	} else {
+		slog.Warn("docker engine unreachable at boot — skipping bootstrap; EnsureContainer will reconcile per request", "err", err)
 	}
 
 	ev.Append("boot", map[string]any{"version": version})

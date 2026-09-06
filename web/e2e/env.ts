@@ -24,7 +24,22 @@ export const DATA_DIR = `${RUN_DIR}/pcoder-stack-data`
 export const SERVER_LOG = `${RUN_DIR}/pcoder-stack-server.log`
 export const AUTH_STATE = `${RUN_DIR}/auth-state.json`
 
+// state.json fixture copied into the data dir before the server boots.
+// E2E_SEED=bootstrap.seed.json (bootstrap group) starts the stack from a
+// pre-existing project so the boot-bootstrap journey can be tested from an
+// empty Docker state; the default seed is a fresh user with no projects.
+//
+// Auto-detects: if the command-line filters include the bootstrap spec
+// (e.g. `npx playwright test e2e/bootstrap.spec.ts`), default to the
+// bootstrap seed so the test works standalone without `e2e-parallel.sh`.
+const argv = process.argv.slice(2).join(' ')
+const isBootstrapRun = /bootstrap\.spec/.test(argv) || process.env.E2E_SEED === 'bootstrap.seed.json'
+export const SEED_FILE = process.env.E2E_SEED ?? (isBootstrapRun ? 'bootstrap.seed.json' : 'state.seed.json')
+
 // Compose project name for this run's backend stack. Single source of truth
 // shared by playwright.config.ts (webServer up) and global-teardown.ts
 // (deterministic down even if the webServer's EXIT trap never fires).
-export const COMPOSE_PROJECT = `pcoder-e2e-${process.env.E2E_RUN_ID ?? 'default'}`
+// Run ids like "preview.a" are sanitized: compose v2 rejects dots (and most
+// punctuation) in project names, which is why the three preview groups used
+// to fail their webServer startup outright.
+export const COMPOSE_PROJECT = `pcoder-e2e-${(process.env.E2E_RUN_ID ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '-')}`

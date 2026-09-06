@@ -242,67 +242,128 @@ func (s *Service) Update(id string, p Project) error {
 	return s.wrapNotFound(s.store.Update(id, p))
 }
 
-// EnsureContainer makes sure a project's container exists, returning its
+// EnsureContainer makes sure a project's CONTAINER exists, returning its
 // current state. If the container is missing but the project's volumes
 // persist (the disk is the source of truth), it recreates the container
-// reusing those volumes. If the repo volume is gone too (fresh engine —
-// state.json copied to a new machine), the repo is re-cloned: state.json
-// is desired state, so recovery restores the code with it. This is the
-// lazy reconciliation that closes the disk/Docker drift gap. Exited/paused
-// containers are left alone (the user can Start explicitly); callers check
-// State themselves.
+// reusing those volumes — code and harness binaries live in volumes, so a
+// mid-run recreate loses nothing and needs no re-clone or reinstall.
+// Everything beyond the container (repo re-clone on a fresh engine, harness
+// installs) is boot's job, done by BringAllUp before the server accepts
+// requests. Exited/paused containers are left alone (the user can Start
+// explicitly); callers check State themselves.
 func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error) {
-	p, err := s.store.Get(id)
-	if err != nil {
+	if _, err := s.store.Get(id); err != nil {
 		return Status{}, s.wrapNotFound(err)
 	}
 	st, err := ContainerStatus(ctx, s.dkr, ContainerName(id))
 	if err != nil {
 		return Status{}, err
 	}
-	switch st.State {
-	case StateRunning:
-		return st, nil
-	case StateMissing:
-		// Container gone, volumes persist — recreate it.
-		slog.Info("reconciling missing container", "id", id)
-		cid, err := s.runProject(ctx, id)
-		if err != nil {
-			return Status{}, fmt.Errorf("reconcile container %s: %w", id, err)
-		}
-		s.ev.Append("project.reconcile", map[string]any{"id": id, "container": cid})
-		// Inject SSH keys so git clones work immediately.
-		if err := s.injectSSHKeys(ctx, cid); err != nil {
-			slog.Warn("ssh key injection after reconcile", "id", id, "err", err)
-		}
-		// Fresh engine: the repo volume doesn't exist yet, so nothing was
-		// recovered by recreating the container — re-clone from the repo
-		// URL. Like Create, a clone failure keeps the project running.
-		if p.Repo != "" {
-			if empty, err := s.repoVolumeEmpty(ctx, cid); err != nil {
-				slog.Warn("repo volume check after reconcile", "id", id, "err", err)
-			} else if empty {
-				if err := s.cloneRepo(ctx, id, cid, p); err != nil {
-					slog.Warn("repo re-clone after reconcile", "id", id, "err", err)
-				}
-			}
-		}
-		// Eagerly reinstall recorded harnesses (state.json is desired state).
-		// InstallHarness probes when already present, so this is cheap on a healthy volume.
-		if s.installer != nil && len(p.Harnesses) > 0 {
-			for _, hid := range p.Harnesses {
-				if err := s.installer.InstallHarness(ctx, cid, hid); err != nil {
-					if strings.Contains(err.Error(), "no such harness") {
-						continue
-					}
-					slog.Warn("harness reinstall after reconcile", "id", id, "harness", hid, "err", err)
-				}
-			}
-		}
-		return ContainerStatus(ctx, s.dkr, ContainerName(id))
-	default:
+	if st.State != StateMissing {
 		return st, nil
 	}
+	// Container gone, volumes persist — recreate it.
+	slog.Info("reconciling missing container", "id", id)
+	cid, err := s.runProject(ctx, id)
+	if err != nil {
+		return Status{}, fmt.Errorf("reconcile container %s: %w", id, err)
+	}
+	s.ev.Append("project.reconcile", map[string]any{"id": id, "container": cid})
+	// Inject SSH keys so git clones work immediately.
+	if err := s.injectSSHKeys(ctx, cid); err != nil {
+		slog.Warn("ssh key injection after reconcile", "id", id, "err", err)
+	}
+	return ContainerStatus(ctx, s.dkr, ContainerName(id))
+}
+
+// installRecordedHarnesses runs the explicit install for every harness id
+// recorded on the project. Unknown ids (harness deleted from the registry)
+// are skipped; real failures are logged and returned to the caller, which
+// decides whether they are fatal.
+func (s *Service) installRecordedHarnesses(ctx context.Context, id, cid string, harnessIDs []string) error {
+	if s.installer == nil || len(harnessIDs) == 0 {
+		return nil
+	}
+	var firstErr error
+	for _, hid := range harnessIDs {
+		slog.Info("bootstrap: installing harness", "project", id, "harness", hid)
+		if err := s.installer.InstallHarness(ctx, cid, hid); err != nil {
+			if strings.Contains(err.Error(), "no such harness") {
+				slog.Warn("bootstrap: recorded harness no longer registered, skipping", "project", id, "harness", hid)
+				continue
+			}
+			slog.Warn("bootstrap: harness install failed", "project", id, "harness", hid, "err", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		slog.Info("bootstrap: harness installed", "project", id, "harness", hid)
+	}
+	return firstErr
+}
+
+// provisionProject brings ONE project to full desired state: container
+// running, repo present (re-cloned when the engine lost the volume), and
+// every recorded harness installed. This is the boot path; the per-request
+// safety net (EnsureContainer) only guarantees the container itself.
+func (s *Service) provisionProject(ctx context.Context, id string) error {
+	st, err := s.EnsureContainer(ctx, id)
+	if err != nil {
+		return err
+	}
+	slog.Info("bootstrap: container state", "id", id, "state", st.State)
+	if st.State != StateRunning {
+		slog.Info("bootstrap: starting container", "id", id)
+		if err := s.Start(ctx, id); err != nil {
+			return fmt.Errorf("start container: %w", err)
+		}
+		slog.Info("bootstrap: container started", "id", id)
+	}
+	p, err := s.store.Get(id)
+	if err != nil {
+		return err
+	}
+	// Fresh engine: the repo volume came up empty — nothing was recovered by
+	// recreating the container, so re-clone from the repo URL. Like Create,
+	// a clone failure keeps the project running (the user can repair it).
+	if p.Repo != "" {
+		cid := ContainerName(id)
+		if empty, err := s.repoVolumeEmpty(ctx, cid); err != nil {
+			slog.Warn("bootstrap: repo volume check", "id", id, "err", err)
+		} else if empty {
+			slog.Info("bootstrap: repo volume empty, re-cloning", "id", id, "repo", p.Repo)
+			if err := s.cloneRepo(ctx, id, cid, p); err != nil {
+				slog.Warn("bootstrap: repo re-clone failed", "id", id, "err", err)
+			}
+		}
+	}
+	return s.installRecordedHarnesses(ctx, id, ContainerName(id), p.Harnesses)
+}
+
+// BringAllUp makes the live Docker state match state.json for EVERY project:
+// each container runs, repos are present, and recorded harnesses are
+// installed. Blocking by design — callers (main) run it before serving so
+// no request can ever observe a missing container or harness binary.
+// Per-project failures are logged and returned; they never abort the rest.
+func (s *Service) BringAllUp(ctx context.Context) error {
+	entries, err := s.store.List()
+	if err != nil {
+		return fmt.Errorf("list projects: %w", err)
+	}
+	slog.Info("bootstrap: starting", "projects", len(entries))
+	var firstErr error
+	for _, e := range entries {
+		slog.Info("bootstrap: project", "id", e.ID, "name", e.Name)
+		if err := s.provisionProject(ctx, e.ID); err != nil {
+			slog.Error("bootstrap: project failed", "id", e.ID, "err", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	slog.Info("bootstrap: done", "projects", len(entries))
+	return firstErr
 }
 
 // repoVolumeEmpty reports whether the project's repo volume has no visible
@@ -454,38 +515,4 @@ func newID() (string, error) {
 		return "", fmt.Errorf("generate id: %w", err)
 	}
 	return os.Getenv("PCODER_ID_PREFIX") + hex.EncodeToString(b[:]), nil
-}
-
-// ReconcileState syncs every running container to match state.json.
-// Called once at startup so the live Docker state aligns with persisted
-// desired state: missing harnesses are reinstalled, state.json is the
-// single source of truth. This replaces per-handler workarounds for the
-// split-brain between container probes and state.json records.
-func (s *Service) ReconcileState(ctx context.Context) {
-	entries, err := s.store.List()
-	if err != nil {
-		slog.Warn("reconcile: list projects", "err", err)
-		return
-	}
-	for _, e := range entries {
-		st, err := ContainerStatus(ctx, s.dkr, ContainerName(e.ID))
-		if err != nil || st.State != StateRunning {
-			continue
-		}
-		p, err := s.store.Get(e.ID)
-		if err != nil || len(p.Harnesses) == 0 {
-			continue
-		}
-		for _, hid := range p.Harnesses {
-			if s.installer == nil {
-				break
-			}
-			if err := s.installer.InstallHarness(ctx, ContainerName(e.ID), hid); err != nil {
-				if strings.Contains(err.Error(), "no such harness") {
-					continue
-				}
-				slog.Warn("reconcile harness", "id", e.ID, "harness", hid, "err", err)
-			}
-		}
-	}
 }

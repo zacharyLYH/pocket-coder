@@ -461,24 +461,112 @@ func TestEnsureContainerReconcileEvent(t *testing.T) {
 	}
 }
 
-func TestEnsureContainerReconcileReclonesEmptyVolume(t *testing.T) {
+// EnsureContainer is container-only now: a mid-run recreate must NOT touch
+// the repo volume (code lives there and survives) — no clone, no installs.
+// Any unexpected Exec fails the mock.
+func TestEnsureContainerRecreateIsContainerOnly(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Name: "hello", Repo: testRepo}); err != nil {
+	if err := s.store.Create("abc", Project{
+		Name:      "hello",
+		Repo:      testRepo,
+		Harnesses: []string{"opencode"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expectReconcile(d)
+
+	inst := &fakeInstaller{}
+	s.SetInstaller(inst)
+
+	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
+		t.Fatal(err)
+	}
+	if len(inst.installed) != 0 {
+		t.Fatalf("EnsureContainer installed %v — installs are boot's job", inst.installed)
+	}
+}
+
+// fakeInstaller records which harnesses were installed. Implements Installer.
+type fakeInstaller struct {
+	installed []string
+	errOn     map[string]error
+}
+
+func (f *fakeInstaller) InstallHarness(ctx context.Context, _ string, harnessID string) error {
+	f.installed = append(f.installed, harnessID)
+	if err := f.errOn[harnessID]; err != nil {
+		return err
+	}
+	return nil
+}
+
+// unknownSkipInstaller mirrors the real harnessInstaller: an unknown harness
+// id ("no such harness") is silently skipped, anything else is an error.
+type unknownSkipInstaller struct {
+	installed []string
+}
+
+func (u *unknownSkipInstaller) InstallHarness(ctx context.Context, _ string, harnessID string) error {
+	u.installed = append(u.installed, harnessID)
+	if harnessID == "ghost" {
+		return fmt.Errorf("no such harness %q", harnessID)
+	}
+	return nil
+}
+
+func TestBringAllUpInstallsRecordedHarnesses(t *testing.T) {
+	s, d, _, _ := newService(t)
+	// Project with two installed harnesses, container missing → full
+	// provisioning at boot.
+	if err := s.store.Create("abc", Project{
+		Name:      "x",
+		Harnesses: []string{"opencode", "freebuff"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expectReconcile(d)
+
+	inst := &fakeInstaller{}
+	s.SetInstaller(inst)
+
+	if err := s.BringAllUp(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(inst.installed) != 2 {
+		t.Fatalf("installed %d harnesses, want 2: %v", len(inst.installed), inst.installed)
+	}
+	if inst.installed[0] != "opencode" || inst.installed[1] != "freebuff" {
+		t.Fatalf("installed = %v, want [opencode freebuff]", inst.installed)
+	}
+}
+
+// Fresh-engine recovery is boot's job: BringAllUp re-clones an empty repo
+// volume from the recorded URL and installs the recorded harnesses.
+func TestBringAllUpReclonesEmptyRepoVolume(t *testing.T) {
+	s, d, _, _ := newService(t)
+	if err := s.store.Create("abc", Project{
+		Name:      "hello",
+		Repo:      testRepo,
+		Harnesses: []string{"opencode"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
 	var cid string
 	expectProjectReady(d, &cid)
-	// fresh engine: the repo volume came up empty...
-	d.EXPECT().Exec(mock.Anything, "cid123", []string{"ls", "-A", repoTarget}, false).
+	// fresh engine: the repo volume comes up empty...
+	d.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"ls", "-A", repoTarget}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
-	// ...so recovery re-clones the repo from state.json
-	d.EXPECT().Exec(mock.Anything, "cid123",
+	// ...so boot re-clones the repo from state.json
+	d.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"git", "clone", testRepo, repoTarget + "/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
 
-	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
+	inst := &fakeInstaller{}
+	s.SetInstaller(inst)
+
+	if err := s.BringAllUp(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	evs := eventsOf(t, s)
@@ -494,97 +582,92 @@ func TestEnsureContainerReconcileReclonesEmptyVolume(t *testing.T) {
 	if !reconciled || !cloned {
 		t.Fatalf("events: reconcile=%v clone=%v", reconciled, cloned)
 	}
+	if len(inst.installed) != 1 || inst.installed[0] != "opencode" {
+		t.Fatalf("installed = %v, want [opencode]", inst.installed)
+	}
 }
 
-// fakeInstaller records which harnesses were installed. Implements Installer.
-type fakeInstaller struct {
-	installed []string
-}
-
-func (f *fakeInstaller) InstallHarness(ctx context.Context, _ string, harnessID string) error {
-	f.installed = append(f.installed, harnessID)
-	return nil
-}
-
-func TestEnsureContainerReinstallsHarnesses(t *testing.T) {
+// BringAllUp starts a stopped (exited) container too: boot must leave every
+// project's container running, not just the ones Docker still has up.
+func TestBringAllUpStartsExitedContainer(t *testing.T) {
 	s, d, _, _ := newService(t)
-	// Project with two installed harnesses
-	if err := s.store.Create("abc", Project{
-		Name:      "x",
-		Harnesses: []string{"opencode", "freebuff"},
-	}); err != nil {
+	if err := s.store.Create("abc", Project{Name: "x", Harnesses: []string{"opencode"}}); err != nil {
 		t.Fatal(err)
 	}
-	// Container is missing → triggers reconciliation
-	expectReconcile(d)
+	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: false, Status: "exited"}, nil).Once()
+	d.EXPECT().Start(mock.Anything, "pcoder-abc").Return(nil)
 
 	inst := &fakeInstaller{}
 	s.SetInstaller(inst)
 
-	if _, err := s.EnsureContainer(t.Context(), "abc"); err != nil {
+	if err := s.BringAllUp(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(inst.installed) != 2 {
-		t.Fatalf("installed %d harnesses, want 2: %v", len(inst.installed), inst.installed)
-	}
-	if inst.installed[0] != "opencode" || inst.installed[1] != "freebuff" {
-		t.Fatalf("installed = %v, want [opencode freebuff]", inst.installed)
+	if len(inst.installed) != 1 || inst.installed[0] != "opencode" {
+		t.Fatalf("installed = %v, want [opencode]", inst.installed)
 	}
 }
 
-func TestReconcileStateInstallsMissingHarnesses(t *testing.T) {
+// BringAllUp on a healthy engine (containers already running) is a no-op:
+// no downloads, no restarts, just probes.
+func TestBringAllUpHealthyIsProbeOnly(t *testing.T) {
 	s, d, _, _ := newService(t)
-	// Project with two installed harnesses
-	if err := s.store.Create("abc", Project{
-		Name:      "x",
-		Harnesses: []string{"opencode", "freebuff"},
-	}); err != nil {
+	if err := s.store.Create("abc", Project{Name: "x", Harnesses: []string{"opencode"}}); err != nil {
 		t.Fatal(err)
 	}
-	// Second project with no harnesses — should be skipped
-	if err := s.store.Create("def", Project{Name: "y"}); err != nil {
-		t.Fatal(err)
-	}
-	// Third project — container is missing, should be skipped
-	if err := s.store.Create("ghi", Project{
-		Name:      "z",
-		Harnesses: []string{"opencode"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	inst := &fakeInstaller{}
-	s.SetInstaller(inst)
-
-	// abc: running → reconcile
 	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
-	// def: running but no harnesses → skip (no Inspect call expected)
+
+	inst := &fakeInstaller{}
+	s.SetInstaller(inst)
+
+	if err := s.BringAllUp(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(inst.installed) != 1 {
+		t.Fatalf("installed = %v, want the recorded harness probed once", inst.installed)
+	}
+}
+
+// An install failure inside BringAllUp is reported but never aborts the
+// remaining projects.
+func TestBringAllUpContinuesPastInstallFailure(t *testing.T) {
+	s, d, _, _ := newService(t)
+	if err := s.store.Create("abc", Project{Name: "x", Harnesses: []string{"broken"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.Create("def", Project{Name: "y", Harnesses: []string{"opencode"}}); err != nil {
+		t.Fatal(err)
+	}
+	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
 	d.EXPECT().Inspect(mock.Anything, "pcoder-def").Return(docker.Container{Running: true}, nil).Once()
-	// ghi: missing → skip
-	d.EXPECT().Inspect(mock.Anything, "pcoder-ghi").Return(docker.Container{}, docker.ErrNotFound).Once()
 
-	s.ReconcileState(t.Context())
+	inst := &fakeInstaller{errOn: map[string]error{"broken": errors.New("npm registry down")}}
+	s.SetInstaller(inst)
 
-	if len(inst.installed) != 2 {
-		t.Fatalf("installed %d harnesses, want 2: %v", len(inst.installed), inst.installed)
+	err := s.BringAllUp(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "npm registry down") {
+		t.Fatalf("err = %v, want the install failure", err)
 	}
-	if inst.installed[0] != "opencode" || inst.installed[1] != "freebuff" {
-		t.Fatalf("installed = %v, want [opencode freebuff]", inst.installed)
+	if len(inst.installed) != 2 {
+		t.Fatalf("installed = %v, want both projects attempted", inst.installed)
 	}
 }
 
-func TestReconcileStateSkipsWithoutInstaller(t *testing.T) {
-	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{
-		Name:      "x",
-		Harnesses: []string{"opencode"},
-	}); err != nil {
-		t.Fatal(err)
+// Unknown recorded harness ids (deleted from the registry) are skipped by
+// the bootstrap installer, not surfaced as failures.
+func TestInstallRecordedHarnessesSkipsUnknown(t *testing.T) {
+	s, _, _, _ := newService(t)
+	// unknownSkipInstaller returns "no such harness" for the id "ghost",
+	// mirroring the real harnessInstaller's unknown-id path.
+	unknown := &unknownSkipInstaller{}
+	s.SetInstaller(unknown)
+
+	if err := s.installRecordedHarnesses(t.Context(), "abc", "cid", []string{"ghost", "opencode"}); err != nil {
+		t.Fatalf("err = %v, want nil (unknown ids skipped)", err)
 	}
-	// No installer set — should not panic
-	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
-	s.ReconcileState(t.Context())
-	// No crash = pass
+	if len(unknown.installed) != 2 {
+		t.Fatalf("installed = %v, want both attempted", unknown.installed)
+	}
 }
 
 func TestCreateCloneMethodSSH(t *testing.T) {

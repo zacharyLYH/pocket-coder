@@ -1,0 +1,15 @@
+{
+  "user": {
+    "email": "me@example.com"
+  },
+  "projects": {
+    "e2eboost": {
+      "name": "seeded-opencode",
+      "repo": "",
+      "harnesses": ["opencode"],
+      "sessions": {
+        "oc1": { "harness": "opencode" }
+      }
+    }
+  }
+}
