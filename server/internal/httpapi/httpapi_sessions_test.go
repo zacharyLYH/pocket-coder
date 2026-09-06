@@ -789,6 +789,11 @@ func TestDeleteSessionRemovesStateMetadata(t *testing.T) {
 	_ = d.Projects.RecordSession("abc", "victim", "fake")
 
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	// last-session guard counts tmux + state.json sessions; two live tmux
+	// sessions make the delete allowed.
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
+		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "victim\nother\n"}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "kill-session", "-t", "victim"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
@@ -808,15 +813,15 @@ func TestDeleteSessionRemovesStateMetadata(t *testing.T) {
 		t.Fatal("state.json still has session metadata after delete")
 	}
 
-	// Idempotent: deleting an already-gone session still succeeds (kill is
-	// "can't find session"-tolerant and metadata removal is a no-op).
+	// Idempotent second delete: only "victim" remains (tmux and state.json
+	// agree), so the last-session guard answers 409 instead of killing.
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
-		[]string{"tmux", "kill-session", "-t", "victim"}, false).
-		Return(docker.ExecResult{ExitCode: 1, Output: "can't find session victim"}, nil)
+		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "victim\n"}, nil)
 	rec = authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc/sessions/victim/delete")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("idempotent delete: got %d %q", rec.Code, rec.Body)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("idempotent delete now that victim is last: got %d %q, want 409", rec.Code, rec.Body)
 	}
 }
 
@@ -830,6 +835,11 @@ func TestDeleteSessionKeepsOtherSessionsMetadata(t *testing.T) {
 	_ = d.Projects.RecordSession("abc", "drop-me", "")
 
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	// tmux has nothing (both are state.json ghosts); "keep-me" remains known,
+	// so deleting "drop-me" is still allowed.
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
+		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
+		Return(docker.ExecResult{ExitCode: 1, Output: "no server running"}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "kill-session", "-t", "drop-me"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)

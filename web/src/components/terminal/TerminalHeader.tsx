@@ -67,6 +67,10 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
     }
   }
 
+  // Deleting removes a session for good; the terminal always keeps at
+  // least one, so the last remaining session cannot be deleted.
+  const isLastSession = sessions.length <= 1
+
   const statusMeta = {
     connecting: { label: 'Connecting…', dot: 'bg-amber-500' },
     live: { label: 'Connected', dot: 'bg-emerald-500' },
@@ -167,7 +171,15 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
           <DropdownMenuContent align="end" className="w-64">
             <DropdownMenuItem onSelect={onRestart} data-testid="terminal-action-restart">Restart</DropdownMenuItem>
             <DropdownMenuItem onSelect={openRename} data-testid="terminal-action-rename">Rename</DropdownMenuItem>
-            <DropdownMenuItem onSelect={openDelete} data-testid="terminal-action-delete" variant="destructive">Delete…</DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={openDelete}
+              disabled={isLastSession}
+              title={isLastSession ? 'Cannot delete the last session' : undefined}
+              data-testid="terminal-action-delete"
+              variant="destructive"
+            >
+              Delete…
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={onKill} data-testid="terminal-action-kill" className="text-destructive">Kill</DropdownMenuItem>
             <div className="my-1 h-px bg-border" />
             {Object.entries(quickCommands).length === 0 ? (

@@ -627,12 +627,36 @@ func handleKillSession(d Deps) http.HandlerFunc {
 // handleDeleteSession deletes a session outright: the tmux session is killed
 // AND its state.json metadata is removed, so it disappears from the picker
 // for good (unlike kill, which keeps metadata to enable one-click relaunch).
+// The last remaining session cannot be deleted: a terminal with zero
+// sessions is not a state the UI can represent, and silently respawning a
+// session the user asked to delete would be worse. Kill (metadata kept,
+// one-click relaunch) remains the escape hatch for a lone bad session.
 // Killing an already-gone session is idempotent; so is removing metadata.
 func handleDeleteSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
 		var ok bool
 		if id, ok = ensureProject(d, w, r); !ok {
+			return
+		}
+		// Count sessions exactly like the picker renders them: live tmux
+		// sessions merged with state.json entries (ghosts after a rebuild).
+		sessions, err := d.Sessions.List(r.Context(), project.ContainerName(id))
+		if err != nil {
+			writeInternalErr(w, "delete session", err)
+			return
+		}
+		known := make(map[string]bool, len(sessions)+1)
+		for _, s := range sessions {
+			known[s.Name] = true
+		}
+		var proj state.Project
+		d.State.View(func(doc *state.Document) { proj = doc.Projects[id] })
+		for sName := range proj.Sessions {
+			known[sName] = true
+		}
+		if len(known) <= 1 {
+			writeErr(w, http.StatusConflict, "cannot delete the last session")
 			return
 		}
 		if err := d.Sessions.Kill(r.Context(), project.ContainerName(id), name); err != nil {
