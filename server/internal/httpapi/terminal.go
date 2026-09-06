@@ -322,11 +322,15 @@ func handleListSessions(d Deps) http.HandlerFunc {
 }
 
 func handleCreateSession(d Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
+	return func(w http.ResponseWriter, r *http.Request) {		id := r.PathValue("id")
 		var body struct {
 			Name      string `json:"name"`      // plain-shell session or harness session with explicit name
 			HarnessID string `json:"harnessId"` // harness-driven session
+			// Create marks explicit intent to make a new session (the New
+			// Session dialog). Without it, an unknown name may only be
+			// resurrected (re-entry after kill, rebuild ghosts) — never
+			// materialized from a typo or a hand-edited URL.
+			Create bool `json:"create"`
 		}
 		if !decodeBody(w, r, &body, false) {
 			return
@@ -382,9 +386,15 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 				createShellSession(d, w, r.Context(), id, body.Name, false)
 				return
 			}
-			// Session not in tmux. If state.json knows this was a harness
-			// session, relaunch it. Otherwise create a plain shell.
+			// Not in tmux. Creating from nothing requires intent: an explicit
+			// create, the default "main" entry point, or recorded metadata
+			// (re-entry after kill, ghosts after a rebuild). Anything else is
+			// a typo or a hand-edited URL — 404, not a surprise session.
 			sess, hasMeta := d.Projects.GetSession(id, body.Name)
+			if !body.Create && !hasMeta && body.Name != "main" {
+				writeErr(w, http.StatusNotFound, "no such session")
+				return
+			}
 			if hasMeta && sess.Harness != "" {
 				if h, herr := d.Harnesses.Get(sess.Harness); herr == nil {
 					container := project.ContainerName(id)

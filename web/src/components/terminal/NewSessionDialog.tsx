@@ -34,12 +34,12 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
     setLaunchError(null)
   }
 
-  // createShell ensures a plain-shell session exists under the typed name.
+  // createShell creates a plain-shell session under the typed name.
   async function createShell(sessionName: string, signal: AbortSignal) {
     setProgress(`Launching ${sessionName}…`)
     await api(`/api/projects/${projectId}/sessions`, {
       method: 'POST',
-      body: JSON.stringify({ name: sessionName }),
+      body: JSON.stringify({ name: sessionName, create: true }),
       signal,
     })
     return sessionName
@@ -50,7 +50,7 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
     setProgress(`Launching ${sessionName}…`)
     const created = await api<{ name?: string }>(`/api/projects/${projectId}/sessions`, {
       method: 'POST',
-      body: JSON.stringify({ harnessId: id, name: sessionName }),
+      body: JSON.stringify({ harnessId: id, name: sessionName, create: true }),
       signal,
     })
     if (!created?.name) throw new Error('launch response missing session name')

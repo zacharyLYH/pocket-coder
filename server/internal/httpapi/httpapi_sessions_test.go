@@ -61,13 +61,13 @@ func TestCreateSessionLifecycle(t *testing.T) {
 	}
 
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "work"}, false).
-		Return(docker.ExecResult{ExitCode: 1}, nil).Once() // ensure: no such session yet
+		Return(docker.ExecResult{ExitCode: 1}, nil).Once() // create: no such session yet
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		append([]string{"tmux", "new-session", "-d", "-s", "work", "-c", "/workspace",
 			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
 
-	rec = authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"work"}`)
+	rec = authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"work","create":true}`)
 	want := "{\"name\":\"work\"}\n"
 	if rec.Code != http.StatusCreated || rec.Body.String() != want {
 		t.Fatalf("create: got %d %q, want 201 %q", rec.Code, rec.Body, want)
@@ -102,7 +102,7 @@ func TestCreateSessionLifecycle(t *testing.T) {
 		append([]string{"tmux", "new-session", "-d", "-s", "fake", "-c", "/workspace",
 			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
-	if rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"fake"}`); rec.Code != http.StatusCreated {
+	if rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"fake","create":true}`); rec.Code != http.StatusCreated {
 		t.Fatalf("harness-named shell: got %d %q, want 201", rec.Code, rec.Body)
 	}
 }
@@ -350,7 +350,7 @@ func TestRestartPlainShellDoesNotLaunchHarness(t *testing.T) {
 	cookie := loginCookie(t, h, pinOut)
 
 	// Create the plain shell
-	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"opencode-1"}`)
+	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"opencode-1","create":true}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create shell: got %d %q, want 201", rec.Code, rec.Body)
 	}
@@ -721,9 +721,7 @@ func TestRestartBareHarnessNameRelaunchesHarness(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != "{\"name\":\"fake\"}\n" {
 		t.Fatalf("restart bare harness name: got %d %q, want 200 {\"name\":\"fake\"}", rec.Code, rec.Body)
 	}
-}
-
-// TestCreateThenListSessions pins the user-visible flow: after creating a
+}	// TestCreateThenListSessions pins the user-visible flow: after creating a
 // shell session and launching a harness session, the picker's list contains
 // exactly the expected names.
 func TestCreateThenListSessions(t *testing.T) {
@@ -732,7 +730,7 @@ func TestCreateThenListSessions(t *testing.T) {
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "work"}, false).
-		Return(docker.ExecResult{ExitCode: 1}, nil).Once() // ensure: not there yet
+		Return(docker.ExecResult{ExitCode: 1}, nil).Once() // create: not there yet
 	shellCreate := append([]string{"tmux", "new-session", "-d", "-s", "work", "-c", "/workspace",
 		";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", shellCreate, false).
@@ -748,7 +746,7 @@ func TestCreateThenListSessions(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	if rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"work"}`); rec.Code != http.StatusCreated {
+	if rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"work","create":true}`); rec.Code != http.StatusCreated {
 		t.Fatalf("shell create: got %d %q, want 201", rec.Code, rec.Body)
 	}
 	if rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"harnessId":"fake"}`); rec.Code != http.StatusCreated {
@@ -793,7 +791,7 @@ func TestDeleteSessionRemovesStateMetadata(t *testing.T) {
 	// sessions make the delete allowed.
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
-		Return(docker.ExecResult{ExitCode: 0, Output: "victim\nother\n"}, nil)
+		Return(docker.ExecResult{ExitCode: 0, Output: "victim\nother\n"}, nil).Once()
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "kill-session", "-t", "victim"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
