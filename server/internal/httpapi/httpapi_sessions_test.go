@@ -775,6 +775,79 @@ func TestCreateThenListSessions(t *testing.T) {
 	}
 }
 
+// TestDeleteSessionRemovesStateMetadata pins the delete contract: DELETE
+// /sessions/{name}/delete kills the tmux session AND removes its state.json
+// metadata, so the picker shows it gone for good (plain kill keeps metadata
+// to enable one-click relaunch).
+func TestDeleteSessionRemovesStateMetadata(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	// Record metadata as a harness session — the strongest case: delete must
+	// clear it so no relaunch path can resurrect the session.
+	_ = d.Projects.RecordInstall("abc", "fake")
+	_ = d.Projects.RecordSession("abc", "victim", "fake")
+
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
+		[]string{"tmux", "kill-session", "-t", "victim"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc/sessions/victim/delete")
+	if rec.Code != http.StatusOK || rec.Body.String() != "{\"ok\":true}\n" {
+		t.Fatalf("delete: got %d %q", rec.Code, rec.Body)
+	}
+	waitForEvent(t, d, "session.delete")
+
+	// state.json metadata is gone — the list merge in handleListSessions
+	// (which reads state.json directly) can no longer resurrect the name.
+	if _, ok := d.Projects.GetSession("abc", "victim"); ok {
+		t.Fatal("state.json still has session metadata after delete")
+	}
+
+	// Idempotent: deleting an already-gone session still succeeds (kill is
+	// "can't find session"-tolerant and metadata removal is a no-op).
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
+		[]string{"tmux", "kill-session", "-t", "victim"}, false).
+		Return(docker.ExecResult{ExitCode: 1, Output: "can't find session victim"}, nil)
+	rec = authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc/sessions/victim/delete")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("idempotent delete: got %d %q", rec.Code, rec.Body)
+	}
+}
+
+// TestDeleteSessionKeepsOtherSessionsMetadata proves delete is scoped to the
+// named session only.
+func TestDeleteSessionKeepsOtherSessionsMetadata(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+
+	_ = d.Projects.RecordSession("abc", "keep-me", "fake")
+	_ = d.Projects.RecordSession("abc", "drop-me", "")
+
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
+		[]string{"tmux", "kill-session", "-t", "drop-me"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc/sessions/drop-me/delete")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete: got %d %q", rec.Code, rec.Body)
+	}
+	if _, ok := d.Projects.GetSession("abc", "keep-me"); !ok {
+		t.Fatal("delete removed unrelated session metadata")
+	}
+	if _, ok := d.Projects.GetSession("abc", "drop-me"); ok {
+		t.Fatal("deleted session metadata still present")
+	}
+}
+
 func TestKillAndRestartSessions(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")

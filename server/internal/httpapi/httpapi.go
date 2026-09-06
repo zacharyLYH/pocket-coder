@@ -75,6 +75,7 @@ func New(d Deps) http.Handler {
 		authed("GET", "/api/projects/{id}/sessions", handleListSessions)
 		authed("POST", "/api/projects/{id}/sessions", handleCreateSession)
 		authed("DELETE", "/api/projects/{id}/sessions/{name}", handleKillSession)
+		authed("DELETE", "/api/projects/{id}/sessions/{name}/delete", handleDeleteSession)
 		authed("POST", "/api/projects/{id}/sessions/{name}/restart", handleRestartSession)
 		authed("POST", "/api/projects/{id}/sessions/{name}/rename", handleRenameSession)
 		authed("POST", "/api/projects/{id}/sessions/{name}/inject", handleInjectSession)

@@ -79,6 +79,28 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
     }
   }
 
+  // Delete removes the session outright (tmux kill + state.json metadata),
+  // so it disappears from the picker for good. Deleting the attached session
+  // lands the user on the next remaining session — or a fresh `main`, which
+  // the pane's ensure path recreates — instead of a dead 'ended' screen.
+  const del = useCallback(async (name: string) => {
+    try {
+      await api(`/api/projects/${projectId}/sessions/${name}/delete`, { method: 'DELETE' })
+      if (name === current) {
+        const d = await api<{ sessions: { name: string }[] }>(`/api/projects/${projectId}/sessions`)
+        const next = d.sessions.map((s) => s.name).find((n) => n !== name) ?? 'main'
+        setSessions(d.sessions)
+        setCurrent(next)
+        setError(null)
+        setRedial((n) => n + 1)
+      } else {
+        refreshSessions()
+      }
+    } catch (err) {
+      throw new Error(errMsg(err))
+    }
+  }, [projectId, current, refreshSessions])
+
   async function rename(newName: string) {
     await api(`/api/projects/${projectId}/sessions/${current}/rename`, {
       method: 'POST',
@@ -109,6 +131,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           status={status}
           onBack={onBack}
           onSwitch={switchSession}
+          onDelete={del}
           onNewSession={() => setNewDialogOpen(true)}
           onRestart={restart}
           onRename={rename}

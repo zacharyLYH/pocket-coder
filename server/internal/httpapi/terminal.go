@@ -624,6 +624,30 @@ func handleKillSession(d Deps) http.HandlerFunc {
 	}
 }
 
+// handleDeleteSession deletes a session outright: the tmux session is killed
+// AND its state.json metadata is removed, so it disappears from the picker
+// for good (unlike kill, which keeps metadata to enable one-click relaunch).
+// Killing an already-gone session is idempotent; so is removing metadata.
+func handleDeleteSession(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, name := r.PathValue("id"), r.PathValue("name")
+		var ok bool
+		if id, ok = ensureProject(d, w, r); !ok {
+			return
+		}
+		if err := d.Sessions.Kill(r.Context(), project.ContainerName(id), name); err != nil {
+			writeInternalErr(w, "delete session", err)
+			return
+		}
+		if err := d.Projects.RemoveSession(id, name); err != nil {
+			writeInternalErr(w, "delete session metadata", err)
+			return
+		}
+		_, _ = d.Events.Append("session.delete", map[string]any{"id": id, "name": name})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}
+}
+
 // handleRestartSession kills a live session (if any) and relaunches the same
 // thing: a harness session by its <id>-<n> prefix, or a plain shell.
 func handleRestartSession(d Deps) http.HandlerFunc {

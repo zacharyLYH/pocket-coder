@@ -87,6 +87,66 @@ test.describe('session switcher', () => {
   })
 })
 
+// ─── Session deletion (visual journey) ───────────────────────────────
+
+test.describe('session deletion', () => {
+  test.use({ viewport: { width: 1280, height: 720 } })
+
+  // Deleting the ATTACHED session must not leave a dead screen: the app
+  // lands on the next remaining session (the pane's ensure path recreates
+  // it), and the deleted name disappears from the picker for good — unlike
+  // kill, which keeps metadata for one-click relaunch.
+  test('deleting the attached session lands on another session', async ({ page }) => {
+    test.setTimeout(300_000)
+    test.skip(!(await engineUp(page.request)), 'Docker engine unavailable')
+    await deleteAllProjects(page.request)
+    try {
+      await createProjectAndOpenTerminal(page)
+
+      // create a second (shell) session so there is somewhere to land
+      await page.getByRole('button', { name: '+ New Session' }).click()
+      const dialog = page.getByRole('dialog')
+      await page.getByPlaceholder(/Session name/).fill('dev')
+      await dialog.getByRole('button', { name: 'Create & Attach' }).click()
+      await expect(dialog).not.toBeVisible({ timeout: 15_000 })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+
+      // stage 1: the picker shows both sessions
+      const sessionButton = page.getByRole('button', { name: 'Session', exact: true })
+      await sessionButton.click()
+      await expect(page.getByRole('menu')).toBeVisible()
+      await expect(page.getByRole('menuitem', { name: 'main' })).toBeVisible()
+      await expect(page.getByRole('menuitem', { name: 'dev' })).toBeVisible()
+      await expect(page).toHaveScreenshot('terminal-session-delete-before.png')
+      await page.keyboard.press('Escape')
+
+      // stage 2: trigger the delete flow on the attached session via Actions
+      const actionsTrigger = page.getByTestId('terminal-actions-trigger')
+      await actionsTrigger.click()
+      await page.getByTestId('terminal-action-delete').click()
+      const confirmDialog = page.getByRole('alertdialog')
+      await expect(confirmDialog).toBeVisible()
+      await expect(confirmDialog).toContainText('dev')
+      await expect(page).toHaveScreenshot('terminal-session-delete-confirm.png')
+      await page.getByTestId('session-delete-confirm').click()
+
+      // stage 3: landed on the other session, live again
+      await expect(confirmDialog).not.toBeVisible({ timeout: 15_000 })
+      await expect(sessionButton).toContainText('main')
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
+
+      // stage 4: the deleted session is gone from the picker for good
+      await sessionButton.click()
+      await expect(page.getByRole('menu')).toBeVisible()
+      await expect(page.getByRole('menuitem', { name: 'dev' })).toHaveCount(0)
+      await expect(page.getByRole('menuitem', { name: 'main' })).toBeVisible()
+      await expect(page).toHaveScreenshot('terminal-session-delete-after.png')
+    } finally {
+      await deleteAllProjects(page.request)
+    }
+  })
+})
+
 // ─── Multiple sessions ────────────────────────────────────────────────
 
 test.describe('multiple sessions', () => {
@@ -112,8 +172,9 @@ test.describe('multiple sessions', () => {
       await sessionButton.click()
       await expect(page.getByRole('menu')).toBeVisible()
       const optionTexts = await page.getByRole('menuitem').allTextContents()
-      expect(optionTexts).toContain('main')
-      expect(optionTexts).toContain('dev')
+      // Each item carries a trailing delete (✕) in its accessible name.
+      expect(optionTexts.some((t) => t.includes('main'))).toBe(true)
+      expect(optionTexts.some((t) => t.includes('dev'))).toBe(true)
       await expect(page).toHaveScreenshot('terminal-multi-session-dropdown.png')
 
       // switching back to main reattaches for real — click the option while the picker is open

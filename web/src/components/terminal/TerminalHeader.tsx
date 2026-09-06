@@ -5,6 +5,16 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -23,14 +33,15 @@ import { QuickCommandsModal } from '@/components/QuickCommandsModal'
 import type { ConnStatus } from '@/components/terminal/TerminalPane'
 
 // The terminal header: back to projects, connection status, the session
-// picker, and the new-session / restart / rename / kill actions.
-export function TerminalHeader({ projectId, current, sessions, status, onBack, onSwitch, onNewSession, onRestart, onRename, onKill }: {
+// picker, and the new-session / restart / rename / delete / kill actions.
+export function TerminalHeader({ projectId, current, sessions, status, onBack, onSwitch, onDelete, onNewSession, onRestart, onRename, onKill }: {
   projectId: string
   current: string
   sessions: { name: string }[]
   status: ConnStatus
   onBack: () => void
   onSwitch: (name: string) => void
+  onDelete: (name: string) => Promise<void> | void
   onNewSession: () => void
   onRestart: () => void
   onRename: (newName: string) => Promise<void> | void
@@ -40,6 +51,9 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
   const [renameValue, setRenameValue] = useState('')
   const [renameBusy, setRenameBusy] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [qcOpen, setQcOpen] = useState(false)
   const { commands: quickCommands, reload: reloadQuickCommands } = useQuickCommands(projectId)
   const [injectError, setInjectError] = useState<string | null>(null)
@@ -63,6 +77,25 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
     setRenameValue(current)
     setRenameError(null)
     setRenameOpen(true)
+  }
+
+  function openDelete() {
+    setDeleteError(null)
+    setDeleteTarget(current)
+  }
+
+  async function submitDelete() {
+    if (!deleteTarget) return
+    setDeleteBusy(true)
+    setDeleteError(null)
+    try {
+      await onDelete(deleteTarget)
+      setDeleteTarget(null)
+    } catch (err: unknown) {
+      setDeleteError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDeleteBusy(false)
+    }
   }
 
   async function submitRename() {
@@ -134,6 +167,7 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
           <DropdownMenuContent align="end" className="w-64">
             <DropdownMenuItem onSelect={onRestart} data-testid="terminal-action-restart">Restart</DropdownMenuItem>
             <DropdownMenuItem onSelect={openRename} data-testid="terminal-action-rename">Rename</DropdownMenuItem>
+            <DropdownMenuItem onSelect={openDelete} data-testid="terminal-action-delete" variant="destructive">Delete…</DropdownMenuItem>
             <DropdownMenuItem onSelect={onKill} data-testid="terminal-action-kill" className="text-destructive">Kill</DropdownMenuItem>
             <div className="my-1 h-px bg-border" />
             {Object.entries(quickCommands).length === 0 ? (
@@ -178,6 +212,29 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteError(null) } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete session</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will terminate "{deleteTarget}" and remove it from the session list. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteError && <p className="text-sm break-all text-destructive" data-testid="session-delete-error">{deleteError}</p>}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deleteBusy}
+              data-testid="session-delete-confirm"
+              onClick={submitDelete}
+            >
+              {deleteBusy ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }
