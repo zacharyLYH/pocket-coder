@@ -57,6 +57,13 @@ bootstrap|8|e2e/bootstrap.spec.ts
 # Groups we started during this run — for the EXIT trap.
 STARTED_GROUPS=""
 
+# Compose project name for a group. Must mirror env.ts COMPOSE_PROJECT:
+# run ids like "preview.a" are sanitized because compose v2 rejects dots in
+# project names.
+proj_name() {
+  echo "pcoder-e2e-$(echo "$1" | tr '.' '-')"
+}
+
 run_group() {
   name="$1"; offset="$2"; specs="$3"
   api=$((8080 + offset * 10))
@@ -65,7 +72,7 @@ run_group() {
   seed=""
   [ "$name" = "bootstrap" ] && seed="E2E_SEED=bootstrap.seed.json"
   # Clean up any leftover containers from crashed runs
-  docker compose -f ../docker-compose.e2e.yml -p "pcoder-e2e-$name" down 2>/dev/null
+  docker compose -f ../docker-compose.e2e.yml -p "$(proj_name "$name")" down 2>/dev/null
   echo "[$name] starting: api:$api web:$web → test-results/$name.log"
   env E2E_RUN_ID="$name" E2E_API_PORT="$api" E2E_WEB_PORT="$web" $seed \
     npx playwright test --config=playwright.config.ts $specs > "test-results/$name.log" 2>&1 &
@@ -76,7 +83,7 @@ run_group() {
 # interruption (Ctrl-C, kill, syntax error in a subshell, etc.).
 cleanup_all() {
   for name in $STARTED_GROUPS; do
-    docker compose -f ../docker-compose.e2e.yml -p "pcoder-e2e-$name" down 2>/dev/null
+    docker compose -f ../docker-compose.e2e.yml -p "$(proj_name "$name")" down 2>/dev/null
   done
 }
 trap cleanup_all EXIT INT TERM

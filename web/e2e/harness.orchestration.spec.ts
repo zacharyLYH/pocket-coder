@@ -1,5 +1,5 @@
 import { expect, type APIRequestContext, type Page, test } from '@playwright/test'
-import { createProjectViaUI, deleteAllProjects, engineUp, resetHarnessRegistry, waitForRunning } from './helpers'
+import { createProjectViaUI, deleteAllProjects, engineUp, resetHarnessRegistry } from './helpers'
 
 async function fetchState(request: APIRequestContext) {
   const res = await request.get('/api/state')
@@ -45,15 +45,7 @@ test.describe('harness installs are desired state', () => {
       await expect(page.getByText('No projects yet.')).toBeVisible()
       const idAlpha = await createProjectViaUI(page, request, 'https://example.com/projAlpha', 'projAlpha')
       const idBeta = await createProjectViaUI(page, request, 'https://example.com/projBeta', 'projBeta')
-      await page.getByPlaceholder(/Repo URL/).fill('')
-      await page.getByRole('button', { name: 'Create project' }).click()
-      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 30_000 })
-      await expect(page.getByText('untitled')).toBeVisible()
-      const thirdRes = await request.get('/api/projects')
-      const thirdBody = (await thirdRes.json()) as { projects: { id: string; name: string }[] }
-      const third = thirdBody.projects.find((p) => p.name === 'untitled')
-      if (!third) throw new Error('third project not found')
-      await waitForRunning(request, third.id)
+      const third = await createProjectViaUI(page, request, '', 'untitled')
 
       await expect(page.getByText('projAlpha')).toBeVisible()
       await expect(page.getByText('projBeta')).toBeVisible()
@@ -69,7 +61,7 @@ test.describe('harness installs are desired state', () => {
       const order = await getOrder()
       const idxAlpha = order.indexOf(idAlpha)
       const idxBeta = order.indexOf(idBeta)
-      const idxThird = order.indexOf(third.id)
+      const idxThird = order.indexOf(third)
 
       for (const harnessName of ['Crasher Demo', 'Helper']) {
         const row = page.locator('div.flex.items-center.justify-between', { hasText: harnessName })
@@ -105,7 +97,7 @@ test.describe('harness installs are desired state', () => {
       const state1 = await fetchState(request)
       expect(state1.projects[idAlpha].harnesses).toEqual(['crasher-demo', 'helper'])
       expect(state1.projects[idBeta].harnesses).toEqual(['crasher-demo', 'helper'])
-      expect(state1.projects[third.id].harnesses ?? []).toEqual([])
+      expect(state1.projects[third].harnesses ?? []).toEqual([])
       expect(state1.harnesses['helper']).toBeTruthy()
 
       await page.getByRole('button', { name: 'Terminal' }).nth(idxAlpha).click()
@@ -210,7 +202,7 @@ test.describe('harness installs are desired state', () => {
       const state2 = await fetchState(request)
       expect(state2.projects[idAlpha].harnesses).toEqual(['crasher-demo', 'helper'])
       expect(state2.projects[idBeta].harnesses).toEqual(['crasher-demo', 'helper'])
-      expect(state2.projects[third.id].harnesses ?? []).toEqual([])
+      expect(state2.projects[third].harnesses ?? []).toEqual([])
 
       await page.getByTestId('terminal-actions-trigger').click()
       await page.getByTestId('terminal-action-restart').click()
@@ -232,7 +224,7 @@ test.describe('harness installs are desired state', () => {
       const bBody4 = (await bSessions4.json()) as { sessions: { name: string }[] }
       expect(bBody4.sessions.map((s) => s.name)).not.toContain('renamed')
       expect(bBody4.sessions.map((s) => s.name)).not.toContain('my-crasher')
-      const thirdSessions = await request.get(`/api/projects/${third.id}/sessions`)
+      const thirdSessions = await request.get(`/api/projects/${third}/sessions`)
       const thirdSessBody = (await thirdSessions.json()) as { sessions: { name: string }[] }
       expect(thirdSessBody.sessions.map((s) => s.name)).not.toContain('renamed')
 
@@ -247,7 +239,7 @@ test.describe('harness installs are desired state', () => {
       const finalState = await fetchState(request)
       expect(finalState.projects[idAlpha].harnesses).toEqual(['crasher-demo', 'helper'])
       expect(finalState.projects[idBeta].harnesses).toEqual(['crasher-demo', 'helper'])
-      expect(finalState.projects[third.id].harnesses ?? []).toEqual([])
+      expect(finalState.projects[third].harnesses ?? []).toEqual([])
     } finally {
       await deleteAllProjects(request)
       await resetHarnessRegistry(request)

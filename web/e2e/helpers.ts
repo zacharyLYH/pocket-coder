@@ -106,6 +106,27 @@ export async function createBlankProject(request: APIRequestContext): Promise<st
   return id
 }
 
+// fetchEvents reads the whole audit log through the paginated API. Specs
+// must NOT read $DATA_DIR/events.log off disk: inside the compose stack the
+// server runs as root, so on a Linux CI bind mount that file is created
+// root-owned 0600 and the runner user gets EACCES reading it. The request
+// fixture carries the session cookie, so the authed API just works.
+export async function fetchEvents(request: APIRequestContext): Promise<{ type: string }[]> {
+  const out: { type: string }[] = []
+  let after = 0
+  for (;;) {
+    const res = await request.get(`/api/events?after=${after}`)
+    expect(res.ok()).toBeTruthy()
+    const { events } = (await res.json()) as { events: { id: number; type: string }[] | null }
+    // The handler serializes a nil slice as null on the final empty page.
+    const page = events ?? []
+    if (page.length === 0) break
+    out.push(...page)
+    after = page[page.length - 1].id
+  }
+  return out
+}
+
 // createProjectViaUI creates a project through the real home-page form,
 // exactly as a user would, then returns its id once running.
 export async function createProjectViaUI(
@@ -114,9 +135,40 @@ export async function createProjectViaUI(
   repoUrl: string,
   expectedName: string,
 ): Promise<string> {
-  await page.getByPlaceholder(/Repo URL/).fill(repoUrl)
-  await page.getByRole('button', { name: 'Create project' }).click()
-  await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 30_000 })
+  // Count projects already named expectedName, so the helper also works for
+  // the repeated "untitled" case (it must create a NEW one, not see the old).
+  const countNamed = async (): Promise<number> => {
+    const res = await request.get('/api/projects')
+    if (!res.ok()) return 0
+    return ((await res.json()) as { projects: { name: string }[] }).projects.filter(
+      (p) => p.name === expectedName,
+    ).length
+  }
+  const before = await countNamed()
+
+  // Under CI load the Vite dev client can drop its websocket and reload the
+  // page mid-submit, replacing the form ("element(s) not found") and losing
+  // the create. A lost create is harmless — nothing was made — so resubmit
+  // until the project actually exists. Each POST is synchronous server-side
+  // and the count check runs before every resubmit, so a slow-but-successful
+  // create is never duplicated.
+  for (let attempt = 0; attempt < 5 && (await countNamed()) <= before; attempt++) {
+    if ((await page.getByPlaceholder(/Repo URL/).count()) === 0) {
+      await page.goto('/')
+    }
+    await page.getByPlaceholder(/Repo URL/).fill(repoUrl)
+    await page.getByRole('button', { name: 'Create project' }).click()
+    // The button is disabled ("Creating…") while the POST is in flight and
+    // comes back enabled when it lands; a page reload also lands here.
+    await expect(page.getByRole('button', { name: /Create project|Creating…/ })).toBeVisible({
+      timeout: 120_000,
+    })
+    await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 120_000 })
+  }
+  if ((await countNamed()) <= before) {
+    throw new Error(`project ${expectedName} not created after retries`)
+  }
+
   await page.reload()
   await expect(page.getByText(expectedName)).toBeVisible({ timeout: 10_000 })
   const orderRes = await request.get('/api/projects')

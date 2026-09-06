@@ -63,8 +63,10 @@ test.describe('preview non-default port', () => {
       expect(html).toContain('name-input')
       // The backend on :4000 (the unchanged second fixture port) is
       // still served by the same container — proves BROWSER_TARGET is
-      // the one and only thing the port fix changed.
-      expect(html).toContain('counter-value')
+      // the one and only thing the port fix changed. backend-data is on
+      // the pre-login screen (counter-value only appears after the
+      // fixture's login form is submitted, see preview.basic).
+      expect(html).toContain('backend-data')
 
       // Frontend proof: no console errors on the preview page. Network
       // failures of a single asset (e.g. favicon) are tolerated because

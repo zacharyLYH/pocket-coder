@@ -1,7 +1,5 @@
-import { readFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
-import { DATA_DIR } from './env'
-import { deleteAllProjects, engineUp } from './helpers'
+import { deleteAllProjects, engineUp, fetchEvents } from './helpers'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -57,10 +55,12 @@ test('create a project in the UI, open its terminal, type', async ({ page }) => 
     await page.setViewportSize({ width: 1280, height: 720 })
 
     // plumbing proof in the backend's own audit trail: clicking Terminal
-    // created the session AND attached to it — no API help needed
-    const log = readFileSync(`${DATA_DIR}/events.log`, 'utf8')
-    expect(log).toContain('"session.create"')
-    expect(log).toContain('"terminal.attach"')
+    // created the session AND attached to it — no API help needed. Read via
+    // the API: the compose server runs as root, so on Linux CI the log file
+    // on the bind mount is root-owned 0600 (EACCES for the runner user).
+    const types = (await fetchEvents(page.request)).map((e) => e.type)
+    expect(types).toContain('session.create')
+    expect(types).toContain('terminal.attach')
   } finally {
     // destructor: never leak projects/volumes, even on failure
     await deleteAllProjects(page.request)

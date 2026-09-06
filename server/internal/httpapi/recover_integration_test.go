@@ -2,16 +2,17 @@
 
 // Smoke test for the dev seed state (dev/state.mock.json): a server
 // booted against NOTHING but a state.json must recover the full desired
-// state — the project appears, the first ensure recreates its container,
-// and because a fresh engine has no repo volume, the repo is re-cloned
-// from the URL in state.json. Recovery must not mutate desired state:
-// the on-disk file is asserted byte-equal (as generic maps) before and
-// after. Run with:
+// state — the boot bootstrap (BringAllUp, the pass main runs before
+// serving) recreates the container, and because a fresh engine has no repo
+// volume, the repo is re-cloned from the URL in state.json. Recovery must
+// not mutate desired state: the on-disk file is asserted byte-equal (as
+// generic maps) before and after. Run with:
 // go test -tags=integration -count=1 -run TestStateMockRecovery ./internal/httpapi/
 package httpapi
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,25 +40,33 @@ func TestStateMockRecovery(t *testing.T) {
 	wantDoc := statetest.Read(t, statePath)
 
 	// same wiring as newLiveDeps, but over the seeded store
-	h, _, _, pinOut, _, _ := newLiveDepsOnDir(t, dataDir)
+	h, _, svc, pinOut, _, _ := newLiveDepsOnDir(t, dataDir)
 
 	cookie := login(t, h, pinOut)
-	deleteTestProject(t, h, cookie, id)
+
+	// Boot bootstrap (the pass main.go runs before serving): recreate the
+	// container from the seeded state and — fresh engine, no volumes —
+	// re-clone the repo. Harness installs are skipped here: the helper does
+	// not wire an installer (main does), and this smoke test pins the
+	// container+repo recovery path.
+	if err := svc.BringAllUp(context.Background()); err != nil {
+		t.Fatalf("boot bootstrap: %v", err)
+	}
 
 	// desired state survived the boot untouched
 	statetest.AssertEqual(t, statePath, wantDoc)
 
-	// the mock project is listed before any Docker interaction
+	// the project is up before any session request touches it
 	code, body := doJSON(t, h, cookie, http.MethodGet, "/api/projects/"+id, "")
 	if code != http.StatusOK {
 		t.Fatalf("get seeded project: %d %v", code, body)
 	}
-	if body["status"] == "running" {
-		t.Fatalf("fresh engine should not have a running container yet: %v", body["status"])
+	if body["status"] != "running" {
+		t.Fatalf("boot bootstrap should leave the container running: %v", body["status"])
 	}
 
-	// first ensure (the UI's Terminal click path) reconciles: container
-	// recreated AND repo re-cloned, since a fresh engine has no volumes
+	// the first session create lands on an already-provisioned container:
+	// no lazy recovery left in the request path
 	code, body = doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions", `{"name":"main"}`)
 	if code != http.StatusCreated {
 		t.Fatalf("create session on recovered container: %d %v", code, body)
@@ -90,7 +99,7 @@ func TestStateMockRecovery(t *testing.T) {
 	proj["sessions"].(map[string]any)["main"] = map[string]any{}
 	statetest.AssertEqual(t, statePath, wantDoc)
 
-	// the reconcile + re-clone is visible in the audit trail
+	// the boot reconcile + re-clone is visible in the audit trail
 	logged, err := os.ReadFile(filepath.Join(dataDir, "events.log"))
 	if err != nil {
 		t.Fatal(err)

@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 
-import { DATA_DIR, SERVER_LOG } from './env'
-import { deleteAllProjects, engineUp } from './helpers'
+import { SERVER_LOG } from './env'
+import { deleteAllProjects, engineUp, fetchEvents } from './helpers'
 
 // Boot-bootstrap journey (the 422 regression): state.json is seeded BEFORE
 // the backend boots (E2E_SEED=bootstrap.seed.json in e2e-parallel.sh) with a
@@ -54,9 +54,11 @@ test.describe('boot bootstrap from seeded state', () => {
         .toMatch(/Build|Connect|Ask anything/)
 
       // Belt and suspenders: the session-create API reports no validation
-      // failure for this project.
-      const eventsLog = readFileSync(`${DATA_DIR}/events.log`, 'utf8')
-      expect(eventsLog).not.toContain('validation.failed')
+      // failure for this project (read via the API — the compose server runs
+      // as root, so the events file on the bind mount is unreadable to the
+      // runner user on Linux CI).
+      const types = (await fetchEvents(request)).map((e) => e.type)
+      expect(types).not.toContain('validation.failed')
     } finally {
       await deleteAllProjects(request)
     }
