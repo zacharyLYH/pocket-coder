@@ -57,6 +57,10 @@ bootstrap|8|e2e/bootstrap.spec.ts
 # Groups we started during this run — for the EXIT trap.
 STARTED_GROUPS=""
 
+# Background PIDs per group ("name:pid"), for the live dashboard.
+GROUP_PIDS=""
+RUN_EPOCH=""
+
 # Compose project name for a group. Must mirror env.ts COMPOSE_PROJECT:
 # run ids like "preview.a" are sanitized because compose v2 rejects dots in
 # project names.
@@ -73,15 +77,17 @@ run_group() {
   [ "$name" = "bootstrap" ] && seed="E2E_SEED=bootstrap.seed.json"
   # Clean up any leftover containers from crashed runs
   docker compose -f ../docker-compose.e2e.yml -p "$(proj_name "$name")" down 2>/dev/null
-  echo "[$name] starting: api:$api web:$web → test-results/$name.log"
+  echo "[$name] starting: api:$api web:$web → test-results/$name.log + test-results/$name/progress.md"
   env E2E_RUN_ID="$name" E2E_API_PORT="$api" E2E_WEB_PORT="$web" $seed \
-    npx playwright test --config=playwright.config.ts $specs > "test-results/$name.log" 2>&1 &
+    npx playwright test --config=playwright.config.ts --reporter=list --reporter=./e2e/progress-reporter.ts $specs > "test-results/$name.log" 2>&1 &
+  GROUP_PIDS="$GROUP_PIDS $name:$!"
   STARTED_GROUPS="$STARTED_GROUPS $name"
 }
 
 # Tear down every group's compose project. Runs on normal EXIT and on
 # interruption (Ctrl-C, kill, syntax error in a subshell, etc.).
 cleanup_all() {
+  kill "${AGG_PID:-}" 2>/dev/null
   for name in $STARTED_GROUPS; do
     docker compose -f ../docker-compose.e2e.yml -p "$(proj_name "$name")" down 2>/dev/null
   done
@@ -101,9 +107,60 @@ done <<EOF
 $(printf '%s\n' "$ALL_GROUPS")
 EOF
 
-wait
+# ── live progress file ────────────────────────────────────────────────
+# One combined test-results/progress.md, rebuilt every 2s from the groups'
+# per-test checklists. File only — nothing is printed while groups run, so
+# just open test-results/progress.md in an editor and watch it update.
+group_running() {
+  for entry in $GROUP_PIDS; do
+    if [ "${entry%%:*}" = "$1" ]; then
+      kill -0 "${entry#*:}" 2>/dev/null && return 0
+      return 1
+    fi
+  done
+  return 1
+}
+
+aggregate_progress() {
+  # Command substitution strips trailing newlines, so mint a reusable one.
+  NL="$(printf '\nx')"; NL="${NL%x}"
+  elapsed=$(($(date +%s) - RUN_EPOCH))
+  out=""
+  for name in app stack sessions visual preview.a preview.b preview.c bootstrap; do
+    case " $WANTED " in *" $name "*|"  ") ;; *) continue ;; esac
+    prog="test-results/$name/progress.md"
+    if group_running "$name"; then state="running"; else state="done"; fi
+    if [ -f "$prog" ]; then
+      done_n=$(grep -c '^- \[x\]' "$prog" 2>/dev/null || true)
+      fail_n=$(grep -c '^- \[!\]' "$prog" 2>/dev/null || true)
+      total_n=$(grep -c '^- \[' "$prog" 2>/dev/null || true)
+      out="${out}## [$name] $state — $done_n/$total_n passed, $fail_n failed$NL$NL"
+      out="${out}$(grep '^- \[' "$prog" 2>/dev/null)$NL$NL"
+    else
+      boot_line=$(tail -n 1 "test-results/$name.log" 2>/dev/null || true)
+      out="${out}## [$name] $state — booting…$NL$NL  $boot_line$NL$NL"
+    fi
+  done
+  printf '# e2e progress — %ss elapsed\n\n%s' "$elapsed" "$out" > test-results/progress.md
+}
+
+RUN_EPOCH=$(date +%s)
+aggregate_progress
+while :; do sleep 2; aggregate_progress; done &
+AGG_PID=$!
+
+# Wait for the test groups only (not the aggregator above).
+WAIT_PIDS=""
+for entry in $GROUP_PIDS; do
+  WAIT_PIDS="$WAIT_PIDS ${entry#*:}"
+done
+# shellcheck disable=SC2086
+wait $WAIT_PIDS
+kill "$AGG_PID" 2>/dev/null
+aggregate_progress
 
 echo
+echo "live checklist: test-results/progress.md"
 fail=0
 for name in app stack sessions visual preview.a preview.b preview.c bootstrap; do
   case " $WANTED " in *" $name "*|"  ") ;; *) continue ;; esac
