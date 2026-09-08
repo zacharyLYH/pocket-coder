@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	pathpkg "path"
 	"strconv"
 	"strings"
 
@@ -147,6 +148,10 @@ func handlePreviewSurface(d Deps) http.HandlerFunc {
 		if path == "" {
 			path = "vnc.html"
 		}
+		if hasDotDotSegment(path) {
+			writeErr(w, http.StatusBadRequest, "invalid preview path")
+			return
+		}
 		proxy := newPreviewProxy(target, path)
 		proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
 			writeInternalErr(w, "proxy preview surface", proxyErr)
@@ -160,11 +165,31 @@ func newPreviewProxy(target *url.URL, path string) *httputil.ReverseProxy {
 	proxy.Director = func(req *http.Request) {
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
-		req.URL.Path = "/" + strings.TrimPrefix(path, "/")
+		// Clean the spliced path so ".." segments can never escape the
+		// sidecar's web root upstream, even if a caller bypasses the
+		// handler-level rejection (defense in depth: the upstream static
+		// server must only ever see a rooted, normalized path).
+		req.URL.Path = pathpkg.Clean("/" + strings.TrimPrefix(path, "/"))
 		req.URL.RawPath = ""
 		req.Host = target.Host
 	}
 	return proxy
+}
+
+// hasDotDotSegment reports whether path contains a ".." segment, encoded
+// or not. The noVNC surface only serves known assets; anything climbing
+// the tree is rejected before it reaches the reverse proxy.
+func hasDotDotSegment(path string) bool {
+	for _, seg := range strings.Split(path, "/") {
+		unesc, err := url.PathUnescape(seg)
+		if err != nil {
+			return true // unparseable escaping is not a legit asset name
+		}
+		if unesc == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // handlePreviewPorts probes listening ports inside the project container.
@@ -211,7 +236,12 @@ var sidecarPorts = map[int]bool{
 // namespace, not a user server.
 const dockerEmbeddedDNS = "127.0.0.11"
 
-// parseListeningPorts extracts port numbers from ss/netstat output.
+// parseListeningPorts extracts port numbers from ss/netstat listening output.
+// Only LISTEN-state lines count: ESTABLISHED flows carry remote ports that
+// are not servers, and offering them in the Preview tab (or auto-starting
+// against them) points the sidecar at dead ports. Only the Local Address
+// column is read so Peer addresses and process names can never contribute
+// phantom ports.
 func parseListeningPorts(output string) []map[string]any {
 	seen := map[int]bool{}
 	var slots []map[string]any
@@ -220,10 +250,24 @@ func parseListeningPorts(output string) []map[string]any {
 		if line == "" || strings.HasPrefix(line, "State") || strings.HasPrefix(line, "Netid") {
 			continue
 		}
-		if strings.Contains(line, dockerEmbeddedDNS+":") {
-			continue // Docker's embedded DNS resolver, never a user server
+		if !strings.Contains(line, "LISTEN") {
+			continue // ESTABLISHED/TIME_WAIT/etc: not a server
 		}
-		for _, field := range strings.Fields(line) {
+		fields := strings.Fields(line)
+		addrs := fields
+		if len(fields) > 1 {
+			// ss and netstat both place Local Address at index 3:
+			// ss:      LISTEN Recv-Q Send-Q Local Peer Process
+			// netstat: tcp Recv-Q Send-Q Local Foreign State
+			if len(fields) < 4 {
+				continue
+			}
+			addrs = fields[3:4]
+		}
+		for _, field := range addrs {
+			if strings.Contains(field, dockerEmbeddedDNS+":") {
+				continue // Docker's embedded DNS resolver, never a user server
+			}
 			if i := strings.LastIndex(field, ":"); i > 0 {
 				p, err := strconv.Atoi(field[i+1:])
 				if err == nil && p > 0 && p < 65536 && !seen[p] && !sidecarPorts[p] {

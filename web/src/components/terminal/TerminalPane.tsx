@@ -3,6 +3,8 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
+import { parseTerminalFrame } from '@/lib/terminalFrame'
+
 export type ConnStatus = 'connecting' | 'live' | 'ended'
 
 // A dark theme that feels like a real terminal, not a default palette.
@@ -107,7 +109,10 @@ export function TerminalPane({ projectId, session, redial, hostRef, onStatus, on
       }
       ws.onmessage = (ev) => {
         if (disposed) return
-        const frame = JSON.parse(ev.data as string) as { type: string; data?: string; code?: number }
+        // Proxies and extensions can inject non-JSON bytes; a malformed
+        // frame is ignored so one bad message never kills the terminal.
+        const frame = parseTerminalFrame(ev.data as string)
+        if (!frame) return
         if (frame.type === 'output') term.write(frame.data ?? '')
         if (frame.type === 'exit') {
           onStatus('ended')

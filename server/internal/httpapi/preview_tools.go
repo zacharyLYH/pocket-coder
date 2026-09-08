@@ -258,7 +258,9 @@ func waitForPageReady(ctx context.Context, s *cdpSession, target string) error {
 }
 
 // samePreviewOrigin reports whether href is on the same origin (host:port)
-// as target, treating localhost and 127.0.0.1 as equivalent loopbacks.
+// as target, treating all loopbacks (localhost, 127.0.0.1, ::1) as
+// equivalent. Hostname()/Port() are used instead of string-splitting the
+// host so bracketed IPv6 (e.g. [::1]:3000) compares correctly.
 func samePreviewOrigin(target, href string) bool {
 	tu, err := url.Parse(target)
 	if err != nil || tu.Host == "" {
@@ -271,17 +273,30 @@ func samePreviewOrigin(target, href string) bool {
 	if hu.Scheme != "http" && hu.Scheme != "https" {
 		return false
 	}
-	normalize := func(h string) string {
-		host, port, ok := strings.Cut(h, ":")
-		if !ok {
-			return h
-		}
-		if host == "localhost" || host == "127.0.0.1" {
+	normalize := func(u *url.URL) string {
+		host := strings.ToLower(u.Hostname())
+		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
 			host = "loopback"
 		}
-		return host + ":" + port
+		return host + ":" + u.Port()
 	}
-	return normalize(tu.Host) == normalize(hu.Host)
+	return normalize(tu) == normalize(hu)
+}
+
+// allowedNavigateURL reports whether the sidecar may be pointed at raw.
+// The sidecar shares the project's network namespace, so an unrestricted
+// navigate is SSRF: it can reach cloud metadata (169.254.169.254), sibling
+// containers, and host services, with the rendered response then readable
+// via the inspect tool. Previewing means local dev servers, so only
+// loopback http(s) targets are allowed — mirroring handlePreviewStart,
+// which only ever navigates to 127.0.0.1:<port>.
+func allowedNavigateURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 // resolveSelector evaluates a JS selector and returns center coordinates.
@@ -462,6 +477,10 @@ func handlePreviewNavigate(d Deps) http.HandlerFunc {
 			URL string `json:"url"`
 		}
 		if !decodeBody(w, r, &body, false) {
+			return
+		}
+		if !allowedNavigateURL(body.URL) {
+			writeErr(w, http.StatusBadRequest, "navigate target must be a loopback http(s) URL")
 			return
 		}
 		s, err := cdpForRequest(d, r)
