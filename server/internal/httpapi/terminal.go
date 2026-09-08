@@ -95,7 +95,6 @@ func handleTerminal(d Deps) http.HandlerFunc {
 			sess, hasMeta := d.Projects.GetSession(id, name)
 			if hasMeta {
 				if sess.Harness != "" {
-					// Harness session — relaunch it so the WebSocket can attach.
 					if h, herr := d.Harnesses.Get(sess.Harness); herr == nil {
 						if _, lerr := d.Sessions.LaunchNamed(ctx, container, name, h); lerr != nil {
 							if !errors.Is(lerr, session.ErrDuplicate) {
@@ -322,7 +321,8 @@ func handleListSessions(d Deps) http.HandlerFunc {
 }
 
 func handleCreateSession(d Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {		id := r.PathValue("id")
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
 		var body struct {
 			Name      string `json:"name"`      // plain-shell session or harness session with explicit name
 			HarnessID string `json:"harnessId"` // harness-driven session
@@ -367,7 +367,7 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 					return
 				}
 				if harnessID == "" {
-					// No metadata — try the old ParseBase heuristic.
+					// No metadata — guess from the name's harness-id prefix.
 					harnessID = session.ParseBase(body.Name)
 				}
 				if h, herr := d.Harnesses.Get(harnessID); herr == nil {
@@ -707,7 +707,7 @@ func handleRestartSession(d Deps) http.HandlerFunc {
 			return
 		}
 		if harnessID == "" {
-			// No metadata — try the old ParseBase heuristic.
+			// No metadata — guess from the name's harness-id prefix.
 			harnessID = session.ParseBase(name)
 		}
 

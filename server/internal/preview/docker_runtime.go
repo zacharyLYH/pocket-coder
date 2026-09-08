@@ -30,19 +30,16 @@ const (
 	cdpPort   = SidecarCDPProxyPort
 	novncPort = SidecarNoVNCPort
 
-	// cdpWaitTimeout bounds the CDP readiness window. Without this a wedged
-	// sidecar kept an HTTP start request hanging until the client gave up
-	// ("context canceled" in the server log).
+	// cdpWaitTimeout bounds the CDP readiness window: a wedged sidecar
+	// fails the start request instead of hanging it until the client quits.
 	cdpWaitTimeout = 60 * time.Second
 
 	// relayNamePrefix identifies the loopback relay container (see Start).
 	relayNamePrefix = "pcoder-preview-relay-"
 )
 
-// DisplayWidth/Height is the sidecar's X screen size. The preview page
-// fits the Chromium window to the noVNC iframe (see tools/viewport), so
-// this is the cap for auto-fit: big enough for desktop browser windows,
-// small enough to stay cheap. window == screen == iframe at 1:1.
+// DisplayWidth/Height is the sidecar's X screen size, the cap for the
+// preview page's auto-fit: window == screen == iframe at 1:1.
 const (
 	DisplayWidth  = 1920
 	DisplayHeight = 1080
@@ -56,17 +53,17 @@ type containerRuntime interface {
 }
 
 // DockerFactory launches one browser sidecar in the project's network
-// namespace (required: dev servers like Vite bind localhost by default, so
-// the sidecar reaches the app over the project's loopback). Docker forbids
-// publishing ports on a netns-shared container, so how the server reaches
-// the sidecar's own CDP/noVNC endpoints depends on the host:
+// namespace (dev servers like Vite bind localhost, so the sidecar reaches
+// the app over the project's loopback). Docker forbids publishing ports on
+// a netns-shared container, so the sidecar's own CDP/noVNC endpoints are
+// reached differently per host:
 //
-//   - Linux: container bridge IPs are routable from the host — the server
-//     dials the sidecar IP directly (the original design).
-//   - Docker Desktop (macOS/Windows): the engine runs in a VM, so bridge
-//     IPs are unreachable from the host. The factory then starts a tiny
-//     relay container on pcoder-net (own netns → publishable) whose socat
-//     forwards CDP+noVNC to the sidecar IP, published on host loopback with
+//   - Linux: container bridge IPs are routable — the server dials the
+//     sidecar IP directly.
+//   - Docker Desktop (macOS/Windows): the engine runs in a VM and bridge
+//     IPs are unreachable from the host, so the factory starts a small
+//     relay container on pcoder-net (own netns → publishable) that socat
+//     forwards CDP+noVNC and publishes them on host loopback with
 //     engine-assigned ports. The relay is torn down with the worker.
 type DockerFactory struct {
 	Docker     containerRuntime
@@ -113,10 +110,8 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	}
 	cid, err := f.Docker.Run(ctx, spec)
 	if err != nil && strings.Contains(err.Error(), "already exists") {
-		// A previous sidecar leaked its container (e.g. a failed Stop
-		// deregistered the worker but left the runtime behind). Clear the
-		// stale same-name container once and retry instead of deadlocking
-		// every future preview of this project.
+		// Self-heal: a leaked same-name sidecar (crashed close) would
+		// otherwise wedge every future start for this project.
 		_ = f.Docker.Remove(ctx, spec.Name, true)
 		cid, err = f.Docker.Run(ctx, spec)
 	}
@@ -143,11 +138,8 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	}
 
 	// Endpoints ride the project container's bridge IP: the sidecar shares
-	// its netns, so Inspect reports no IP for the sidecar itself. That IP
-	// works from the host on Linux. Not on Docker Desktop — the engine
-	// lives in a VM, so the host cannot route to bridge IPs (refused dials
-	// fail instantly; unroutable ones black-hole). The probe distinguishes
-	// the two, then the relay (see DockerFactory doc) takes over.
+	// its netns, so Inspect reports no IP for the sidecar itself. Whether
+	// that IP is dialable from the host is decided by directCDPReady.
 	project, err := f.Docker.Inspect(ctx, cfg.ContainerID)
 	if err != nil {
 		cleanup()
@@ -170,9 +162,7 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 		}
 		ep = relayEp
 	}
-	// A sidecar whose CDP never answers is a wedge, not a wait: bound the
-	// readiness window so callers get an error instead of an HTTP request
-	// that hangs until the client gives up.
+	// A wedged CDP must fail the start, not hang the request.
 	wait := f.CDPWait
 	if wait <= 0 {
 		wait = cdpWaitTimeout
@@ -187,10 +177,10 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 }
 
 // directCDPReady probes whether the server can complete a CDP version
-// request over the engine's bridge network right now (Linux fast path).
-// Refused dials (Chromium still booting) fail instantly while unroutable
-// addresses (Docker Desktop) black-hole each attempt, so several short
-// attempts separate "not up yet" from "never routable".
+// request over the engine's bridge network (Linux fast path). Refused
+// dials (Chromium still booting) fail instantly while unroutable addresses
+// (Docker Desktop) black-hole each attempt, so several short attempts
+// separate "not up yet" from "never routable".
 func directCDPReady(ctx context.Context, client *http.Client, endpoint string, pollEvery time.Duration) bool {
 	if client == nil {
 		client = http.DefaultClient
@@ -224,10 +214,10 @@ func directCDPReady(ctx context.Context, client *http.Client, endpoint string, p
 }
 
 // startRelay starts the Docker Desktop fallback: a container on pcoder-net
-// that socat-forwards the sidecar's CDP and noVNC ports to its bridge IP,
-// published on the host's loopback with engine-assigned ports (Docker
-// rejects publications on netns-shared containers, which is why the relay
-// has its own netns). Reuses the browser image: it already ships socat.
+// that socat-forwards the sidecar's CDP and noVNC to its bridge IP, with
+// the ports published on host loopback (engine-assigned). The relay needs
+// its own netns because Docker rejects publications on container:<id>.
+// Reuses the browser image: it already ships socat.
 func (f *DockerFactory) startRelay(ctx context.Context, projectID, sidecarIP string) (string, Endpoint, error) {
 	image := f.Image
 	if image == "" {

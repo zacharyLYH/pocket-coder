@@ -89,9 +89,7 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadGateway, nav.ErrorText)
 			return
 		}
-		// Synchronous readiness: Open only lights up for a verified page.
-		// The client used to guess with a 30s poll plus a force-ready
-		// fallback; now a failed/dead target fails loudly here instead.
+		// Synchronous readiness: a failed/dead target fails loudly here.
 		ctx, cancel := context.WithTimeout(r.Context(), previewReadyTimeout)
 		defer cancel()
 		if err := waitForPageReady(ctx, s, target); err != nil {
@@ -209,10 +207,8 @@ var sidecarPorts = map[int]bool{
 }
 
 // dockerEmbeddedDNS is the address Docker's embedded DNS resolver listens
-// on in every container network namespace (see the embedded DNS docs). It
-// is an artifact of the namespace, not a user server: reporting it made the
-// UI show a fake "live" port (the port number itself is engine-chosen) and
-// the auto-start effect kicked off previews of nothing.
+// on in every container network namespace. It is an artifact of the
+// namespace, not a user server.
 const dockerEmbeddedDNS = "127.0.0.11"
 
 // parseListeningPorts extracts port numbers from ss/netstat output.
@@ -225,9 +221,7 @@ func parseListeningPorts(output string) []map[string]any {
 			continue
 		}
 		if strings.Contains(line, dockerEmbeddedDNS+":") {
-			// Docker's embedded DNS resolver, never a user server. Checked
-			// on the whole line: ss leads with the state, netstat trails it.
-			continue
+			continue // Docker's embedded DNS resolver, never a user server
 		}
 		for _, field := range strings.Fields(line) {
 			if i := strings.LastIndex(field, ":"); i > 0 {

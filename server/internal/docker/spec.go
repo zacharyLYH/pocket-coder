@@ -8,7 +8,7 @@ import (
 	dockerclient "github.com/fsouza/go-dockerclient"
 )
 
-// Safe container defaults: one shared bridge network, 512 MiB memory cap.
+// Safe container defaults: one shared bridge network, read-only rootfs.
 const DefaultNetwork = "pcoder-net"
 
 // loopbackIP is the host side of every loopback publication: ports are
@@ -22,8 +22,8 @@ type Mount struct {
 }
 
 // NetworkNamespace returns Docker's network-mode value for a sidecar that
-// must share a project's loopback interface. The sidecar then sees the
-// project's localhost frontend/backend without publishing project ports.
+// shares a project's network namespace, so it can reach the project's
+// localhost-bound services (dev servers) without publishing project ports.
 func NetworkNamespace(containerID string) string {
 	if containerID == "" {
 		return ""
@@ -49,13 +49,10 @@ type Spec struct {
 	// runs sh instead of the browser launcher).
 	Entrypoint []string
 	// PublishLoopback lists container ports to publish on the server
-	// host's loopback interface. Host ports are engine-assigned at start;
-	// read the assignments back via Inspect (Container.Published). Only
-	// usable on containers with their own network namespace (Docker rejects
-	// publications on container:<id> network mode) — the preview relay uses
-	// it so the server can reach CDP/noVNC over 127.0.0.1 on hosts where
-	// bridge IPs are unroutable (Docker Desktop). Never for project ports,
-	// which stay private.
+	// host's loopback with engine-assigned host ports (read back via
+	// Inspect → Container.Published). Only valid on containers with their
+	// own network namespace — Docker rejects publications on container:<id>.
+	// Never for project ports, which stay private.
 	PublishLoopback []int
 }
 

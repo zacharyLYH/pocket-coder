@@ -53,10 +53,10 @@ type Manager struct {
 	closed   bool
 }
 
-// startCall deduplicates concurrent Ensure starts for the same project: the
-// preview surface iframe and the viewport auto-fit POST arrive together on
-// every fresh PreviewSurface mount, and without this the losing starter
-// fails on the duplicate sidecar container name.
+// startCall deduplicates concurrent Ensure starts for the same project:
+// the preview surface iframe and the viewport auto-fit POST arrive together
+// on every fresh PreviewSurface mount, and racing starters collide on the
+// sidecar container name.
 type startCall struct {
 	done   chan struct{}
 	worker Worker

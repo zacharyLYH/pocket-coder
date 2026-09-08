@@ -721,7 +721,7 @@ func TestRestartBareHarnessNameRelaunchesHarness(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != "{\"name\":\"fake\"}\n" {
 		t.Fatalf("restart bare harness name: got %d %q, want 200 {\"name\":\"fake\"}", rec.Code, rec.Body)
 	}
-}	// TestCreateThenListSessions pins the user-visible flow: after creating a
+} // TestCreateThenListSessions pins the user-visible flow: after creating a
 // shell session and launching a harness session, the picker's list contains
 // exactly the expected names.
 func TestCreateThenListSessions(t *testing.T) {

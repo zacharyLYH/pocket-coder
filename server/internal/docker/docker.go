@@ -54,8 +54,8 @@ type Container struct {
 	// model networking — callers must treat "" as "unknown", not an error.
 	NetworkIP string
 	// Published maps container ports to the host ports Docker assigned for
-	// them on the server host's loopback interface (Spec.PublishLoopback).
-	// Always empty for containers without loopback publications.
+	// them on the host's loopback interface (Spec.PublishLoopback). Always
+	// empty for containers without loopback publications.
 	Published map[int]int
 }
 
@@ -186,9 +186,9 @@ func (d *Docker) Inspect(ctx context.Context, id string) (Container, error) {
 	}, nil
 }
 
-// publishedPorts extracts container→host port assignments for publications
-// on the loopback interface (the only interface this server ever asks Docker
-// to publish on). Engine-assigned host ports land here after start.
+// publishedPorts extracts container→host port assignments for loopback
+// publications (the only interface this server ever asks Docker to publish
+// on). Engine-assigned host ports land here after start.
 func publishedPorts(bindings map[dockerclient.Port][]dockerclient.PortBinding) map[int]int {
 	published := map[int]int{}
 	for port, binds := range bindings {
