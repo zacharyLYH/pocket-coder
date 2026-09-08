@@ -1,7 +1,7 @@
-// Terminal transport (Phase 7): a WebSocket bridging browser keystrokes to
-// `tmux attach` inside a project container. Strict pre-flight — unknown
-// project, stopped/missing container, or missing session are plain HTTP
-// errors before the upgrade; after the upgrade everything speaks frames.
+// Terminal transport: a WebSocket bridging browser keystrokes to
+// `tmux attach` inside a project container. Pre-flight failures (unknown
+// project, stopped container, missing session) are plain HTTP errors before
+// the upgrade.
 package httpapi
 
 import (
@@ -45,11 +45,10 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(*http.Request) bool { return true },
 }
 
-// ensureProject reconciles a project's container — recreating it from the
-// persisted volumes if Docker lost track of it — and requires it to be
-// running. Every session/harness route goes through this so they share one
-// behavior and one container-status round trip. Returns the project id and
-// whether to continue.
+// ensureProject requires a project's container to exist (recreating it from
+// persisted volumes if Docker lost track) and be running. Shared by all
+// session/harness routes so they behave identically. Returns the project id
+// and whether to continue.
 func ensureProject(d Deps, w http.ResponseWriter, r *http.Request) (string, bool) {
 	id := r.PathValue("id")
 	st, err := d.Projects.EnsureContainer(r.Context(), id)
@@ -141,12 +140,10 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 
 	var wmu sync.Mutex // gorilla writes are not concurrent-safe
 
-	// The pty hands us raw bytes in arbitrary chunks, and a chunk can end in
-	// the middle of a multi-byte character. JSON text frames must carry valid
-	// UTF-8: marshaling a split character would silently replace it with
-	// U+FFFD and the browser would paint mojibake. So the writer holds back
-	// a trailing incomplete sequence (at most 3 bytes) until the next chunk
-	// completes it. carry is only touched under wmu.
+	// The pty emits raw bytes that can end mid multi-byte character, but JSON
+	// frames must carry valid UTF-8. The writer holds back a trailing
+	// incomplete sequence (at most 3 bytes) until the next chunk completes
+	// it. carry is only touched under wmu.
 	var carry []byte
 	out := writerFunc(func(p []byte) (int, error) {
 		wmu.Lock()
@@ -170,8 +167,8 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 		return len(p), nil
 	})
 
-	// exitFrame sends the terminal-closing frame; conn writes share wmu with
-	// pty output (gorilla writes are not concurrent-safe).
+	// exitFrame sends the terminal-closing frame; shares wmu with pty output
+	// because gorilla writes are not concurrent-safe.
 	exitFrame := func(code int, detail string) {
 		wmu.Lock()
 		defer wmu.Unlock()
@@ -185,15 +182,11 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 		return
 	}
 
-	// inputs decouples websocket framing from attach-stdin writes. The pipe
-	// is synchronous: a write parks until the pty drains it, and once the
-	// exec stream ends nothing on the Docker side reads anymore. If the one
-	// goroutine that could notice the browser leaving were ever parked in
-	// that write, the handler would wedge forever (leaked goroutine, hijacked
-	// connection, FD per abused tab). So the reader only enqueues, and this
-	// pump owns the pipe; when the write side dies it drains the queue so the
-	// reader can always reach its ReadMessage again. Dropping stale keystrokes
-	// beats wedging the bridge; 64 frames is ample typing headroom.
+	// The pipe is synchronous: a write parks until the pty drains it, and
+	// once the exec ends nothing reads anymore. The ws reader therefore only
+	// enqueues and this pump owns the pipe, draining on stdin death so the
+	// reader always reaches its ReadMessage instead of wedging the handler.
+	// 64 frames is ample typing headroom.
 	inputs := make(chan string, 64)
 	go func() {
 		for data := range inputs {
@@ -258,12 +251,10 @@ type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
-// splitUTF8 finds where frameable output ends: it returns the length of the
-// longest prefix of b that ends on a character boundary, plus the number of
-// trailing bytes forming an incomplete sequence to carry into the next
-// chunk. A start byte promises 2-4 total bytes; if the buffer ends before
-// the promise is fulfilled, those bytes wait. Orphan continuation or invalid
-// bytes pass through rather than being held forever.
+// splitUTF8 returns the length of the longest prefix of b that ends on a
+// character boundary, plus the number of trailing bytes forming an
+// incomplete sequence to carry into the next chunk. Invalid or orphan
+// continuation bytes pass through rather than being held forever.
 func splitUTF8(b []byte) (n, hold int) {
 	for i := 1; i <= 3 && i <= len(b); i++ {
 		c := b[len(b)-i]
@@ -301,14 +292,12 @@ func handleListSessions(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "terminal", err)
 			return
 		}
-		// Merge state.json sessions that aren't in tmux yet (e.g. after
-		// container rebuild or tmux crash). These appear in the picker so
-		// the user can re-enter and the ensure path relaunches them.
+		// Merge state.json sessions that aren't in tmux yet (e.g. after a
+		// container rebuild) so the picker shows them and re-entry relaunches them.
 		seen := make(map[string]bool, len(sessions))
 		for _, s := range sessions {
 			seen[s.Name] = true
 		}
-		// Read session metadata directly from state.json (no Docker call).
 		var proj state.Project
 		d.State.View(func(doc *state.Document) { proj = doc.Projects[id] })
 		for name := range proj.Sessions {
@@ -328,8 +317,8 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 			HarnessID string `json:"harnessId"` // harness-driven session
 			// Create marks explicit intent to make a new session (the New
 			// Session dialog). Without it, an unknown name may only be
-			// resurrected (re-entry after kill, rebuild ghosts) — never
-			// materialized from a typo or a hand-edited URL.
+			// resurrected from recorded metadata — never materialized from a
+			// typo or a hand-edited URL.
 			Create bool `json:"create"`
 		}
 		if !decodeBody(w, r, &body, false) {
@@ -349,15 +338,14 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 			container := project.ContainerName(id)
 			exists, _ := d.Sessions.Exists(r.Context(), container, body.Name)
 			if exists {
-				// Session exists in tmux — but is it alive? A dead session
-				// (command exited, remain-on-exit) means the harness crashed
-				// or the user exited it. Kill the corpse and relaunch.
+				// A dead session (command exited, remain-on-exit) is killed and
+				// relaunched as the harness it was.
 				alive, _ := d.Sessions.IsAlive(r.Context(), container, body.Name)
 				if alive {
 					writeJSON(w, http.StatusOK, map[string]any{"name": body.Name})
 					return
 				}
-				// Dead session — kill it, then relaunch as the harness it was.
+				// Dead session — kill it, then relaunch.
 				_ = d.Sessions.Kill(r.Context(), container, body.Name)
 				sess, hasMeta := d.Projects.GetSession(id, body.Name)
 				harnessID := sess.Harness
@@ -386,10 +374,9 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 				createShellSession(d, w, r.Context(), id, body.Name, false)
 				return
 			}
-			// Not in tmux. Creating from nothing requires intent: an explicit
-			// create, the default "main" entry point, or recorded metadata
-			// (re-entry after kill, ghosts after a rebuild). Anything else is
-			// a typo or a hand-edited URL — 404, not a surprise session.
+			// Not in tmux. Creating from nothing requires explicit intent,
+			// recorded metadata, or the default "main" name; anything else
+			// is a typo — 404, not a surprise session.
 			sess, hasMeta := d.Projects.GetSession(id, body.Name)
 			if !body.Create && !hasMeta && body.Name != "main" {
 				writeErr(w, http.StatusNotFound, "no such session")
@@ -470,16 +457,14 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 
 // createShellSession creates a plain shell session and writes the response:
 // 201 for a fresh create, 200 for a restart under the same name. A duplicate
-// name is success either way (create doubles as the ensure call). Name
-// validity is enforced by session.Create; writeSessionErr maps the rejection.
+// name is success either way (create doubles as the ensure call).
 func createShellSession(d Deps, w http.ResponseWriter, ctx context.Context, id, name string, restart bool) {
 	if err := d.Sessions.Create(ctx, project.ContainerName(id), name); err != nil {
 		writeSessionErr(w, d, id, name, err)
 		return
 	}
-	// Record as a plain shell in state.json so restart/re-entry don't
-	// fall back to the ParseBase heuristic and accidentally relaunch a
-	// harness the user never chose.
+	// Record as a plain shell so restart doesn't fall back to the ParseBase
+	// heuristic and relaunch a harness the user never chose.
 	_ = d.Projects.RecordSession(id, name, "")
 	event := map[string]any{"id": id, "name": name}
 	status := http.StatusCreated
@@ -614,8 +599,8 @@ func handleInjectSession(d Deps) http.HandlerFunc {
 	}
 }
 
-// handleKillSession removes a tmux session. Killing an already-gone session
-// is idempotent success.
+// handleKillSession removes a tmux session, idempotently. Metadata in
+// state.json is kept so re-entry can relaunch the right kind of session.
 func handleKillSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
@@ -628,20 +613,17 @@ func handleKillSession(d Deps) http.HandlerFunc {
 			return
 		}
 		// Session metadata in state.json persists across kills so re-entry
-		// can detect this was a harness session and relaunch it.
+		// can relaunch it as the right kind of session.
 		_, _ = d.Events.Append("session.exit", map[string]any{"id": id, "name": name})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
 
 // handleDeleteSession deletes a session outright: the tmux session is killed
-// AND its state.json metadata is removed, so it disappears from the picker
-// for good (unlike kill, which keeps metadata to enable one-click relaunch).
-// The last remaining session cannot be deleted: a terminal with zero
-// sessions is not a state the UI can represent, and silently respawning a
-// session the user asked to delete would be worse. Kill (metadata kept,
-// one-click relaunch) remains the escape hatch for a lone bad session.
-// Killing an already-gone session is idempotent; so is removing metadata.
+// and its state.json metadata removed, so it disappears from the picker for
+// good (unlike kill, which keeps metadata for one-click relaunch). The last
+// remaining session cannot be deleted: zero sessions is not a state the UI
+// can represent.
 func handleDeleteSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
@@ -650,7 +632,7 @@ func handleDeleteSession(d Deps) http.HandlerFunc {
 			return
 		}
 		// Count sessions exactly like the picker renders them: live tmux
-		// sessions merged with state.json entries (ghosts after a rebuild).
+		// sessions merged with state.json ghosts.
 		sessions, err := d.Sessions.List(r.Context(), project.ContainerName(id))
 		if err != nil {
 			writeInternalErr(w, "delete session", err)
@@ -696,9 +678,8 @@ func handleRestartSession(d Deps) http.HandlerFunc {
 
 		_ = d.Sessions.Kill(ctx, container, name) // already-gone is fine
 
-		// Resolve kind from state.json: the session's metadata records which
-		// harness (if any) it was launched with. Falls back to ParseBase for
-		// sessions created before state tracking was added.
+		// Resolve kind from state.json metadata; fall back to ParseBase for
+		// sessions with no recorded harness.
 		sess, hasMeta := d.Projects.GetSession(id, name)
 		harnessID := sess.Harness
 		if harnessID == "" && hasMeta {
@@ -707,7 +688,6 @@ func handleRestartSession(d Deps) http.HandlerFunc {
 			return
 		}
 		if harnessID == "" {
-			// No metadata — guess from the name's harness-id prefix.
 			harnessID = session.ParseBase(name)
 		}
 
@@ -723,7 +703,6 @@ func handleRestartSession(d Deps) http.HandlerFunc {
 			writeLaunchErr(w, d, id, harnessID, err)
 			return
 		}
-		// Re-record the session with the same harness.
 		_ = d.Projects.RecordSession(id, restarted, harnessID)
 		_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": restarted, "harness": harnessID, "restart": true})
 		writeJSON(w, http.StatusOK, map[string]any{"name": restarted})

@@ -54,9 +54,7 @@ type Manager struct {
 }
 
 // startCall deduplicates concurrent Ensure starts for the same project:
-// the preview surface iframe and the viewport auto-fit POST arrive together
-// on every fresh PreviewSurface mount, and racing starters collide on the
-// sidecar container name.
+// racing starters collide on the sidecar container name.
 type startCall struct {
 	done   chan struct{}
 	worker Worker
@@ -72,7 +70,7 @@ func NewManager(factory WorkerFactory) *Manager {
 
 // Ensure returns the existing worker or starts exactly one worker for the
 // project. Starting happens outside the lock so a slow Chromium launch does
-// not block unrelated projects; concurrent starters for the SAME project
+// not block unrelated projects; concurrent starters for the same project
 // share one start instead of racing on the sidecar container name.
 func (m *Manager) Ensure(ctx context.Context, cfg Config) (Worker, error) {
 	if err := validateConfig(cfg); err != nil {
@@ -107,9 +105,9 @@ func (m *Manager) Ensure(ctx context.Context, cfg Config) (Worker, error) {
 	m.mu.Lock()
 	delete(m.inflight, cfg.ProjectID)
 	if err == nil && !m.closed {
-		// No existing-worker check here: the inflight map guarantees a
-		// single starter per project and the lock is held from delete to
-		// insert, so workers[id] cannot appear while Start runs.
+		// The inflight map guarantees a single starter per project and the
+		// lock is held from delete to insert, so no existing worker can
+		// appear while Start runs.
 		m.workers[cfg.ProjectID] = w
 	}
 	if m.closed && err == nil {

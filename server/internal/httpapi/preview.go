@@ -28,8 +28,8 @@ func handlePreviewStatus(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "get preview", err)
 			return
 		}
-		// "ready" means the browser actually answers, not just that a
-		// worker record exists: ping CDP briefly, report degraded if dead.
+		// "ready" means the browser actually answers: ping CDP, report
+		// degraded if dead.
 		ep := worker.Endpoint()
 		s, err := getCDP(id, ep.CDP)
 		if err != nil {
@@ -90,7 +90,7 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadGateway, nav.ErrorText)
 			return
 		}
-		// Synchronous readiness: a failed/dead target fails loudly here.
+		// Synchronous readiness: a dead target fails loudly here.
 		ctx, cancel := context.WithTimeout(r.Context(), previewReadyTimeout)
 		defer cancel()
 		if err := waitForPageReady(ctx, s, target); err != nil {
@@ -104,9 +104,9 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 func handlePreviewClose(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		// Clear cached CDP session first: it dangles whenever the worker
-		// is already gone (stop/restart/delete raced close), and a stale
-		// entry makes the next tools call dial a dead socket.
+		// Clear cached CDP session first: it dangles if the worker is gone
+		// (stop/restart/delete raced close), and a stale entry makes the next
+		// tools call dial a dead socket.
 		evictCDP(id)
 		if err := d.Preview.Stop(r.Context(), id); err != nil {
 			if errors.Is(err, preview.ErrNotFound) {
@@ -207,8 +207,8 @@ func handlePreviewPorts(d Deps) http.HandlerFunc {
 		cid := project.ContainerName(id)
 		output, err := d.Sessions.ExecCommand(r.Context(), cid, "ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || true")
 		if err != nil {
-			// Probe failure is not "no ports": return an error so the UI
-			// keeps its last-known list instead of blinking ports away.
+			// Return an error rather than an empty list so the UI keeps its
+			// last-known ports instead of blinking them away.
 			slog.Warn("preview ports probe failed", "project", id, "err", err)
 			writeErr(w, http.StatusBadGateway, "ports probe failed")
 			return
@@ -219,10 +219,9 @@ func handlePreviewPorts(d Deps) http.HandlerFunc {
 }
 
 // sidecarPorts belong to the preview browser itself (see preview package
-// Sidecar*Port constants and preview/image/start-browser). The sidecar
-// shares the project's network namespace, so ss lists them; showing them
-// would invite previewing the previewer, and auto-start could even pick one.
-// NOTE: a user service that binds one of these ports collides with the
+// Sidecar*Port constants). The sidecar shares the project's network
+// namespace, so ss lists them; showing them would invite previewing the
+// previewer. A user service that binds one of these ports collides with the
 // sidecar and is hidden by design — pick another port for app servers.
 var sidecarPorts = map[int]bool{
 	preview.SidecarVNCPort:      true,
@@ -231,9 +230,8 @@ var sidecarPorts = map[int]bool{
 	preview.SidecarCDPProxyPort: true,
 }
 
-// dockerEmbeddedDNS is the address Docker's embedded DNS resolver listens
-// on in every container network namespace. It is an artifact of the
-// namespace, not a user server.
+// dockerEmbeddedDNS is Docker's embedded DNS resolver, an artifact of the
+// network namespace, never a user server.
 const dockerEmbeddedDNS = "127.0.0.11"
 
 // parseListeningPorts extracts port numbers from ss/netstat listening output.

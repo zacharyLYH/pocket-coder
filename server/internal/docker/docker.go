@@ -1,6 +1,6 @@
 // Package docker is the server's only interface to the Docker engine: a
-// thin, boring wrapper over go-dockerclient. No raw docker API leaks past
-// this package — callers depend on the Client interface (mockable) and get
+// thin wrapper over go-dockerclient. No raw docker API leaks past this
+// package — callers depend on the Client interface (mockable) and get
 // typed errors.
 package docker
 
@@ -102,9 +102,9 @@ func (d *Docker) EnsureNetwork(ctx context.Context, name string) error {
 	return nil
 }
 
-// create creates a container from spec and returns its id. Unexported: the
-// only consumer is Run, and a bare created-but-not-started container is a
-// state callers should never see.
+// create creates a container from spec and returns its id. Unexported
+// because a created-but-not-started container is a state callers should
+// never see; the only consumer is Run.
 func (d *Docker) create(ctx context.Context, spec Spec) (string, error) {
 	c, err := d.c.CreateContainer(containerOptions(ctx, spec))
 	if err != nil {
@@ -187,8 +187,8 @@ func (d *Docker) Inspect(ctx context.Context, id string) (Container, error) {
 }
 
 // publishedPorts extracts container→host port assignments for loopback
-// publications (the only interface this server ever asks Docker to publish
-// on). Engine-assigned host ports land here after start.
+// publications (the only kind this server requests). Engine-assigned host
+// ports land here after start.
 func publishedPorts(bindings map[dockerclient.Port][]dockerclient.PortBinding) map[int]int {
 	published := map[int]int{}
 	for port, binds := range bindings {
@@ -197,9 +197,8 @@ func publishedPorts(bindings map[dockerclient.Port][]dockerclient.PortBinding) m
 			continue
 		}
 		for _, b := range binds {
-			// We only ever request loopback publications, but engines report
-			// the empty or unspecified address for default bindings; only
-			// bindings on a concrete non-loopback IP belong to someone else.
+			// Only bindings on a concrete non-loopback IP belong to someone
+			// else; engines report empty or 0.0.0.0 for default bindings.
 			if b.HostIP != "" && b.HostIP != loopbackIP && b.HostIP != "0.0.0.0" {
 				continue
 			}

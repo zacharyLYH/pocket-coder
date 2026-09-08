@@ -84,9 +84,8 @@ func containerOptions(ctx context.Context, spec Spec) dockerclient.CreateContain
 	}
 	if !strings.HasPrefix(network, "container:") {
 		// Projects reach host services (e.g. a local git remote) through
-		// the conventional name; on Linux it maps to the bridge gateway,
-		// on Docker Desktop it is built in. Docker rejects this mapping
-		// alongside container:<id> network mode, so sidecars omit it.
+		// the conventional name. Docker rejects this mapping alongside
+		// container:<id> network mode, so sidecars omit it.
 		host.ExtraHosts = []string{"host.docker.internal:host-gateway"}
 	}
 	for _, m := range spec.Volumes {

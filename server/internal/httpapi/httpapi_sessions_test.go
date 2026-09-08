@@ -158,10 +158,9 @@ func TestTerminalPreflight(t *testing.T) {
 	}
 }
 
-// TestTerminalRelaunchesHarnessFromState proves the WebSocket pre-flight
+// TestTerminalRelaunchesHarnessFromState verifies the WebSocket pre-flight
 // relaunches a harness session from state.json when it's missing from tmux
-// (e.g. after container rebuild). The session must exist in tmux before
-// the upgrade proceeds.
+// (e.g. after container rebuild), so the attach proceeds instead of 404.
 func TestTerminalRelaunchesHarnessFromState(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
@@ -183,9 +182,8 @@ func TestTerminalRelaunchesHarnessFromState(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	// The wsGet helper won't work here because LaunchNamed does a WebSocket
-	// attach prep that needs more mocking. Instead verify the HTTP response
-	// is NOT 404 (which was the old behavior).
+	// wsGet can't be used here: LaunchNamed does WebSocket attach prep that
+	// needs more mocking, so dial manually and check for a non-404 response.
 	req := httptest.NewRequest(http.MethodGet, "/ws/projects/abc/sessions/helper-1", nil)
 	req.Header.Set("Upgrade", "websocket")
 	req.AddCookie(cookie)
@@ -198,9 +196,9 @@ func TestTerminalRelaunchesHarnessFromState(t *testing.T) {
 	}
 }
 
-// TestListSessionsIncludesStateJSONEntries proves the session picker shows
-// sessions from state.json that aren't in tmux (e.g. after container rebuild
-// or tmux crash). The user can see them and re-enter to trigger relaunch.
+// TestListSessionsIncludesStateJSONEntries verifies the session picker lists
+// state.json sessions missing from tmux (e.g. after a container rebuild), so
+// the user can re-enter and trigger the relaunch path.
 func TestListSessionsIncludesStateJSONEntries(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
@@ -238,7 +236,7 @@ func TestListSessionsIncludesStateJSONEntries(t *testing.T) {
 	}
 }
 
-// TestEnsureRelaunchesDeadHarnessSession proves the ensure endpoint
+// TestEnsureRelaunchesDeadHarnessSession verifies the ensure endpoint
 // (POST /sessions with just a name) detects a dead tmux session and
 // relaunches the harness it was running.
 func TestEnsureRelaunchesDeadHarnessSession(t *testing.T) {
@@ -286,11 +284,9 @@ func TestEnsureRelaunchesDeadHarnessSession(t *testing.T) {
 	waitForEvent(t, d, "harness.launch")
 }
 
-// TestEnsureFallsBackToShellWhenHarnessGone proves that when a harness
-// session's metadata points to a harness that was deleted from the registry,
-// the ensure path falls back to a plain shell AND clears the stale metadata.
-// Without the fix, stale metadata causes every subsequent re-entry to try
-// (and fail) to relaunch the missing harness.
+// TestEnsureFallsBackToShellWhenHarnessGone verifies the ensure path falls
+// back to a plain shell and clears stale metadata when the recorded harness
+// no longer exists — otherwise re-entry keeps trying to relaunch it.
 func TestEnsureFallsBackToShellWhenHarnessGone(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
@@ -327,10 +323,10 @@ func TestEnsureFallsBackToShellWhenHarnessGone(t *testing.T) {
 	}
 }
 
-// TestRestartPlainShellDoesNotLaunchHarness proves the business logic:
-// a plain shell named "opencode-1" must restart as a plain shell, not
-// relaunch the opencode harness. Without recording empty-harness metadata
-// in state.json, the restart path falls back to ParseBase and guesses wrong.
+// TestRestartPlainShellDoesNotLaunchHarness verifies a plain shell restarts
+// as a plain shell. This works because create records empty-harness metadata
+// in state.json; without it, restart would fall back to ParseBase and
+// guess a harness from the name prefix.
 func TestRestartPlainShellDoesNotLaunchHarness(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
@@ -381,10 +377,9 @@ func TestRestartPlainShellDoesNotLaunchHarness(t *testing.T) {
 	// are called — plain shell restart must not touch the harness path.
 }
 
-// TestTerminalRoundTrip drives a full session over the bridge against a fake
-// pty: input is echoed back as output frames, resize reaches ResizeTTY while
-// the session runs, and quitting ends with an exit frame carrying the real
-// code. Attach/detach events land in the log.
+// TestTerminalRoundTrip drives a full session against a fake pty: input is
+// echoed back as output frames, resize reaches ResizeTTY, and quitting ends
+// with an exit frame carrying the real code.
 func TestTerminalRoundTrip(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
@@ -484,9 +479,9 @@ func TestTerminalRoundTrip(t *testing.T) {
 	waitForEvent(t, d, "terminal.detach")
 }
 
-// TestTerminalSurvivesAbruptClientDrop proves the server side unwinds when
-// the browser vanishes mid-session: the attach sees EOF on its stdin pipe,
-// the handler returns, and the detach event still lands.
+// TestTerminalSurvivesAbruptClientDrop verifies the server unwinds when the
+// browser vanishes mid-session: the attach sees EOF, the handler returns,
+// and the detach event still lands.
 func TestTerminalSurvivesAbruptClientDrop(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
@@ -699,10 +694,9 @@ func TestCreateHarnessSessionNotACLI422(t *testing.T) {
 	waitForEvent(t, d, "validation.failed")
 }
 
-// Regression: a plain shell named "opencode" (any harness id) used to be
-// TestHarnessNamedSessionsAreValidShellSessions verifies that harness-named
-// sessions (e.g. "fake", "fake-1") can be created as plain shells. Session
-// metadata in state.json distinguishes them from actual harness sessions.
+// TestRestartBareHarnessNameRelaunchesHarness verifies that a session named
+// after a bare harness id ("fake", no -<n> suffix) restarts as that harness,
+// not as a plain shell.
 func TestRestartBareHarnessNameRelaunchesHarness(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
@@ -721,9 +715,8 @@ func TestRestartBareHarnessNameRelaunchesHarness(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != "{\"name\":\"fake\"}\n" {
 		t.Fatalf("restart bare harness name: got %d %q, want 200 {\"name\":\"fake\"}", rec.Code, rec.Body)
 	}
-} // TestCreateThenListSessions pins the user-visible flow: after creating a
-// shell session and launching a harness session, the picker's list contains
-// exactly the expected names.
+} // TestCreateThenListSessions pins the picker's list after creating a shell
+// session and a harness session: exactly the two expected names.
 func TestCreateThenListSessions(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
@@ -773,10 +766,9 @@ func TestCreateThenListSessions(t *testing.T) {
 	}
 }
 
-// TestDeleteSessionRemovesStateMetadata pins the delete contract: DELETE
-// /sessions/{name}/delete kills the tmux session AND removes its state.json
-// metadata, so the picker shows it gone for good (plain kill keeps metadata
-// to enable one-click relaunch).
+// TestDeleteSessionRemovesStateMetadata pins the delete contract: the tmux
+// session is killed AND its state.json metadata is removed, unlike plain
+// kill which keeps metadata to enable one-click relaunch.
 func TestDeleteSessionRemovesStateMetadata(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
