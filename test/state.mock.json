@@ -10,6 +10,7 @@
       "cloneMethod": "http",
       "harnesses": ["opencode"],
       "sessions": {
+        "main": {},
         "oc1": { "harness": "opencode" }
       },
       "quickCommands": {
