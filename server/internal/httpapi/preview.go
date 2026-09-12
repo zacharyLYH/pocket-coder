@@ -97,6 +97,7 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadGateway, "preview target never became ready")
 			return
 		}
+		_, _ = d.Events.Append("preview.start", map[string]any{"id": r.PathValue("id"), "port": body.Port})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "port": body.Port, "status": "ready"})
 	}
 }
@@ -116,6 +117,7 @@ func handlePreviewClose(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "stop preview", err)
 			return
 		}
+		_, _ = d.Events.Append("preview.close", map[string]any{"id": id})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "stopped"})
 	}
 }
@@ -151,6 +153,12 @@ func handlePreviewSurface(d Deps) http.HandlerFunc {
 		if hasDotDotSegment(path) {
 			writeErr(w, http.StatusBadRequest, "invalid preview path")
 			return
+		}
+		// One event per page open: the noVNC entry document loads once per
+		// visit, while its assets and the websockify stream share this
+		// handler and would spam the log.
+		if path == "vnc.html" || path == "vnc_lite.html" {
+			_, _ = d.Events.Append("preview.open", map[string]any{"id": r.PathValue("id")})
 		}
 		proxy := newPreviewProxy(target, path)
 		proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {

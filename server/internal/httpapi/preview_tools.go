@@ -493,6 +493,7 @@ func handlePreviewNavigate(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "cdp navigate", err)
 			return
 		}
+		_, _ = d.Events.Append("preview.navigate", map[string]any{"id": r.PathValue("id"), "url": body.URL})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
@@ -584,6 +585,9 @@ func handlePreviewClick(d Deps) http.HandlerFunc {
 			writeInternalErr(w, op, err)
 			return
 		}
+		_, _ = d.Events.Append("preview.click", map[string]any{
+			"id": r.PathValue("id"), "selector": body.Selector, "x": body.X, "y": body.Y,
+		})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
@@ -619,6 +623,10 @@ func handlePreviewType(d Deps) http.HandlerFunc {
 			writeInternalErr(w, op, err)
 			return
 		}
+		// The text itself is never logged — it may hold passwords or keys.
+		_, _ = d.Events.Append("preview.type", map[string]any{
+			"id": r.PathValue("id"), "selector": body.Selector, "len": len(body.Text),
+		})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
@@ -635,6 +643,7 @@ func handlePreviewReload(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "cdp reload", err)
 			return
 		}
+		_, _ = d.Events.Append("preview.reload", map[string]any{"id": r.PathValue("id")})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
