@@ -6,6 +6,11 @@ import { previewSurfacePath } from '@/lib/preview'
 // The project is not loaded in this iframe. It loads the authenticated noVNC
 // surface, which keeps the browser chrome and project traffic server-side.
 //
+// The page is chromeless on purpose: it opens in its own tab and the
+// sidecar stays warm behind it, so leaving means closing the tab —
+// reopening reattaches to the same browser instantly. Stopping the sidecar
+// is the Close button's job in the Preview tab.
+//
 // The noVNC view uses resize=scale (see lib/preview) so the framebuffer
 // fills the iframe during the async backend resize, then converges to ~1:1
 // once this page fits the sidecar Chromium window to the iframe: after load
@@ -14,7 +19,7 @@ import { previewSurfacePath } from '@/lib/preview'
 // The previewed app then reflows like a real browser window instead of
 // cropping a fixed-size desktop. Syncing starts on iframe load — never
 // before — so merely opening the page can't resurrect a closed sidecar.
-export function PreviewSurface({ projectId, onBack }: { projectId: string; onBack: () => void }) {
+export function PreviewSurface({ projectId }: { projectId: string }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const [loaded, setLoaded] = useState(false)
 
@@ -55,15 +60,11 @@ export function PreviewSurface({ projectId, onBack }: { projectId: string; onBac
   }, [projectId, loaded])
 
   return (
-    <main className="flex min-h-dvh flex-col">
-      <header className="flex items-center gap-3 border-b p-3">
-        <button type="button" className="text-sm text-muted-foreground" onClick={onBack}>Back</button>
-        <h1 className="text-sm font-semibold">Preview</h1>
-      </header>
+    <main className="h-dvh w-full">
       <iframe
         ref={frameRef}
         title="Remote project preview"
-        className="min-h-0 flex-1 border-0"
+        className="h-full w-full border-0"
         src={previewSurfacePath(projectId)}
         allow="clipboard-read; clipboard-write"
         onLoad={() => setLoaded(true)}

@@ -62,7 +62,7 @@ export default function App() {
   }
   const previewId = parsePreviewPath(path)
   if (previewId !== null) {
-    return <PreviewSurface projectId={previewId} onBack={() => navigate('/')} />
+    return <PreviewSurface projectId={previewId} />
   }
   return <Home email={email} onLogout={() => setState('out')} navigate={navigate} />
 }
