@@ -95,6 +95,11 @@ func New(d Deps) http.Handler {
 
 	if d.Projects != nil && d.Sessions != nil {
 		authed("POST", "/api/projects/exec", handleExecCommand)
+		authed("GET", "/api/projects/{id}/git/status", handleGitStatus)
+		authed("GET", "/api/projects/{id}/git/diff", handleGitDiff)
+		authed("POST", "/api/projects/{id}/git/stage", func(d Deps) http.HandlerFunc { return handleGitStage(d, false) })
+		authed("POST", "/api/projects/{id}/git/unstage", func(d Deps) http.HandlerFunc { return handleGitStage(d, true) })
+		authed("POST", "/api/projects/{id}/git/stage-hunk", handleGitStageHunk)
 	}
 
 	if d.Preview != nil {

@@ -9,6 +9,7 @@ import { TerminalPane, type ConnStatus } from '@/components/terminal/TerminalPan
 import { NewSessionDialog } from '@/components/terminal/NewSessionDialog'
 import { PreviewTab } from '@/components/terminal/PreviewTab'
 import { LogsTab } from '@/components/terminal/LogsTab'
+import { DiffTab } from '@/components/terminal/DiffTab'
 
 // The terminal screen: header (status, session picker, actions) above the
 // live terminal pane. Owns which session is attached and the shared status/
@@ -26,7 +27,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   const [harnesses, setHarnesses] = useState<Harness[]>([])
   const [redial, setRedial] = useState(0)
   const [newDialogOpen, setNewDialogOpen] = useState(false)
-  const [tab, setTab] = useState<'terminal' | 'preview' | 'logs'>('terminal')
+  const [tab, setTab] = useState<'terminal' | 'preview' | 'logs' | 'diff'>('terminal')
   const hostRef = useRef<HTMLDivElement>(null)
 
   // ─── data fetching ──────────────────────────────────────────────────
@@ -142,6 +143,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
       </div>
       <div className="flex gap-2 px-3">
         <Button className="flex-1" size="sm" variant={tab === 'terminal' ? 'secondary' : 'outline'} onClick={() => setTab('terminal')} data-testid="tab-terminal">Terminal</Button>
+        <Button className="flex-1" size="sm" variant={tab === 'diff' ? 'secondary' : 'outline'} onClick={() => setTab('diff')} data-testid="tab-diff">Diff</Button>
         <Button className="flex-1" size="sm" variant={tab === 'preview' ? 'secondary' : 'outline'} onClick={() => setTab('preview')} data-testid="tab-preview">Preview</Button>
         <Button className="flex-1" size="sm" variant={tab === 'logs' ? 'secondary' : 'outline'} onClick={() => setTab('logs')} data-testid="tab-logs">Logs</Button>
       </div>
@@ -155,6 +157,10 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
       {tab === 'preview' ? (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">
           <PreviewTab projectId={projectId} onOpenPreview={onOpenPreview} />
+        </div>
+      ) : tab === 'diff' ? (
+        <div className="min-h-0 flex-1 w-full px-3 pb-3">
+          <DiffTab projectId={projectId} />
         </div>
       ) : tab === 'logs' ? (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">
