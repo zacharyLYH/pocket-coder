@@ -23,6 +23,7 @@ import (
 	"pcoder/internal/httpapi"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
+	"pcoder/internal/projectlog"
 	"pcoder/internal/session"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
@@ -114,6 +115,7 @@ func main() {
 		Events: ev, Version: version, Auth: authSvc, Projects: svc,
 		Sessions: sessions, Harnesses: harnesses,
 		SSHKeys: sshKeyStore, State: st, Preview: previewManager,
+		ProjectLogs: projectlog.NewManager(0),
 	})}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

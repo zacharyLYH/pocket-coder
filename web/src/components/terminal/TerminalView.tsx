@@ -8,6 +8,7 @@ import { TerminalHeader } from '@/components/terminal/TerminalHeader'
 import { TerminalPane, type ConnStatus } from '@/components/terminal/TerminalPane'
 import { NewSessionDialog } from '@/components/terminal/NewSessionDialog'
 import { PreviewTab } from '@/components/terminal/PreviewTab'
+import { LogsTab } from '@/components/terminal/LogsTab'
 
 // The terminal screen: header (status, session picker, actions) above the
 // live terminal pane. Owns which session is attached and the shared status/
@@ -25,7 +26,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   const [harnesses, setHarnesses] = useState<Harness[]>([])
   const [redial, setRedial] = useState(0)
   const [newDialogOpen, setNewDialogOpen] = useState(false)
-  const [tab, setTab] = useState<'terminal' | 'preview'>('terminal')
+  const [tab, setTab] = useState<'terminal' | 'preview' | 'logs'>('terminal')
   const hostRef = useRef<HTMLDivElement>(null)
 
   // ─── data fetching ──────────────────────────────────────────────────
@@ -142,6 +143,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
       <div className="flex gap-2 px-3">
         <Button className="flex-1" size="sm" variant={tab === 'terminal' ? 'secondary' : 'outline'} onClick={() => setTab('terminal')} data-testid="tab-terminal">Terminal</Button>
         <Button className="flex-1" size="sm" variant={tab === 'preview' ? 'secondary' : 'outline'} onClick={() => setTab('preview')} data-testid="tab-preview">Preview</Button>
+        <Button className="flex-1" size="sm" variant={tab === 'logs' ? 'secondary' : 'outline'} onClick={() => setTab('logs')} data-testid="tab-logs">Logs</Button>
       </div>
 
       {error && (
@@ -153,6 +155,10 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
       {tab === 'preview' ? (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">
           <PreviewTab projectId={projectId} onOpenPreview={onOpenPreview} />
+        </div>
+      ) : tab === 'logs' ? (
+        <div className="min-h-0 flex-1 w-full px-3 pb-3">
+          <LogsTab projectId={projectId} />
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl">

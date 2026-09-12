@@ -16,6 +16,7 @@ import (
 	"pcoder/internal/harness"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
+	"pcoder/internal/projectlog"
 	"pcoder/internal/session"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
@@ -31,15 +32,16 @@ type EventLog interface {
 // Deps carries everything New needs. Grows over time instead of
 // stretching New's signature.
 type Deps struct {
-	Events    EventLog
-	Version   string
-	Auth      *auth.Service
-	Projects  *project.Service
-	Preview   *preview.Manager
-	Sessions  *session.Service
-	Harnesses *harness.Store
-	SSHKeys   *sshkeys.Store
-	State     *state.Store
+	Events      EventLog
+	Version     string
+	Auth        *auth.Service
+	Projects    *project.Service
+	Preview     *preview.Manager
+	ProjectLogs *projectlog.Manager
+	Sessions    *session.Service
+	Harnesses   *harness.Store
+	SSHKeys     *sshkeys.Store
+	State       *state.Store
 }
 
 // New returns the HTTP handler for the whole server. Login/PIN routes are
@@ -59,6 +61,10 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/auth/logout", handleLogout(d))
 	authed("GET", "/api/auth/me", handleMe)
 	authed("GET", "/api/events", func(d Deps) http.HandlerFunc { return handleEvents(d.Events) })
+	// Project running logs: ungated (nil-safe store) and existence-unchecked
+	// — an unknown project simply tails empty.
+	authed("GET", "/api/projects/{id}/logs", handleProjectLogs)
+	authed("POST", "/api/projects/{id}/logs", handleAppendProjectLog)
 
 	if d.Projects != nil {
 		authed("GET", "/api/projects", handleListProjects)

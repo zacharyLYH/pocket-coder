@@ -16,6 +16,7 @@ import (
 	"pcoder/internal/harness"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
+	"pcoder/internal/projectlog"
 	"pcoder/internal/session"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
@@ -42,7 +43,7 @@ func newTestDeps(t *testing.T) (Deps, *bytes.Buffer) {
 	var pinOut bytes.Buffer
 	svc := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut})
 	svc.MailerName = "console"
-	return Deps{Events: ev, Version: "dev", Auth: svc}, &pinOut
+	return Deps{Events: ev, Version: "dev", Auth: svc, ProjectLogs: projectlog.NewManager(0)}, &pinOut
 }
 
 func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {

@@ -97,7 +97,7 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadGateway, "preview target never became ready")
 			return
 		}
-		_, _ = d.Events.Append("preview.start", map[string]any{"id": r.PathValue("id"), "port": body.Port})
+		plog(d, r.PathValue("id"), "preview.start", "Preview started on :"+strconv.Itoa(body.Port), map[string]any{"port": body.Port})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "port": body.Port, "status": "ready"})
 	}
 }
@@ -117,7 +117,7 @@ func handlePreviewClose(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "stop preview", err)
 			return
 		}
-		_, _ = d.Events.Append("preview.close", map[string]any{"id": id})
+		plog(d, id, "preview.close", "Preview closed", nil)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "stopped"})
 	}
 }
@@ -158,7 +158,7 @@ func handlePreviewSurface(d Deps) http.HandlerFunc {
 		// visit, while its assets and the websockify stream share this
 		// handler and would spam the log.
 		if path == "vnc.html" || path == "vnc_lite.html" {
-			_, _ = d.Events.Append("preview.open", map[string]any{"id": r.PathValue("id")})
+			plog(d, r.PathValue("id"), "preview.open", "Preview opened", nil)
 		}
 		proxy := newPreviewProxy(target, path)
 		proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
