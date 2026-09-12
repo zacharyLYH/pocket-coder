@@ -119,8 +119,10 @@ func TestCreate(t *testing.T) {
 		}
 	})
 
-	t.Run("starts a detached shell in /workspace", func(t *testing.T) {
+	t.Run("starts a detached shell in /workspace when blank", func(t *testing.T) {
 		d := dockermocks.NewMockClient(t)
+		d.EXPECT().Exec(mock.Anything, "c1", []string{"test", "-d", "/workspace/repo/.git"}, false).
+			Return(docker.ExecResult{ExitCode: 1}, nil)
 		d.EXPECT().Exec(mock.Anything, "c1",
 			append([]string{"tmux", "new-session", "-d", "-s", "work", "-c", "/workspace",
 				";", "set-option", "-s", "escape-time", "0"}, ThemeArgs()...), false).
@@ -130,8 +132,23 @@ func TestCreate(t *testing.T) {
 		}
 	})
 
+	t.Run("starts in /workspace/repo when a clone lives there", func(t *testing.T) {
+		d := dockermocks.NewMockClient(t)
+		d.EXPECT().Exec(mock.Anything, "c1", []string{"test", "-d", "/workspace/repo/.git"}, false).
+			Return(docker.ExecResult{ExitCode: 0}, nil)
+		d.EXPECT().Exec(mock.Anything, "c1",
+			append([]string{"tmux", "new-session", "-d", "-s", "work", "-c", "/workspace/repo",
+				";", "set-option", "-s", "escape-time", "0"}, ThemeArgs()...), false).
+			Return(docker.ExecResult{ExitCode: 0}, nil)
+		if err := New(d).Create(context.Background(), "c1", "work"); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+	})
+
 	t.Run("duplicate name surfaces the tmux message", func(t *testing.T) {
 		d := dockermocks.NewMockClient(t)
+		d.EXPECT().Exec(mock.Anything, "c1", []string{"test", "-d", "/workspace/repo/.git"}, false).
+			Return(docker.ExecResult{ExitCode: 0}, nil)
 		d.EXPECT().Exec(mock.Anything, "c1", mock.Anything, false).
 			Return(docker.ExecResult{ExitCode: 1, Output: "duplicate session: work"}, nil)
 		err := New(d).Create(context.Background(), "c1", "work")

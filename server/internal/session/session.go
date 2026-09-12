@@ -176,8 +176,9 @@ func newSessionArgs(name, dir string, cmd []string) []string {
 	return append(args, ThemeArgs()...)
 }
 
-// Create starts a detached session running a plain shell in /workspace.
-// A duplicate name fails with the engine's message surfaced.
+// Create starts a detached session running a plain shell in the repo dir
+// (see RepoTarget). A duplicate name fails with the engine's message
+// surfaced.
 //
 // Every session zeroes tmux's escape-time (default 500ms): with a real
 // keyboard over the bridge, a lone ESC followed by any key within that
@@ -187,7 +188,11 @@ func (s *Service) Create(ctx context.Context, container, name string) error {
 	if !ValidName(name) {
 		return fmt.Errorf("%w: %q", ErrInvalidName, name)
 	}
-	res, err := s.dkr.Exec(ctx, container, newSessionArgs(name, "/workspace", nil), false)
+	dir, err := s.RepoTarget(ctx, container)
+	if err != nil {
+		return err
+	}
+	res, err := s.dkr.Exec(ctx, container, newSessionArgs(name, dir, nil), false)
 	if err != nil {
 		return err
 	}
@@ -285,9 +290,12 @@ func (s *Service) Installed(ctx context.Context, container string, cmds []string
 	return out, nil
 }
 
-// repoTarget picks /workspace/repo when a clone lives there, else /workspace
-// for blank projects.
-func (s *Service) repoTarget(ctx context.Context, container string) (string, error) {
+// RepoTarget is the shared "cd to the repo" helper: /workspace/repo when
+// a clone lives there, else /workspace for blank projects. Every entry
+// point that hands a shell to the user (plain shells and harness
+// launches) resolves its start dir through here, so nobody needs to cd
+// themselves.
+func (s *Service) RepoTarget(ctx context.Context, container string) (string, error) {
 	res, err := s.dkr.Exec(ctx, container, []string{"test", "-d", repoDir + "/.git"}, false)
 	if err != nil {
 		return "", err
@@ -506,7 +514,7 @@ func (s *Service) LaunchNamed(ctx context.Context, container, name string, h har
 	if !ValidName(name) {
 		return "", fmt.Errorf("%w: %q", ErrInvalidName, name)
 	}
-	dir, err := s.repoTarget(ctx, container)
+	dir, err := s.RepoTarget(ctx, container)
 	if err != nil {
 		return "", err
 	}

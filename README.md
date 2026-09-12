@@ -7,7 +7,7 @@ Rotate between free coding harnesses while vibe coding on the move.
 **Prereqs:** Go, Node, Docker.
 
 ```sh
-make setup                      # checks tools, creates server/.env, installs deps, seeds from dev/state.mock.json
+make setup                      # checks tools, creates server/.env, installs deps, seeds from test/state.mock.json
 # first run creates server/.env — edit PCODER_LOGIN_EMAIL, then re-run make setup
 
 make start-local                # :8080 backend + :5173 frontend (no docker)
@@ -50,7 +50,7 @@ Config loads from `server/.env` (or `../.env` when run inside `server/`). Real e
 
 | Command | What it runs | Needs |
 |---|---|---|
-| `make setup` | First-time setup (tools + `server/.env` + `npm install` + seed `dev/state.mock.json`) | Go, Node, Docker |
+| `make setup` | First-time setup (tools + `server/.env` + `npm install` + seed `test/state.mock.json`) | Go, Node, Docker |
 | `make start-local` | Backend + frontend directly (no docker) | Go, Node |
 | `make start-docker` | Full stack via docker compose | Docker |
 | `make test` | Full stack tests (Go unit+integration, web unit+build+e2e) | — |

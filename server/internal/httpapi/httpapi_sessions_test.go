@@ -62,10 +62,7 @@ func TestCreateSessionLifecycle(t *testing.T) {
 
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "work"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil).Once() // create: no such session yet
-	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
-		append([]string{"tmux", "new-session", "-d", "-s", "work", "-c", "/workspace",
-			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
-		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
+	expectShellCreate(md, "abc", "work")
 
 	rec = authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"work","create":true}`)
 	want := "{\"name\":\"work\"}\n"
@@ -98,10 +95,7 @@ func TestCreateSessionLifecycle(t *testing.T) {
 	// a harness id is a valid shell-session name (created as plain shell)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "fake"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil).Once()
-	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
-		append([]string{"tmux", "new-session", "-d", "-s", "fake", "-c", "/workspace",
-			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
-		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
+	expectShellCreate(md, "abc", "fake")
 	if rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"fake","create":true}`); rec.Code != http.StatusCreated {
 		t.Fatalf("harness-named shell: got %d %q, want 201", rec.Code, rec.Body)
 	}
@@ -303,10 +297,7 @@ func TestEnsureFallsBackToShellWhenHarnessGone(t *testing.T) {
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "has-session", "-t", "gone-1"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil)
-	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
-		append([]string{"tmux", "new-session", "-d", "-s", "gone-1", "-c", "/workspace",
-			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
-		Return(docker.ExecResult{ExitCode: 0}, nil)
+	expectShellCreate(md, "abc", "gone-1")
 
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
@@ -337,10 +328,7 @@ func TestRestartPlainShellDoesNotLaunchHarness(t *testing.T) {
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "has-session", "-t", "opencode-1"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil).Once()
-	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
-		append([]string{"tmux", "new-session", "-d", "-s", "opencode-1", "-c", "/workspace",
-			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
-		Return(docker.ExecResult{ExitCode: 0}, nil)
+	expectShellCreate(md, "abc", "opencode-1")
 
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
@@ -364,10 +352,7 @@ func TestRestartPlainShellDoesNotLaunchHarness(t *testing.T) {
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"tmux", "kill-session", "-t", "opencode-1"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
-	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
-		append([]string{"tmux", "new-session", "-d", "-s", "opencode-1", "-c", "/workspace",
-			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
-		Return(docker.ExecResult{ExitCode: 0}, nil)
+	expectShellCreate(md, "abc", "opencode-1")
 
 	rec = authedPost(t, h, cookie, "/api/projects/abc/sessions/opencode-1/restart", "")
 	if rec.Code != http.StatusOK {
@@ -590,6 +575,19 @@ func hasEventType(d Deps, typ string) bool {
 	return false
 }
 
+// expectShellCreate pins the exec chain session.Create performs for a plain
+// shell against container "pcoder-<id>", session <name>: the RepoTarget
+// probe (blank project → /workspace) plus the themed new-session argv.
+func expectShellCreate(md *dockermocks.MockClient, id, name string) {
+	md.EXPECT().Exec(mock.Anything, "pcoder-"+id,
+		[]string{"test", "-d", "/workspace/repo/.git"}, false).
+		Return(docker.ExecResult{ExitCode: 1}, nil).Once()
+	md.EXPECT().Exec(mock.Anything, "pcoder-"+id,
+		append([]string{"tmux", "new-session", "-d", "-s", name, "-c", "/workspace",
+			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
+		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
+}
+
 // expectLaunch pins the exec chain LaunchNamed performs for the fake plugin
 // against container "pcoder-<id>", session <name>.
 func expectLaunch(md *dockermocks.MockClient, id, name string) {
@@ -724,10 +722,7 @@ func TestCreateThenListSessions(t *testing.T) {
 
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "work"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil).Once() // create: not there yet
-	shellCreate := append([]string{"tmux", "new-session", "-d", "-s", "work", "-c", "/workspace",
-		";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...)
-	md.EXPECT().Exec(mock.Anything, "pcoder-abc", shellCreate, false).
-		Return(docker.ExecResult{ExitCode: 0}, nil).Once()
+	expectShellCreate(md, "abc", "work")
 	expectLaunch(md, "abc", "fake-1")
 
 	// the list the picker renders: the shell the user named plus the
@@ -872,10 +867,7 @@ func TestKillAndRestartSessions(t *testing.T) {
 	waitForEvent(t, d, "session.exit")
 
 	// restart resolves "main": no such plugin → plain shell recreation
-	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
-		append([]string{"tmux", "new-session", "-d", "-s", "main", "-c", "/workspace",
-			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
-		Return(docker.ExecResult{ExitCode: 0}, nil)
+	expectShellCreate(md, "abc", "main")
 	rec = authedPost(t, h, cookie, "/api/projects/abc/sessions/main/restart", "")
 	if rec.Code != http.StatusOK || rec.Body.String() != "{\"name\":\"main\"}\n" {
 		t.Fatalf("restart shell: got %d %q", rec.Code, rec.Body)

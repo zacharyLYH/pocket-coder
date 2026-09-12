@@ -4,13 +4,16 @@
   },
   "projects": {
     "deadbeef": {
-      "name": "hello-world",
-      "repo": "https://github.com/octocat/Hello-World.git",
-      "branch": "master",
+      "name": "tiny-preact",
+      "repo": "https://github.com/developit/preact-vite-template.git",
+      "branch": "main",
       "cloneMethod": "http",
       "harnesses": ["opencode"],
       "sessions": {
         "oc1": { "harness": "opencode" }
+      },
+      "quickCommands": {
+        "dev": "npm install && npm start -- --host 0.0.0.0"
       }
     }
   },
