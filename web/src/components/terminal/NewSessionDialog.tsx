@@ -9,7 +9,7 @@ import { isLaunchable, type Harness } from '@/lib/types'
 // The launch timeout: CLI validation can take a while (freebuff downloads a platform binary on first run).
 const LAUNCH_TIMEOUT_MS = 180_000
 
-// New-session dialog: every session needs a user-supplied unique name;
+// New-tab dialog: every tab needs a user-supplied unique session name;
 // harness dropdown lists only installed entries (install happens on the home page).
 export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onLaunched }: {
   open: boolean
@@ -91,11 +91,11 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
     <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o) }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>New Session</DialogTitle>
+          <DialogTitle>New Tab</DialogTitle>
         </DialogHeader>
         <form onSubmit={launch} className="flex flex-col gap-3">
           <Input
-            placeholder="Session name (e.g. dev, debug, main)"
+            placeholder="Tab name (e.g. dev, debug, main)"
             value={name}
             onChange={(e) => setName(e.target.value)}
             autoFocus

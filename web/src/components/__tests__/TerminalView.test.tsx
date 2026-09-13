@@ -80,7 +80,7 @@ describe('TerminalView session management', () => {
 
   function sessionDeleteHandler(): Handler {
     return (url) => {
-      if (url.includes('/sessions/') && url.endsWith(`/${SESSION}`) && !url.includes('restart') && !url.includes('rename')) {
+      if (url.includes('/sessions/') && (url.endsWith(`/${SESSION}`) || url.endsWith(`/${SESSION}/delete`)) && !url.includes('restart') && !url.includes('rename')) {
         return { status: 200, body: { ok: true } }
       }
       return undefined
@@ -180,7 +180,7 @@ describe('TerminalView session management', () => {
     // The fix: switchSession allows re-entry when status is 'ended'.
   })
 
-  it('loads sessions and shows current session name', async () => {
+  it('loads sessions and shows the current session tab', async () => {
     renderView(baseHandler())
 
     // Wait for session list to be fetched
@@ -188,10 +188,25 @@ describe('TerminalView session management', () => {
       expect(fetchCalls.some(c => c.url.endsWith('/sessions') && c.method === 'GET')).toBe(true)
     })
 
-    // The Session button should show the current session name
-    const sessionBtn = screen.getByRole('button', { name: 'Session' })
-    expect(sessionBtn.textContent).toContain('helper-1')
+    // The tab strip shows one tab per session with the current one selected
+    const tab = screen.getByTestId('tab-session-helper-1')
+    expect(tab.textContent).toContain('helper-1')
+    expect(tab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('tab-session-main')).toBeTruthy()
+    expect(screen.getByTestId('tab-new')).toBeTruthy()
+  })
 
-    // Sessions are loaded (dropdown interaction tested in E2E)
+  it('tab ✕ deletes that session without touching the others', async () => {
+    renderView(baseHandler(sessionDeleteHandler()))
+
+    await waitFor(() => {
+      expect(fetchCalls.some(c => c.url.includes('/sessions'))).toBe(true)
+    })
+
+    await act(async () => { fireEvent.click(screen.getByTestId('tab-close-helper-1')) })
+
+    await waitFor(() => {
+      expect(fetchCalls.some(c => c.url.includes(`/${SESSION}/delete`) && c.method === 'DELETE')).toBe(true)
+    })
   })
 })

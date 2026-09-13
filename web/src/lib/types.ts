@@ -26,5 +26,5 @@ export type GitDiffResponse = {
 }
 
 // isLaunchable reports whether a harness offers its own session type in
-// "+ New Session". The bash shell is a plain terminal, not a launch target.
+// "+ New Tab". The bash shell is a plain terminal, not a launch target.
 export const isLaunchable = (h: Harness) => h.command !== 'bash'

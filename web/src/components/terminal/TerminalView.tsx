@@ -3,8 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { terminalPath } from '@/lib/paths'
 import { api, errMsg } from '@/lib/api'
 import type { Harness } from '@/lib/types'
-import { Button } from '@/components/ui/button'
 import { TerminalHeader } from '@/components/terminal/TerminalHeader'
+import { TerminalTabs, type FixedView } from '@/components/terminal/TerminalTabs'
 import { TerminalPane, type ConnStatus } from '@/components/terminal/TerminalPane'
 import { NewSessionDialog } from '@/components/terminal/NewSessionDialog'
 import { PreviewTab } from '@/components/terminal/PreviewTab'
@@ -27,7 +27,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   const [harnesses, setHarnesses] = useState<Harness[]>([])
   const [redial, setRedial] = useState(0)
   const [newDialogOpen, setNewDialogOpen] = useState(false)
-  const [tab, setTab] = useState<'terminal' | 'preview' | 'logs' | 'diff'>('terminal')
+  const [tab, setTab] = useState<'terminal' | FixedView>('terminal')
   const hostRef = useRef<HTMLDivElement>(null)
 
   // ─── data fetching ──────────────────────────────────────────────────
@@ -38,6 +38,14 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   }, [projectId])
 
   useEffect(() => { refreshSessions() }, [refreshSessions, redial])
+
+  // Re-list on connect: the pane's ensure POST (which creates the session)
+  // and this view's initial GET race on first open, so the first paint can
+  // show an empty tab strip with no later refetch to heal it. By the time
+  // the socket is live the session exists, so this converges the tabs.
+  useEffect(() => {
+    if (status === 'live') refreshSessions()
+  }, [status, refreshSessions])
 
   useEffect(() => {
     api<{ harnesses: Harness[] }>(`/api/projects/${projectId}/harnesses`)
@@ -72,9 +80,16 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   }
 
   async function kill() {
+    await killSession(current)
+  }
+
+  // killSession stops a session's tmux process but keeps its metadata, so
+  // clicking the tab again relaunches it. The ✕ on any tab and Actions →
+  // Kill (current tab) share this path.
+  async function killSession(name: string) {
     try {
-      await api(`/api/projects/${projectId}/sessions/${current}`, { method: 'DELETE' })
-      setStatus('ended')
+      await api(`/api/projects/${projectId}/sessions/${name}`, { method: 'DELETE' })
+      if (name === current) setStatus('ended')
       refreshSessions()
     } catch (err) {
       setError(errMsg(err))
@@ -130,23 +145,22 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
         <TerminalHeader
           projectId={projectId}
           current={current}
-          sessions={sessions}
           status={status}
           onBack={onBack}
-          onSwitch={switchSession}
-          onDelete={del}
-          onNewSession={() => setNewDialogOpen(true)}
           onRestart={restart}
           onRename={rename}
           onKill={kill}
         />
       </div>
-      <div className="flex gap-2 px-3">
-        <Button className="flex-1" size="sm" variant={tab === 'terminal' ? 'secondary' : 'outline'} onClick={() => setTab('terminal')} data-testid="tab-terminal">Terminal</Button>
-        <Button className="flex-1" size="sm" variant={tab === 'diff' ? 'secondary' : 'outline'} onClick={() => setTab('diff')} data-testid="tab-diff">Diff</Button>
-        <Button className="flex-1" size="sm" variant={tab === 'preview' ? 'secondary' : 'outline'} onClick={() => setTab('preview')} data-testid="tab-preview">Preview</Button>
-        <Button className="flex-1" size="sm" variant={tab === 'logs' ? 'secondary' : 'outline'} onClick={() => setTab('logs')} data-testid="tab-logs">Logs</Button>
-      </div>
+      <TerminalTabs
+        sessions={sessions}
+        current={current}
+        view={tab}
+        onSelectSession={(name) => { setTab('terminal'); switchSession(name) }}
+        onDeleteSession={(name) => void del(name)}
+        onNewTab={() => setNewDialogOpen(true)}
+        onSelectView={setTab}
+      />
 
       {error && (
         <p className="max-h-24 overflow-auto rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs break-all text-destructive">

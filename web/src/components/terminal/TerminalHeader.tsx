@@ -5,16 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -34,15 +24,14 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import type { ConnStatus } from '@/components/terminal/TerminalPane'
 
 // The terminal header: back to projects, connection status, the current
-// session name, and the restart / rename / delete / kill actions. Session
+// session name, and the restart / rename / kill actions. Session
 // switching lives in the tab strip below (TerminalTabs), not here.
-export function TerminalHeader({ projectId, current, isLastSession, status, onBack, onDelete, onRestart, onRename, onKill }: {
+// Permanent deletion is handled by the ✕ close button on each tab.
+export function TerminalHeader({ projectId, current, status, onBack, onRestart, onRename, onKill }: {
   projectId: string
   current: string
-  isLastSession: boolean
   status: ConnStatus
   onBack: () => void
-  onDelete: (name: string) => Promise<void> | void
   onRestart: () => void
   onRename: (newName: string) => Promise<void> | void
   onKill: () => void
@@ -51,9 +40,6 @@ export function TerminalHeader({ projectId, current, isLastSession, status, onBa
   const [renameValue, setRenameValue] = useState('')
   const [renameBusy, setRenameBusy] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-  const [deleteBusy, setDeleteBusy] = useState(false)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [qcOpen, setQcOpen] = useState(false)
   const { commands: quickCommands, reload: reloadQuickCommands } = useQuickCommands(projectId)
   const [injectError, setInjectError] = useState<string | null>(null)
@@ -67,9 +53,6 @@ export function TerminalHeader({ projectId, current, isLastSession, status, onBa
     }
   }
 
-  // Deleting removes a session for good; the terminal always keeps at
-  // least one, so the last remaining session cannot be deleted.
-
   const statusMeta = {
     connecting: { label: 'Connecting…', dot: 'bg-amber-500' },
     live: { label: 'Connected', dot: 'bg-emerald-500' },
@@ -80,25 +63,6 @@ export function TerminalHeader({ projectId, current, isLastSession, status, onBa
     setRenameValue(current)
     setRenameError(null)
     setRenameOpen(true)
-  }
-
-  function openDelete() {
-    setDeleteError(null)
-    setDeleteTarget(current)
-  }
-
-  async function submitDelete() {
-    if (!deleteTarget) return
-    setDeleteBusy(true)
-    setDeleteError(null)
-    try {
-      await onDelete(deleteTarget)
-      setDeleteTarget(null)
-    } catch (err: unknown) {
-      setDeleteError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setDeleteBusy(false)
-    }
   }
 
   async function submitRename() {
@@ -144,15 +108,6 @@ export function TerminalHeader({ projectId, current, isLastSession, status, onBa
           <DropdownMenuContent align="end" className="w-64">
             <DropdownMenuItem onSelect={onRestart} data-testid="terminal-action-restart">Restart</DropdownMenuItem>
             <DropdownMenuItem onSelect={openRename} data-testid="terminal-action-rename">Rename</DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={openDelete}
-              disabled={isLastSession}
-              title={isLastSession ? 'Cannot delete the last session' : undefined}
-              data-testid="terminal-action-delete"
-              variant="destructive"
-            >
-              Delete…
-            </DropdownMenuItem>
             <DropdownMenuItem onSelect={onKill} data-testid="terminal-action-kill" className="text-destructive">Kill</DropdownMenuItem>
             <div className="my-1 h-px bg-border" />
             {Object.entries(quickCommands).length === 0 ? (
@@ -197,29 +152,6 @@ export function TerminalHeader({ projectId, current, isLastSession, status, onBa
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteError(null) } }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete session</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will terminate "{deleteTarget}" and remove it from the session list. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {deleteError && <p className="text-sm break-all text-destructive" data-testid="session-delete-error">{deleteError}</p>}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={deleteBusy}
-              data-testid="session-delete-confirm"
-              onClick={submitDelete}
-            >
-              {deleteBusy ? 'Deleting…' : 'Delete'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   )
 }

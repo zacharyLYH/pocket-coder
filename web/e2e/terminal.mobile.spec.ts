@@ -64,9 +64,9 @@ test.describe('mobile typing (opencode TUI)', () => {
 
     await page.getByRole('button', { name: 'Terminal' }).click()
     await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
-    await page.getByRole('button', { name: '+ New Session' }).click()
+    await page.getByTestId('tab-new').click()
     const dialog = page.getByRole('dialog')
-    await dialog.getByPlaceholder(/Session name/).fill('opencode-mobile')
+    await dialog.getByPlaceholder(/Tab name/).fill('opencode-mobile')
     await dialog.locator('select').selectOption('opencode')
     await dialog.getByRole('button', { name: 'Create & Attach' }).click()
     await expect(dialog).not.toBeVisible({ timeout: 240_000 })

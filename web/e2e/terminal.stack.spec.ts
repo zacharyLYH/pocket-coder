@@ -96,25 +96,26 @@ test('real OpenCode session renders through the backend terminal bridge', async 
     await page.getByRole('button', { name: 'Terminal' }).click()
     await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
 
-    await page.getByRole('button', { name: '+ New Session' }).click()
+    await page.getByTestId('tab-new').click()
     const dialog = page.getByRole('dialog')
-    await dialog.getByPlaceholder(/Session name/).fill('opencode-1')
+    await dialog.getByPlaceholder(/Tab name/).fill('opencode-1')
     await dialog.locator('select').selectOption('opencode')
     await dialog.getByRole('button', { name: 'Create & Attach' }).click()
 
     await expect(dialog).not.toBeVisible({ timeout: 240_000 })
-    const sessionButton = page.getByRole('button', { name: 'Session', exact: true })
-    await expect(sessionButton).toContainText('opencode-1', { timeout: 30_000 })
+    const opencodeTab = page.getByTestId('tab-session-opencode-1')
+    await expect(opencodeTab).toContainText('opencode-1', { timeout: 30_000 })
     await expect(page.getByText('Connected')).toBeVisible({ timeout: 30_000 })
     await expect(page.locator('.xterm-screen')).toBeVisible()
 
-    // Exercise the same dropdown interaction as the reported naming bug,
+    // Exercise the same tab interaction as the reported naming bug,
     // then save the real rendered OpenCode screen for visual review.
-    await sessionButton.click()
-    await expect(page.getByRole('menu')).toBeVisible()
-    await expect(page.getByRole('menuitem', { name: 'opencode-1' })).toBeVisible()
-    await page.getByRole('menuitem', { name: 'opencode-1' }).click()
-    await expect(sessionButton).toContainText('opencode-1')
+    await expect(page.getByTestId('tab-session-main')).toBeVisible()
+    await page.getByTestId('tab-session-main').click()
+    await expect(page.getByTestId('tab-session-main')).toHaveAttribute('aria-selected', 'true')
+    await opencodeTab.click()
+    await expect(opencodeTab).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByText('Connected')).toBeVisible({ timeout: 30_000 })
     await expect
       .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 60_000 })
       .toMatch(/Build|Connect|Ask anything/)

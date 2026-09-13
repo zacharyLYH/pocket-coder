@@ -251,7 +251,7 @@ export function ProjectPicker({ projects, picked, onToggle, busy, applyLabel, on
 }
 
 // AddHarnessDialog registers a new harness (name, command, optional install
-// command) — it lands in the suggestions above and the "+ New Session"
+// command) — it lands in the suggestions above and the "+ New Tab"
 // picker. Registering NEVER downloads anything: the binary is only fetched
 // when the user explicitly installs it into chosen projects. Saving writes a
 // plugin file server-side; errors surface in-dialog.

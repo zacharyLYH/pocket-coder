@@ -170,7 +170,10 @@ export async function createProjectViaUI(
   }
 
   await page.reload()
-  await expect(page.getByText(expectedName)).toBeVisible({ timeout: 10_000 })
+  // Count-aware: several specs create duplicate names ('untitled'), so a
+  // bare toBeVisible strict-violates on 2+ matches. The create loop above
+  // guarantees exactly before+1 once the reload settles.
+  await expect(page.getByText(expectedName)).toHaveCount(before + 1, { timeout: 10_000 })
   const orderRes = await request.get('/api/projects')
   const orderBody = (await orderRes.json()) as { projects: { id: string; name: string }[] }
   const created = orderBody.projects.find((p) => p.name === expectedName)

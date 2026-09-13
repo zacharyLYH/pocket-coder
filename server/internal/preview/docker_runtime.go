@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -32,7 +33,9 @@ const (
 
 	// cdpWaitTimeout bounds the CDP readiness window: a wedged sidecar
 	// fails the start request instead of hanging it until the client quits.
-	cdpWaitTimeout = 60 * time.Second
+	// 120 s accommodates the Docker Desktop relay path where Chromium
+	// boots behind two socat hops.
+	cdpWaitTimeout = 120 * time.Second
 
 	// relayNamePrefix identifies the loopback relay container (see Start).
 	relayNamePrefix = "pcoder-preview-relay-"
@@ -74,6 +77,9 @@ type DockerFactory struct {
 }
 
 func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
+	startTotal := time.Now()
+	log := slog.With("project", cfg.ProjectID)
+
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -85,9 +91,11 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 		image = DefaultBrowserImage
 	}
 	if ir, ok := f.Docker.(imageRuntime); ok {
+		t := time.Now()
 		if err := ensureBrowserImage(ctx, ir, image); err != nil {
 			return nil, fmt.Errorf("ensure browser image: %w", err)
 		}
+		log.Info("preview phase: ensure image", "duration", time.Since(t).Round(time.Millisecond))
 	}
 	targetURL := "http://127.0.0.1:3000"
 	if cfg.Port > 0 {
@@ -107,6 +115,7 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 			"VNC_WEB_PORT=" + strconv.Itoa(SidecarNoVNCPort),
 		},
 	}
+	t := time.Now()
 	cid, err := f.Docker.Run(ctx, spec)
 	if err != nil && strings.Contains(err.Error(), "already exists") {
 		// Self-heal a leaked same-name sidecar (crashed close).
@@ -116,6 +125,12 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("run browser sidecar: %w", err)
 	}
+	shortCID := cid
+	if len(shortCID) > 12 {
+		shortCID = shortCID[:12]
+	}
+	log.Info("preview phase: run sidecar", "duration", time.Since(t).Round(time.Millisecond), "container", shortCID)
+
 	var relayID string
 	cleanup := func() {
 		_ = f.Docker.Stop(context.Background(), cid, 5*time.Second)
@@ -125,6 +140,7 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 			_ = f.Docker.Remove(context.Background(), relayID, true)
 		}
 	}
+	t = time.Now()
 	c, err := f.Docker.Inspect(ctx, cid)
 	if err != nil {
 		cleanup()
@@ -143,6 +159,8 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 		cleanup()
 		return nil, fmt.Errorf("inspect project container: %w", err)
 	}
+	log.Info("preview phase: inspect containers", "duration", time.Since(t).Round(time.Millisecond))
+
 	if project.NetworkIP == "" {
 		cleanup()
 		return nil, fmt.Errorf("project container has no network IP; cannot derive sidecar endpoints")
@@ -151,13 +169,18 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 		CDP:     "http://" + net.JoinHostPort(project.NetworkIP, strconv.Itoa(cdpPort)),
 		Display: "http://" + net.JoinHostPort(project.NetworkIP, strconv.Itoa(novncPort)),
 	}
-	if !directCDPReady(ctx, f.HTTPClient, ep.CDP, f.PollEvery) {
+	t = time.Now()
+	direct := directCDPReady(ctx, f.HTTPClient, ep.CDP, f.PollEvery)
+	log.Info("preview phase: direct CDP probe", "duration", time.Since(t).Round(time.Millisecond), "reachable", direct)
+	if !direct {
+		t = time.Now()
 		var relayEp Endpoint
 		relayID, relayEp, err = f.startRelay(ctx, cfg.ProjectID, project.NetworkIP)
 		if err != nil {
 			cleanup()
 			return nil, err
 		}
+		log.Info("preview phase: start relay", "duration", time.Since(t).Round(time.Millisecond), "cdp", relayEp.CDP)
 		ep = relayEp
 	}
 	// A wedged CDP must fail the start, not hang the request.
@@ -165,12 +188,17 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	if wait <= 0 {
 		wait = cdpWaitTimeout
 	}
+	t = time.Now()
 	waitCtx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 	if err := WaitForCDP(waitCtx, f.HTTPClient, ep.CDP, f.PollEvery); err != nil {
+		log.Error("preview phase: wait for CDP", "duration", time.Since(t).Round(time.Millisecond), "endpoint", ep.CDP, "err", err)
 		cleanup()
 		return nil, err
 	}
+	log.Info("preview phase: wait for CDP", "duration", time.Since(t).Round(time.Millisecond), "endpoint", ep.CDP)
+
+	log.Info("preview started", "total_duration", time.Since(startTotal).Round(time.Millisecond), "relay", relayID != "")
 	return &dockerWorker{docker: f.Docker, id: cid, relayID: relayID, endpoint: ep}, nil
 }
 

@@ -63,6 +63,9 @@ export default defineConfig({
     // Locally use the installed Chrome (no browser download); in CI use
     // Playwright's bundled Chromium (npx playwright install chromium).
     channel: process.env.CI ? 'chromium' : 'chrome',
+    // Pin light mode so visual baselines are deterministic: the app follows
+    // the OS preference by default, which would fork every baseline by runner.
+    colorScheme: 'light',
     baseURL: `http://localhost:${WEB_PORT}`,
     storageState: AUTH_STATE,
   },
