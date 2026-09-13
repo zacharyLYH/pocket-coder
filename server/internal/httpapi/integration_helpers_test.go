@@ -5,13 +5,14 @@ package httpapi
 // Shared live-engine helpers, used by every integration test in this
 // package (pipeline, sessions, terminal, sshkeys, recover).
 //
-// Every project created through createTestProject / newTestID has an id with
-// the "intgtest-" prefix, so the resulting containers (pcoder-intgtest-<id>)
-// and named volumes (pcoder-intgtest-<id>-repo, pcoder-intgtest-<id>-home)
-// are explicitly marked test artifacts on the host engine and easy to bulk-clean:
+// Project ids are owner/repo, so every test project is created under the
+// "itest-*" owner namespace (local git-daemon fixtures) or "itest/<hex>"
+// (hand-seeded state). The resulting containers (pcoder-itest-*) and named
+// volumes are explicitly marked test artifacts on the host engine and easy
+// to bulk-clean:
 //
-//	docker ps -a --filter 'name=pcoder-intgtest-'
-//	docker volume ls --filter 'name=pcoder-intgtest-'
+//	docker ps -a --filter 'name=pcoder-itest-'
+//	docker volume ls --filter 'name=pcoder-itest-'
 //
 // All project helpers register a t.Cleanup that issues a scope=all delete via
 // the authenticated API, ensuring containers and volumes are cleaned up on
@@ -25,6 +26,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,7 +45,8 @@ import (
 	"pcoder/internal/testutil"
 )
 
-const testIDPrefix = "intgtest-"
+// testIDPrefix marks hand-seeded test ids (see newTestID).
+const testIDPrefix = "itest/"
 
 func newLiveDeps(t *testing.T) (http.Handler, *docker.Docker, *project.Service, *bytes.Buffer, *events.Log, *state.Store) {
 	t.Helper()
@@ -54,7 +57,6 @@ func newLiveDeps(t *testing.T) (http.Handler, *docker.Docker, *project.Service, 
 // state.json, e.g. a test seed) instead of a fresh TempDir.
 func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docker, *project.Service, *bytes.Buffer, *events.Log, *state.Store) {
 	t.Helper()
-	t.Setenv("PCODER_ID_PREFIX", testIDPrefix)
 	lc := testutil.NewLifecycle(t)
 	lc.EnsureNetwork(t)
 
@@ -76,12 +78,15 @@ func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docke
 	sshKeyStore := sshkeys.New(st)
 	svc := project.NewService(project.Open(st), dkr, ev)
 	svc.SetSSHKeys(sshKeyStore)
+	// Live tests clone from a local git daemon, not GitHub.
+	// Production (config.AllowAnyRepo false) requires GitHub.
+	svc.SetAllowAnyRepo(true)
 	h := New(Deps{Events: ev, Version: "itest", Auth: authSvc, Projects: svc,
 		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore, State: st})
 	return h, dkr, svc, &pinOut, ev, st
 }
 
-// newTestID returns a fresh "intgtest-<8 hex>" identifier. Used by the
+// newTestID returns a fresh "itest/<8 hex>" identifier. Used by the
 // recovery test, which seeds state.json by hand and must own the id
 // before any API call.
 func newTestID(t *testing.T) string {
@@ -93,31 +98,37 @@ func newTestID(t *testing.T) string {
 	return testIDPrefix + hex.EncodeToString(b[:])
 }
 
+// projectPath builds an /api/projects/{id} URL with the id escaped —
+// ids are owner/repo, and the slash must not split the route segment.
+func projectPath(id, suffix string) string {
+	return "/api/projects/" + url.PathEscape(id) + suffix
+}
+
 // createTestProject posts to /api/projects and registers a scope=all
 // cleanup. The returned id is the create response's "id" field; the
 // returned body is the full create response so callers can assert on
-// the metadata echo. repoURL may be "" for a blank project; branch and
-// cloneMethod are optional.
+// the metadata echo. repoURL is required (cloning is the only way to
+// create a project); branch and cloneMethod are optional.
 func createTestProject(t *testing.T, h http.Handler, cookie *http.Cookie, repoURL, branch, cloneMethod string) (string, map[string]any) {
 	t.Helper()
-	body := `{}`
-	if repoURL != "" {
-		body = fmt.Sprintf(`{"repoUrl":%q`, repoURL)
-		if branch != "" {
-			body += fmt.Sprintf(`,"branch":%q`, branch)
-		}
-		if cloneMethod != "" {
-			body += fmt.Sprintf(`,"cloneMethod":%q`, cloneMethod)
-		}
-		body += `}`
+	if repoURL == "" {
+		t.Fatal("createTestProject: repoURL is required")
 	}
+	body := fmt.Sprintf(`{"repoUrl":%q`, repoURL)
+	if branch != "" {
+		body += fmt.Sprintf(`,"branch":%q`, branch)
+	}
+	if cloneMethod != "" {
+		body += fmt.Sprintf(`,"cloneMethod":%q`, cloneMethod)
+	}
+	body += `}`
 	code, resp := doJSON(t, h, cookie, http.MethodPost, "/api/projects", body)
 	if code != http.StatusCreated {
 		t.Fatalf("createTestProject: %d %v", code, resp)
 	}
 	id, _ := resp["id"].(string)
-	if id == "" || !strings.HasPrefix(id, testIDPrefix) {
-		t.Fatalf("createTestProject: id %q missing %s prefix (response: %v)", id, testIDPrefix, resp)
+	if id == "" || !strings.Contains(id, "/") {
+		t.Fatalf("createTestProject: id %q is not owner/repo (response: %v)", id, resp)
 	}
 	deleteTestProject(t, h, cookie, id)
 	return id, resp
@@ -129,7 +140,7 @@ func createTestProject(t *testing.T, h http.Handler, cookie *http.Cookie, repoUR
 func deleteTestProject(t *testing.T, h http.Handler, cookie *http.Cookie, id string) {
 	t.Helper()
 	t.Cleanup(func() {
-		code, _ := doJSON(t, h, cookie, http.MethodDelete, "/api/projects/"+id+"?scope=all", "")
+		code, _ := doJSON(t, h, cookie, http.MethodDelete, projectPath(id, "?scope=all"), "")
 		if code != http.StatusOK && code != http.StatusNotFound {
 			t.Errorf("cleanup: delete project %s → %d", id, code)
 		}
@@ -173,17 +184,16 @@ func doJSON(t *testing.T, h http.Handler, cookie *http.Cookie, method, path, bod
 	return rec.Code, out
 }
 
-func fixtureRepo(t *testing.T) string {
+func fixtureRepo(t *testing.T) *testutil.GitDaemonFixture {
 	t.Helper()
-	g := testutil.NewGitDaemonFixture(t)
-	return g.URL
+	return testutil.NewGitDaemonFixture(t)
 }
 
 func waitForStatus(t *testing.T, h http.Handler, cookie *http.Cookie, id, want string) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		code, body := doJSON(t, h, cookie, http.MethodGet, "/api/projects/"+id, "")
+		code, body := doJSON(t, h, cookie, http.MethodGet, projectPath(id, ""), "")
 		if code == http.StatusOK && body["status"] == want {
 			return
 		}

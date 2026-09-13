@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { deleteAllProjects, engineUp } from './helpers'
+import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import {
   createRunningViteProjectOnPort,
   openPreviewFromTerminal,
@@ -42,7 +42,7 @@ test.describe('preview non-default port', () => {
       await expect(iframe).toBeVisible({ timeout: 30_000 })
       await expect(iframe).toHaveAttribute(
         'src',
-        new RegExp(`/api/projects/${projectID}/preview/vnc_lite\\.html`),
+        new RegExp(`/api/projects/${projectURL(projectID)}/preview/vnc_lite\\.html`),
       )
 
       // Frontend proof: the sidecar's display surface actually streamed
@@ -56,7 +56,7 @@ test.describe('preview non-default port', () => {
       // (not the historical :3000), so the rendered HTML is the fixture
       // from the non-default port. This is the only way to inspect what
       // the canvas is showing — the canvas pixels are opaque.
-      const inspectRes = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
+      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
       expect(inspectRes.ok()).toBeTruthy()
       const { html } = (await inspectRes.json()) as { html: string }
       expect(html).toContain('Full-Stack App')

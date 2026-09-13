@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { deleteAllProjects, deleteAllSSHKeys, resetHarnessRegistry, engineUp } from './helpers'
+import { createProjectViaUI, deleteAllProjects, deleteAllSSHKeys, e2eRepo, e2eRepoID, resetHarnessRegistry, engineUp } from './helpers'
 
 // Visual + behavioral tests for the home screen against the real backend:
 // login form, project list, SSH keys card, clone method toggle.
@@ -41,11 +41,9 @@ test.describe('home screen', () => {
     await deleteAllSSHKeys(page.request)
     await resetHarnessRegistry(page.request)
     try {
-      // one real blank-project ("untitled" — the name is derived
-      // from the repo URL, and there is none) and two real keys
+      // one real project (a fixture-repo clone, id owner/repo) and two keys
       await page.goto('/')
-      await page.getByRole('button', { name: 'Create project' }).click()
-      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
+      await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
       await page.request.post('/api/ssh-keys', {
         data: { publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIWorkLaptopKey', label: 'work-laptop' },
       })
@@ -54,7 +52,7 @@ test.describe('home screen', () => {
       })
       await page.reload()
 
-      await expect(page.getByText('untitled')).toBeVisible()
+      await expect(page.getByText(e2eRepoID(1))).toBeVisible()
       await expect(page.getByText('work-laptop')).toBeVisible()
       await expect(page.getByText('home')).toBeVisible()
       await expect(page).toHaveScreenshot('home-with-projects-and-keys.png', { fullPage: true })
@@ -75,18 +73,18 @@ test.describe('home screen', () => {
     await expect(page).toHaveScreenshot('home-empty.png', { fullPage: true })
   })
 
-  test('clone method toggle appears when repo URL is entered', async ({ page }) => {
+  test('clone method toggle is part of the required clone form', async ({ page }) => {
     await resetHarnessRegistry(page.request)
     await page.goto('/')
 
-    // no toggle visible yet
-    await expect(page.getByText('Clone via:')).not.toBeVisible()
+    // the repo URL is required, so the clone-method toggle is always shown
+    await expect(page.getByText('Clone via:')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'HTTPS' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'SSH' })).toBeVisible()
 
     // type a repo URL
     await page.getByPlaceholder(/Repo URL/).fill('https://github.com/x/hello.git')
     await expect(page.getByText('Clone via:')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'HTTPS' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'SSH' })).toBeVisible()
     await expect(page).toHaveScreenshot('home-clone-toggle-visible.png', { fullPage: true })
   })
 
@@ -107,8 +105,7 @@ test.describe('home screen', () => {
     await resetHarnessRegistry(page.request)
     try {
       await page.goto('/')
-      await page.getByRole('button', { name: 'Create project' }).click()
-      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
+      await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
 
       // suggestions include the seeded agent CLIs, OpenCode among them
       await expect(page.getByText('OpenCode', { exact: true })).toBeVisible()
@@ -139,8 +136,7 @@ test.describe('home screen', () => {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ results: [{ project: 'p1', status: 'ok' }] }) })
       })
       await page.goto('/')
-      await page.getByRole('button', { name: 'Create project' }).click()
-      await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
+      await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
       await expect(page.getByText('Crasher Demo')).toBeVisible()
 
       const row = page.locator('div.flex.items-center.justify-between', { hasText: 'Crasher Demo' })

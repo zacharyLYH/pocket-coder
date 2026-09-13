@@ -9,10 +9,7 @@ import { mockFetch } from '@/test/mockFetch'
 // backend path is covered by the Playwright suite. ProjectPicker, whose
 // selection logic lives entirely in service of this card, is tested here too.
 
-const PROJECTS = [
-  { id: 'p1', name: 'alpha' },
-  { id: 'p2', name: 'beta' },
-]
+const PROJECTS = [{ id: 'x/alpha' }, { id: 'x/beta' }]
 
 const HARNESS_RESPONSE = {
   harnesses: [
@@ -43,7 +40,7 @@ describe('HarnessesCard', () => {
     const fetchMock = mockFetch((url) => {
       if (url === '/api/harnesses') return { status: 200, body: HARNESS_RESPONSE }
       if (url === '/api/harnesses/opencode/install') {
-        return { status: 200, body: { results: [{ project: 'beta', status: 'ok' }] } }
+        return { status: 200, body: { results: [{ project: 'x/beta', status: 'ok' }] } }
       }
       return undefined
     })
@@ -54,13 +51,13 @@ describe('HarnessesCard', () => {
     await screen.findByText('OpenCode')
     fireEvent.click(screen.getByRole('button', { name: 'Install…' }))
     // picker root: the bordered box that contains the project labels
-    const picker = screen.getByText('alpha').closest('div.rounded-md')!
+    const picker = screen.getByText('x/alpha').closest('div.rounded-md')!
     fireEvent.click(picker.querySelectorAll('label input')[0]!)
     fireEvent.click(screen.getByRole('button', { name: /Install in 1 project/ }))
 
     await screen.findByText('Applied to 1 project.')
     const call = fetchMock.mock.calls.find(([u]) => String(u).includes('/install'))
-    expect(JSON.parse(String(call![1]?.body)).projectIds).toEqual(['p2'])
+    expect(JSON.parse(String(call![1]?.body)).projectIds).toEqual(['x/beta'])
   })
 
   it('surfaces per-project install errors as errors, not success', async () => {
@@ -69,7 +66,7 @@ describe('HarnessesCard', () => {
       if (url === '/api/harnesses/opencode/install') {
         return {
           status: 200,
-          body: { results: [{ project: 'alpha', status: 'error', detail: 'npm ERR! network unreachable' }] },
+          body: { results: [{ project: 'x/alpha', status: 'error', detail: 'npm ERR! network unreachable' }] },
         }
       }
       return undefined
@@ -97,7 +94,7 @@ describe('HarnessesCard', () => {
     fireEvent.change(screen.getByPlaceholderText(/npm i -g opencode-ai@latest/), { target: { value: 'echo hi' } })
     fireEvent.click(screen.getByRole('button', { name: 'Choose projects…' }))
     // uncheck everything
-    const picker = screen.getByText('alpha').closest('div.rounded-md')!
+    const picker = screen.getByText('x/alpha').closest('div.rounded-md')!
     for (const box of picker.querySelectorAll('label input')) fireEvent.click(box)
     const apply = screen.getByRole('button', { name: /Run in 0 project/ })
     expect(apply).toBeDisabled()
@@ -111,8 +108,8 @@ describe('HarnessesCard', () => {
           status: 200,
           body: {
             results: [
-              { project: 'alpha', status: 'ok', detail: 'added 1 package' },
-              { project: 'beta', status: 'skipped', detail: 'container not running' },
+              { project: 'x/alpha', status: 'ok', detail: 'added 1 package' },
+              { project: 'x/beta', status: 'skipped', detail: 'container not running' },
             ],
           },
         }
@@ -129,7 +126,7 @@ describe('HarnessesCard', () => {
 
     await screen.findByText(/Applied to 1 project \(skipped 1 stopped\)/)
     const call = fetchMock.mock.calls.find(([u]) => String(u).includes('/api/projects/exec'))
-    expect(JSON.parse(String(call![1]?.body))).toEqual({ projectIds: ['p1', 'p2'], command: 'npm i -g x' })
+    expect(JSON.parse(String(call![1]?.body))).toEqual({ projectIds: ['x/alpha', 'x/beta'], command: 'npm i -g x' })
   })
 
   // Regression: the form's Enter-submit used to bypass the project picker and
@@ -162,7 +159,7 @@ describe('HarnessesCard', () => {
     fireEvent.change(screen.getByPlaceholderText(/npm i -g opencode-ai@latest/), { target: { value: 'echo hi' } })
     fireEvent.click(screen.getByRole('button', { name: 'Choose projects…' }))
     // uncheck everything, then back out
-    const picker = screen.getByText('alpha').closest('div.rounded-md') as HTMLElement
+    const picker = screen.getByText('x/alpha').closest('div.rounded-md') as HTMLElement
     for (const box of picker.querySelectorAll('label input')) fireEvent.click(box)
     fireEvent.click(within(picker).getByRole('button', { name: 'Cancel' }))
 
@@ -213,28 +210,28 @@ describe('HarnessesCard', () => {
 
 describe('ProjectPicker', () => {
   it('apply is disabled with nothing selected and enabled otherwise', () => {
-    const projects = [{ id: 'a', name: 'alpha' }, { id: 'b', name: 'beta' }]
+    const projects = [{ id: 'x/alpha' }, { id: 'x/beta' }]
     const base = { projects, onToggle: () => {}, busy: false, onApply: vi.fn(), onCancel: () => {} }
 
-    const { unmount } = render(<ProjectPicker {...base} picked={{ a: false, b: false }} applyLabel="Install in 0 project(s)" />)
+    const { unmount } = render(<ProjectPicker {...base} picked={{ 'x/alpha': false, 'x/beta': false }} applyLabel="Install in 0 project(s)" />)
     expect(screen.getByRole('button', { name: /Install in 0/ })).toBeDisabled()
     unmount()
 
-    render(<ProjectPicker {...base} picked={{ a: true, b: false }} applyLabel="Install in 1 project(s)" />)
+    render(<ProjectPicker {...base} picked={{ 'x/alpha': true, 'x/beta': false }} applyLabel="Install in 1 project(s)" />)
     fireEvent.click(screen.getByRole('button', { name: /Install in 1 project/ }))
     expect(base.onApply).toHaveBeenCalledTimes(1)
   })
 
   it('installed projects are shown as Installed and cannot be toggled', () => {
-    const projects = [{ id: 'a', name: 'alpha' }, { id: 'b', name: 'beta' }]
+    const projects = [{ id: 'x/alpha' }, { id: 'x/beta' }]
     const base = {
       projects,
-      picked: { a: false, b: true },
+      picked: { 'x/alpha': false, 'x/beta': true },
       onToggle: vi.fn(),
       busy: false,
       onApply: vi.fn(),
       onCancel: () => {},
-      installed: { a: true, b: false },
+      installed: { 'x/alpha': true, 'x/beta': false },
       applyLabel: 'Install in 1 project(s)',
     }
     render(<ProjectPicker {...base} />)

@@ -41,6 +41,7 @@ export default defineConfig({
   fullyParallel: true,
   workers: 1,
   outputDir: RUN_DIR,
+  globalSetup: './e2e/global-setup.ts',
   globalTeardown: './e2e/global-teardown.ts',
   // Generous default: journeys do synchronous project-image builds and real
   // npm installs, and e2e-parallel.sh stacks FOUR groups (each with its own

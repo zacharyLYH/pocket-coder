@@ -43,10 +43,10 @@ type SMTP struct {
 	From     string `json:"from,omitempty"`
 }
 
-// Project is one project. Only what cannot be defaulted; the
-// container/volumes are derived from the id and reconciled from here.
+// Project is one project. Only what cannot be defaulted; the id is the
+// repo's owner/repo (the display name), and the container/volumes are
+// derived from it and reconciled from here.
 type Project struct {
-	Name          string             `json:"name"`
 	Repo          string             `json:"repo"`
 	Branch        string             `json:"branch,omitempty"`
 	CloneMethod   string             `json:"cloneMethod,omitempty"`   // "ssh" or "http" (default)

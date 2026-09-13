@@ -33,12 +33,11 @@ func runInProjects(d Deps, r *http.Request, ids []string, run func(container str
 	}
 	results := make([]execResult, 0, len(ids))
 	for _, id := range ids {
-		e, known := byID[id]
-		if !known {
+		if _, known := byID[id]; !known {
 			results = append(results, execResult{Project: id, Status: "error", Detail: "no such project"})
 			continue
 		}
-		res := execResult{Project: e.Name}
+		res := execResult{Project: id}
 		st, cerr := d.Projects.EnsureContainer(r.Context(), id)
 		switch {
 		case cerr != nil:

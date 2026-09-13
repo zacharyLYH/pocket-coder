@@ -269,7 +269,7 @@ func TestLaunchHappyPath(t *testing.T) {
 	d.EXPECT().Exec(mock.Anything, "c1", listCmd, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "main\n"}, nil)
 	d.EXPECT().Exec(mock.Anything, "c1", []string{"test", "-d", "/workspace/repo/.git"}, false).
-		Return(docker.ExecResult{ExitCode: 1}, nil) // blank project → /workspace
+		Return(docker.ExecResult{ExitCode: 1}, nil) // no clone → /workspace
 	d.EXPECT().Exec(mock.Anything, "c1", []string{"bash", "-lc", "command -v fakecli"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "/usr/local/bin/fakecli"}, nil)
 	validateCmd := []string{"bash", "-lc", "fakecli --version || fakecli --help"}

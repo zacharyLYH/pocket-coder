@@ -2,8 +2,6 @@ package project
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -49,11 +47,13 @@ const (
 
 // ErrNotFound means no such project (metadata). ErrInvalidScope means a
 // delete scope that does not exist. ErrInvalidInput means a create request
-// the pipeline will not attempt.
+// the pipeline will not attempt. ErrConflict means the repo is already a
+// project (ids are owner/repo, so one repo is one project).
 var (
 	ErrNotFound     = errors.New("project not found")
 	ErrInvalidScope = errors.New("invalid delete scope")
 	ErrInvalidInput = errors.New("invalid input")
+	ErrConflict     = errors.New("project already exists")
 )
 
 // Installer installs a harness into a project container during recovery.
@@ -69,6 +69,11 @@ type Service struct {
 	ev        Events
 	sshKeys   *sshkeys.Store
 	installer Installer
+	// allowAnyRepo lifts the GitHub-only create requirement so test
+	// stacks can clone from a local git daemon. Set via SetAllowAnyRepo
+	// (wired from config in main, set directly by integration tests);
+	// production leaves it false.
+	allowAnyRepo bool
 }
 
 // NewService wires the pipeline together.
@@ -81,6 +86,10 @@ func (s *Service) SetSSHKeys(sk *sshkeys.Store) { s.sshKeys = sk }
 
 // SetInstaller attaches a harness installer for eager recovery.
 func (s *Service) SetInstaller(ins Installer) { s.installer = ins }
+
+// SetAllowAnyRepo lifts the GitHub-only create requirement (test stacks
+// cloning from a local git daemon). Never set in production.
+func (s *Service) SetAllowAnyRepo(v bool) { s.allowAnyRepo = v }
 
 // RecordInstall records that harnessID is installed in projectID.
 func (s *Service) RecordInstall(projectID, harnessID string) error {
@@ -106,20 +115,31 @@ func (s *Service) RemoveSession(projectID, name string) error {
 	return s.store.RemoveSession(projectID, name)
 }
 
-// ContainerName is the docker container backing project id.
-func ContainerName(id string) string { return "pcoder-" + id }
+// ContainerName is the docker container backing a project id. Ids are
+// owner/repo (a slash), which Docker forbids in names, so the id is
+// sanitized to owner-repo: the container name still reads as the repo.
+func ContainerName(id string) string { return "pcoder-" + SanitizeName(id) }
 
-func repoVolume(id string) string { return "pcoder-" + id + "-repo" }
-func homeVolume(id string) string { return "pcoder-" + id + "-home" }
+func repoVolume(id string) string { return "pcoder-" + SanitizeName(id) + "-repo" }
+func homeVolume(id string) string { return "pcoder-" + SanitizeName(id) + "-home" }
 
-// Create runs a project for the repo and clones it inside the container
-// (blank project when repoURL is empty). Synchronous: returns when the
-// project is ready or failed. A clone failure keeps the project running so
-// the user can repair it from the terminal — only the error surfaces here.
+// Create clones the repoURL into a new project and returns when it is
+// ready or failed. repoURL is required and must be a GitHub repository
+// URL — cloning is the only way to create a project. The project id is
+// the repo's owner/repo, so creating the same repo twice is a conflict.
+// A clone failure keeps the project running so the user can repair it
+// from the terminal — only the error surfaces here.
 // cloneMethod is "ssh" or "http" (empty defaults to "http").
 func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod string) (string, Project, error) {
-	if strings.HasPrefix(repoURL, "-") || strings.HasPrefix(branch, "-") {
+	repoURL = strings.TrimSpace(repoURL)
+	branch = strings.TrimSpace(branch)
+	cloneMethod = strings.TrimSpace(cloneMethod)
+	if strings.HasPrefix(branch, "-") {
 		return "", Project{}, fmt.Errorf("%w: repo url and branch must not start with \"-\"", ErrInvalidInput)
+	}
+	id, err := parseRepoID(repoURL, s.allowAnyRepo)
+	if err != nil {
+		return "", Project{}, err
 	}
 	if cloneMethod == "" {
 		cloneMethod = "http"
@@ -127,15 +147,14 @@ func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod strin
 	if cloneMethod != "ssh" && cloneMethod != "http" {
 		return "", Project{}, fmt.Errorf("%w: cloneMethod must be \"ssh\" or \"http\"", ErrInvalidInput)
 	}
-	id, err := newID()
-	if err != nil {
-		return "", Project{}, err
+	if _, err := s.store.Get(id); err == nil {
+		return "", Project{}, fmt.Errorf("%w: project %q", ErrConflict, id)
 	}
-	p := Project{Name: defaultName(repoURL), Repo: repoURL, Branch: branch, CloneMethod: cloneMethod}
+	p := Project{Repo: repoURL, Branch: branch, CloneMethod: cloneMethod}
 	if err := s.store.Create(id, p); err != nil {
 		return "", Project{}, err
 	}
-	s.ev.Append("project.create", map[string]any{"id": id, "name": p.Name, "repo": repoURL, "branch": branch, "cloneMethod": cloneMethod})
+	s.ev.Append("project.create", map[string]any{"id": id, "repo": repoURL, "branch": branch, "cloneMethod": cloneMethod})
 
 	cid, err := s.runProject(ctx, id)
 	if err != nil {
@@ -354,7 +373,7 @@ func (s *Service) BringAllUp(ctx context.Context) error {
 	slog.Info("bootstrap: starting", "projects", len(entries))
 	var firstErr error
 	for _, e := range entries {
-		slog.Info("bootstrap: project", "id", e.ID, "name", e.Name)
+		slog.Info("bootstrap: project", "id", e.ID)
 		if err := s.provisionProject(ctx, e.ID); err != nil {
 			slog.Error("bootstrap: project failed", "id", e.ID, "err", err)
 			if firstErr == nil {
@@ -493,26 +512,4 @@ func (s *Service) wrapNotFound(err error) error {
 		return ErrNotFound
 	}
 	return err
-}
-
-// defaultName derives the project name from the repo URL ("untitled" for a
-// blank project), mirroring what a polished SaaS would show in its list.
-func defaultName(repoURL string) string {
-	name := strings.TrimSuffix(strings.TrimRight(repoURL, "/"), ".git")
-	if i := strings.LastIndexByte(name, '/'); i >= 0 {
-		name = name[i+1:]
-	}
-	if name == "" {
-		name = "untitled"
-	}
-	return name
-}
-
-// newID returns 8 hex characters of crypto/rand (prefixed by PCODER_ID_PREFIX if set).
-func newID() (string, error) {
-	var b [4]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", fmt.Errorf("generate id: %w", err)
-	}
-	return os.Getenv("PCODER_ID_PREFIX") + hex.EncodeToString(b[:]), nil
 }

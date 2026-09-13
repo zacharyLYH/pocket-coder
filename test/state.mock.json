@@ -3,8 +3,7 @@
     "email": "dev@example.com"
   },
   "projects": {
-    "deadbeef": {
-      "name": "tiny-preact",
+    "developit/preact-vite-template": {
       "repo": "https://github.com/developit/preact-vite-template.git",
       "branch": "main",
       "cloneMethod": "http",

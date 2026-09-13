@@ -15,6 +15,15 @@ function intEnv(name: string, def: number): number {
 export const API_PORT = intEnv('E2E_API_PORT', 8081)
 export const WEB_PORT = intEnv('E2E_WEB_PORT', 5174)
 
+// Host port of the per-run git daemon (see global-setup.ts). Each parallel
+// group gets its own daemon + port via E2E_GIT_PORT, so fixture repo URLs
+// — and therefore project ids — never collide across groups sharing one
+// Docker engine.
+export const GIT_PORT = intEnv('E2E_GIT_PORT', 8091)
+
+// Filesystem slug of this run, used to namespace fixture repo owners.
+export const RUN_SLUG = (process.env.E2E_RUN_ID ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '-')
+
 // RUN_DIR namespaces every on-disk artifact of one run.
 export const RUN_DIR = process.env.E2E_RUN_ID
   ? `test-results/${process.env.E2E_RUN_ID}`

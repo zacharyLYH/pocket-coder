@@ -1,11 +1,11 @@
 import { expect, type APIRequestContext, type Page, test } from '@playwright/test'
-import { createProjectViaUI, deleteAllProjects, engineUp, resetHarnessRegistry } from './helpers'
+import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp, resetHarnessRegistry, projectURL } from './helpers'
 
 async function fetchState(request: APIRequestContext) {
   const res = await request.get('/api/state')
   expect(res.ok()).toBeTruthy()
   return (await res.json()) as {
-    projects: Record<string, { name: string; harnesses?: string[] }>
+    projects: Record<string, { repo: string; harnesses?: string[] }>
     harnesses: Record<string, { name: string }>
   }
 }
@@ -43,19 +43,19 @@ test.describe('harness installs are desired state', () => {
     try {
       await page.goto('/')
       await expect(page.getByText('No projects yet.')).toBeVisible()
-      const idAlpha = await createProjectViaUI(page, request, 'https://example.com/projAlpha', 'projAlpha')
-      const idBeta = await createProjectViaUI(page, request, 'https://example.com/projBeta', 'projBeta')
-      const third = await createProjectViaUI(page, request, '', 'untitled')
+      const idAlpha = await createProjectViaUI(page, request, e2eRepo(1), e2eRepoID(1))
+      const idBeta = await createProjectViaUI(page, request, e2eRepo(2), e2eRepoID(2))
+      const third = await createProjectViaUI(page, request, e2eRepo(3), e2eRepoID(3))
 
-      await expect(page.getByText('projAlpha')).toBeVisible()
-      await expect(page.getByText('projBeta')).toBeVisible()
-      await expect(page.getByText('untitled')).toBeVisible()
+      await expect(page.getByText(e2eRepoID(1))).toBeVisible()
+      await expect(page.getByText(e2eRepoID(2))).toBeVisible()
+      await expect(page.getByText(e2eRepoID(3))).toBeVisible()
       await gateShot(page, 'gate0-home-no-harnesses')
 
       const getOrder = async () => {
         const res = await request.get('/api/projects')
-        const body = (await res.json()) as { projects: { id: string; name: string }[] }
-        body.projects.sort((a, b) => (a.name !== b.name ? a.name.localeCompare(b.name) : a.id.localeCompare(b.id)))
+        const body = (await res.json()) as { projects: { id: string }[] }
+        body.projects.sort((a, b) => a.id.localeCompare(b.id))
         return body.projects.map((p) => p.id)
       }
       const order = await getOrder()
@@ -136,7 +136,7 @@ test.describe('harness installs are desired state', () => {
       await expect(d1).not.toBeVisible({ timeout: 15_000 })
       await expect(page.getByTestId('tab-session-shared-name')).toContainText('shared-name', { timeout: 10_000 })
 
-      const bSessions1 = await request.get(`/api/projects/${idBeta}/sessions`)
+      const bSessions1 = await request.get(`/api/projects/${projectURL(idBeta)}/sessions`)
       const bBody1 = (await bSessions1.json()) as { sessions: { name: string }[] }
       expect(bBody1.sessions.map((s) => s.name)).not.toContain('shared-name')
       await gateShot(page, 'gate3-shell-session')
@@ -165,7 +165,7 @@ test.describe('harness installs are desired state', () => {
       await dHelper.getByRole('button', { name: 'Create & Attach' }).click()
       await expect(dHelper).not.toBeVisible({ timeout: 15_000 })
       await expect(page.getByTestId('tab-session-my-helper')).toContainText('my-helper')
-      const bSessions2 = await request.get(`/api/projects/${idBeta}/sessions`)
+      const bSessions2 = await request.get(`/api/projects/${projectURL(idBeta)}/sessions`)
       const bBody2 = (await bSessions2.json()) as { sessions: { name: string }[] }
       expect(bBody2.sessions.map((s) => s.name)).not.toContain('my-helper')
 
@@ -187,7 +187,7 @@ test.describe('harness installs are desired state', () => {
       await gateShot(page, 'gate4-renamed')
       await page.getByTestId('tab-session-renamed').click()
       await expect(page.getByTestId('tab-session-renamed')).toHaveAttribute('aria-selected', 'true')
-      const bSessions3 = await request.get(`/api/projects/${idBeta}/sessions`)
+      const bSessions3 = await request.get(`/api/projects/${projectURL(idBeta)}/sessions`)
       const bBody3 = (await bSessions3.json()) as { sessions: { name: string }[] }
       expect(bBody3.sessions.map((s) => s.name)).not.toContain('renamed')
       await expect(page.getByText('Connected')).toBeVisible()
@@ -215,11 +215,11 @@ test.describe('harness installs are desired state', () => {
       await expect
         .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 30_000 })
         .toContain('after-restart')
-      const bSessions4 = await request.get(`/api/projects/${idBeta}/sessions`)
+      const bSessions4 = await request.get(`/api/projects/${projectURL(idBeta)}/sessions`)
       const bBody4 = (await bSessions4.json()) as { sessions: { name: string }[] }
       expect(bBody4.sessions.map((s) => s.name)).not.toContain('renamed')
       expect(bBody4.sessions.map((s) => s.name)).not.toContain('my-crasher')
-      const thirdSessions = await request.get(`/api/projects/${third}/sessions`)
+      const thirdSessions = await request.get(`/api/projects/${projectURL(third)}/sessions`)
       const thirdSessBody = (await thirdSessions.json()) as { sessions: { name: string }[] }
       expect(thirdSessBody.sessions.map((s) => s.name)).not.toContain('renamed')
 

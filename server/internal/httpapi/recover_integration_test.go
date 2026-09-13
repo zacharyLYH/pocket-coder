@@ -1,12 +1,14 @@
 //go:build integration
 
-// Smoke test for the dev seed state (test/state.mock.json): a server
-// booted against NOTHING but a state.json must recover the full desired
-// state — the boot bootstrap (BringAllUp, the pass main runs before
-// serving) recreates the container, and because a fresh engine has no repo
-// volume, the repo is re-cloned from the URL in state.json. Recovery must
-// not mutate desired state: the on-disk file is asserted byte-equal (as
-// generic maps) before and after. Run with:
+// Smoke test for seeded state: a server booted against NOTHING but a
+// state.json must recover the full desired state — the boot bootstrap
+// (BringAllUp, the pass main runs before serving) recreates the
+// container, and because a fresh engine has no repo volume, the repo is
+// re-cloned from the URL in state.json. Recovery must not mutate desired
+// state: the on-disk file is asserted byte-equal (as generic maps) before
+// and after. The seed models test/state.mock.json's shape (owner/repo id,
+// no name field) but points at a local fixture repo so the test is
+// hermetic. Run with:
 // go test -tags=integration -count=1 -run TestStateMockRecovery ./internal/httpapi/
 package httpapi
 
@@ -22,19 +24,21 @@ import (
 )
 
 func TestStateMockRecovery(t *testing.T) {
-	// seed a fresh data dir with the committed mock, retargeting the login
-	// email to the one the test auth service expects and the project key
-	// to a random test id so reruns never collide on a leftover container
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "test", "state.mock.json"))
-	if err != nil {
-		t.Fatalf("read mock state: %v", err)
-	}
-	raw = bytes.ReplaceAll(raw, []byte("dev@example.com"), []byte("me@example.com"))
-	id := newTestID(t)
-	raw = bytes.ReplaceAll(raw, []byte("deadbeef"), []byte(id))
+	// the fixture knows the project id its URL derives to under the
+	// service hatch (set in newLiveDepsOnDir below)
+	g := fixtureRepo(t)
+	url, id := g.URL, g.ID
+
+	// seed a fresh data dir with one project, shaped like the committed
+	// mock (owner/repo key, repo + harness + session, no name field)
+	seed := `{"user":{"email":"me@example.com"},"projects":{` +
+		`"` + id + `":{"repo":"` + url + `","branch":"main","cloneMethod":"http",` +
+		`"harnesses":["opencode"],"sessions":{"main":{},"oc1":{"harness":"opencode"}},` +
+		`"quickCommands":{"dev":"npm install && npm start -- --host 0.0.0.0"}}},` +
+		`"harnesses":{"opencode":{"id":"opencode","name":"OpenCode","command":"opencode","install":"npm i -g opencode-ai"}}}`
 	dataDir := t.TempDir()
 	statePath := filepath.Join(dataDir, "state.json")
-	if err := os.WriteFile(statePath, raw, 0o600); err != nil {
+	if err := os.WriteFile(statePath, []byte(seed+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	wantDoc := statetest.Read(t, statePath)
@@ -57,7 +61,7 @@ func TestStateMockRecovery(t *testing.T) {
 	statetest.AssertEqual(t, statePath, wantDoc)
 
 	// the project is up before any session request touches it
-	code, body := doJSON(t, h, cookie, http.MethodGet, "/api/projects/"+id, "")
+	code, body := doJSON(t, h, cookie, http.MethodGet, projectPath(id, ""), "")
 	if code != http.StatusOK {
 		t.Fatalf("get seeded project: %d %v", code, body)
 	}
@@ -67,16 +71,16 @@ func TestStateMockRecovery(t *testing.T) {
 
 	// the first session create lands on an already-provisioned container:
 	// no lazy recovery left in the request path
-	code, body = doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions", `{"name":"main"}`)
+	code, body = doJSON(t, h, cookie, http.MethodPost, projectPath(id, "/sessions"), `{"name":"main"}`)
 	if code != http.StatusCreated {
 		t.Fatalf("create session on recovered container: %d %v", code, body)
 	}
 	waitForStatus(t, h, cookie, id, "running")
 
 	// the repo from state.json is really there (git clone puts the working
-	// tree at /workspace/repo; the seed template ships a README)
+	// tree at /workspace/repo; the fixture ships hello.txt)
 	code, body = doJSON(t, h, cookie, http.MethodPost, "/api/projects/exec",
-		`{"projectIds":["`+id+`"],"command":"ls /workspace/repo"}`)
+		`{"projectIds":["`+id+`"],"command":"cat /workspace/repo/hello.txt"}`)
 	if code != http.StatusOK {
 		t.Fatalf("exec in recovered container: %d %v", code, body)
 	}
@@ -85,18 +89,13 @@ func TestStateMockRecovery(t *testing.T) {
 		t.Fatalf("exec results: %v", body)
 	}
 	r0 := results[0].(map[string]any)
-	if r0["status"] != "ok" {
-		t.Fatalf("exec in recovered container failed: %v", r0)
-	}
-	if detail, _ := r0["detail"].(string); !strings.Contains(detail, "README") {
-		t.Fatalf("repo not re-cloned: ls /workspace/repo = %q, want it to contain README", detail)
+	detail, _ := r0["detail"].(string)
+	if r0["status"] != "ok" || !strings.Contains(detail, "hi") {
+		t.Fatalf("repo not re-cloned: cat hello.txt = %v", r0)
 	}
 
-	// recovery is derived state only: the on-disk desired state is untouched,
-	// except for the session metadata this test itself created above —
-	// sessions are persisted by design, so expect exactly that one addition.
-	proj := wantDoc["projects"].(map[string]any)[id].(map[string]any)
-	proj["sessions"].(map[string]any)["main"] = map[string]any{}
+	// recovery is derived state only: the on-disk desired state is untouched
+	// (the "main" session metadata was already seeded, so nothing changed)
 	statetest.AssertEqual(t, statePath, wantDoc)
 
 	// the boot reconcile + re-clone is visible in the audit trail
@@ -109,4 +108,7 @@ func TestStateMockRecovery(t *testing.T) {
 			t.Fatalf("events.log missing %s:\n%s", typ, logged)
 		}
 	}
+
+	// the recovered container is engine-global: clean it up by id
+	deleteTestProject(t, h, cookie, id)
 }

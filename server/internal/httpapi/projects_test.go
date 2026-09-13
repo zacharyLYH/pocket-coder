@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -46,23 +47,22 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 	}
 	var created struct {
 		ID     string `json:"id"`
-		Name   string `json:"name"`
 		Repo   string `json:"repo"`
 		Branch string `json:"branch"`
 	}
 	want := "https://github.com/x/hello.git"
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil ||
-		created.Name != "hello" || created.ID == "" ||
+		created.ID != "x/hello" ||
 		created.Repo != want || created.Branch != "" {
-		t.Fatalf("created = %+v (want name=hello repo=%s branch=\"\"), err=%v", created, want, err)
+		t.Fatalf("created = %+v (want id=x/hello repo=%s branch=\"\"), err=%v", created, want, err)
 	}
 
-	// the source of truth on disk is exactly this project — name+repo
-	// (branch/cloneMethod empty → omitted), nothing else in the document
+	// the source of truth on disk is exactly this project — repo only
+	// (branch empty → omitted), nothing else in the document
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": ""},
 		"projects": map[string]any{
-			created.ID: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
+			created.ID: map[string]any{"repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
 		},
 	})
 
@@ -74,9 +74,9 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 		t.Fatalf("list = %+v err=%v", list, err)
 	}
 
-	md.EXPECT().Inspect(mock.Anything, "pcoder-"+created.ID).
+	md.EXPECT().Inspect(mock.Anything, project.ContainerName(created.ID)).
 		Return(docker.Container{Running: true, Status: "running"}, nil)
-	rec = authedGet(t, h, cookie, "/api/projects/"+created.ID)
+	rec = authedGet(t, h, cookie, "/api/projects/"+url.PathEscape(created.ID))
 	var got struct {
 		Status string `json:"status"`
 	}
@@ -103,6 +103,46 @@ func TestCreateCloneFailureSurfacesDetail(t *testing.T) {
 	}
 }
 
+func TestCreateRequiresGitHubRepo(t *testing.T) {
+	d, md, pinOut, _ := newProjectDeps(t)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	for _, body := range []string{
+		`{}`,
+		`{"repoUrl":""}`,
+		`{"repoUrl":"https://example.com/x/hello.git"}`,
+	} {
+		rec := authedPost(t, h, cookie, "/api/projects", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("create %s: got %d %q, want 400", body, rec.Code, rec.Body)
+		}
+	}
+	// no docker calls for rejected input
+	md.AssertNotCalled(t, "Run", mock.Anything, mock.Anything)
+}
+
+func TestCreateDuplicateRepoIsConflict(t *testing.T) {
+	d, md, pinOut, _ := newProjectDeps(t)
+	h := New(d)
+
+	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
+	md.EXPECT().InspectImage(mock.Anything, project.ProjectImage).Return(nil)
+	md.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
+	md.EXPECT().Exec(mock.Anything, "cid", mock.Anything, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+
+	cookie := loginCookie(t, h, pinOut)
+	body := `{"repoUrl":"https://github.com/x/hello.git"}`
+	if rec := authedPost(t, h, cookie, "/api/projects", body); rec.Code != http.StatusCreated {
+		t.Fatalf("first create: %d %q", rec.Code, rec.Body)
+	}
+	rec := authedPost(t, h, cookie, "/api/projects", body)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second create: got %d %q, want 409", rec.Code, rec.Body)
+	}
+}
+
 func TestCreateInvalidBodyIs400(t *testing.T) {
 	d, _, pinOut, _ := newProjectDeps(t)
 	h := New(d)
@@ -119,7 +159,7 @@ func TestGetEngineFailureIs500(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	if err := project.Open(dataDir).Create("abc", project.Project{Name: "x"}); err != nil {
+	if err := project.Open(dataDir).Create("abc", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
 		t.Fatal(err)
 	}
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{}, errors.New("engine down"))
@@ -137,7 +177,7 @@ func TestOpMissingContainerIs404(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	if err := project.Open(dataDir).Create("abc", project.Project{Name: "x"}); err != nil {
+	if err := project.Open(dataDir).Create("abc", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
 		t.Fatal(err)
 	}
 	md.EXPECT().Start(mock.Anything, "pcoder-abc").

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { deleteAllProjects, engineUp } from './helpers'
+import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createReactProject, execInProject, waitForInspectContaining } from './preview.helpers'
 
 test.describe('preview reconnect', () => {
@@ -44,13 +44,13 @@ test.describe('preview reconnect', () => {
       await waitForInspectContaining(request, projectID, 'persist-input', 30)
 
       // Type something via CDP tools
-      await request.post(`/api/projects/${projectID}/preview/tools/type`, {
+      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/type`, {
         data: { selector: '[data-testid="persist-input"]', text: 'typed-state' },
       })
       await page.waitForTimeout(1000)
 
       // Verify it's there
-      let inspectRes = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
+      let inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
       let { html } = (await inspectRes.json()) as { html: string }
       expect(html).toContain('typed-state')
 
@@ -60,7 +60,7 @@ test.describe('preview reconnect', () => {
 
       // The project container and browser sidecar must stay alive
       await new Promise((r) => setTimeout(r, 3000))
-      const statusRes = await request.get(`/api/projects/${projectID}/preview`)
+      const statusRes = await request.get(`/api/projects/${projectURL(projectID)}/preview`)
       expect(statusRes.ok()).toBeTruthy()
       const status = await statusRes.json()
       expect(status.status).toBe('ready')
@@ -72,7 +72,7 @@ test.describe('preview reconnect', () => {
       await expect(newFrame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
 
       // The browser state (typed text) must persist through the disconnect
-      inspectRes = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
+      inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
       expect(inspectRes.ok()).toBeTruthy()
       ;({ html } = (await inspectRes.json()) as { html: string })
       // The input value persists because it's in Chromium's DOM, not the phone's

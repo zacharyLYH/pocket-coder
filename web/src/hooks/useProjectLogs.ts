@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import { api } from '@/lib/api'
+import { api, projectPath } from '@/lib/api'
 
 export type ProjectLogEntry = {
   id: number
@@ -18,7 +18,7 @@ export function useProjectLogs(projectId: string, limit = 200) {
 
   const refresh = useCallback(async () => {
     try {
-      const d = await api<{ logs: ProjectLogEntry[] }>(`/api/projects/${projectId}/logs?limit=${limit}`)
+      const d = await api<{ logs: ProjectLogEntry[] }>(projectPath(projectId, `/logs?limit=${limit}`))
       setLogs(d.logs ?? [])
     } catch {
       // keep last-known

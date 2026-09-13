@@ -22,7 +22,7 @@ import (
 func TestExecCommandEndpoint(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
-	if err := project.Open(dataDir).Create("def", project.Project{Name: "second"}); err != nil {
+	if err := project.Open(dataDir).Create("def", project.Project{Repo: "https://github.com/x/world.git"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -55,10 +55,10 @@ func TestExecCommandEndpoint(t *testing.T) {
 	for _, r := range body.Results {
 		byProject[r.Project] = [2]string{r.Status, r.Detail}
 	}
-	if got := byProject["x"]; got[0] != "ok" || got[1] != "hi" { // seededProject names "abc" as "x"
+	if got := byProject["abc"]; got[0] != "ok" || got[1] != "hi" {
 		t.Fatalf(`abc = %+v, want ok/"hi"`, got)
 	}
-	if got := byProject["second"]; got[0] != "error" || !strings.Contains(got[1], "exit 3") || !strings.Contains(got[1], "boom") {
+	if got := byProject["def"]; got[0] != "error" || !strings.Contains(got[1], "exit 3") || !strings.Contains(got[1], "boom") {
 		t.Fatalf(`def = %+v, want error surfacing exit 3 + output`, got)
 	}
 	waitForEvent(t, d, "projects.exec")

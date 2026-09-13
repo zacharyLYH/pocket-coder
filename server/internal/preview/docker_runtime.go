@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"pcoder/internal/docker"
+	"pcoder/internal/project"
 )
 
 const (
@@ -102,7 +103,7 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 		targetURL = "http://127.0.0.1:" + strconv.Itoa(cfg.Port)
 	}
 	spec := docker.Spec{
-		Name:     "pcoder-preview-" + cfg.ProjectID,
+		Name:     "pcoder-preview-" + project.SanitizeName(cfg.ProjectID),
 		Image:    image,
 		Writable: true,
 		Network:  docker.NetworkNamespace(cfg.ContainerID),
@@ -249,7 +250,7 @@ func (f *DockerFactory) startRelay(ctx context.Context, projectID, sidecarIP str
 		image = DefaultBrowserImage
 	}
 	spec := docker.Spec{
-		Name:            relayNamePrefix + projectID,
+		Name:            relayNamePrefix + project.SanitizeName(projectID),
 		Image:           image,
 		Network:         docker.DefaultNetwork,
 		Entrypoint:      []string{"sh", "-c"},

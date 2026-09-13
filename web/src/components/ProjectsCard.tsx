@@ -13,13 +13,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { api, errMsg } from '@/lib/api'
+import { api, errMsg, projectPath } from '@/lib/api'
 import { terminalPath } from '@/lib/paths'
 import type { Project } from '@/lib/types'
 import { QuickCommandsModal } from '@/components/QuickCommandsModal'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-// Projects card: the project list plus the create form (repo URL, branch,
-// clone method). Deleting and creating are explicit and confirmed.
+// Projects card: the project list plus the create form (GitHub repo URL,
+// branch, clone method). Every project is a clone: the id is owner/repo.
+// Deleting and creating are explicit and confirmed.
 export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, navigate }: {
   projects: Project[]
   loading: boolean
@@ -41,11 +42,10 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
     setCreating(true)
     setCreateError(null)
     try {
-      const body: Record<string, string> = {}
-      if (repoUrl.trim()) body.repoUrl = repoUrl.trim()
-      if (branch.trim()) body.branch = branch.trim()
-      if (repoUrl.trim()) body.cloneMethod = cloneMethod
-      await api('/api/projects', { method: 'POST', body: JSON.stringify(body) })
+      await api('/api/projects', {
+        method: 'POST',
+        body: JSON.stringify({ repoUrl: repoUrl.trim(), branch: branch.trim(), cloneMethod }),
+      })
       setRepoUrl('')
       setBranch('')
       await refresh()
@@ -60,7 +60,7 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
     if (!deleteTarget) return
     setDeleteTarget(null)
     try {
-      await api(`/api/projects/${deleteTarget}?scope=all`, { method: 'DELETE' })
+      await api(projectPath(deleteTarget, '?scope=all'), { method: 'DELETE' })
       await refresh()
     } catch {
       // leave the row in place; the next refresh shows the truth
@@ -82,8 +82,8 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
           <p className="text-muted-foreground text-sm">No projects yet.</p>
         )}
         {projects.map((p) => (
-          <div key={p.id} data-testid={`project-card-${p.id}`} className="flex items-center justify-between text-sm">
-            <span>{p.name}</span>
+          <div key={p.id} data-testid={`project-card-${p.id}`} className="flex items-center justify-between gap-2 text-sm">
+            <span title={p.id} className="min-w-0 flex-1 truncate">{p.id}</span>
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={() => navigate(terminalPath(p.id, 'main'))}>
                 Terminal
@@ -121,7 +121,7 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
         <form onSubmit={createProject} className="mt-2 flex flex-col gap-2 border-t pt-3">
           <Input
             type="text"
-            placeholder="Repo URL (optional — blank = plain project)"
+            placeholder="GitHub Repo URL (e.g. https://github.com/owner/repo)"
             value={repoUrl}
             onChange={(e) => setRepoUrl(e.target.value)}
           />
@@ -131,36 +131,34 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
             value={branch}
             onChange={(e) => setBranch(e.target.value)}
           />
-          {repoUrl.trim() && (
-            <div className="flex items-center gap-2 text-sm">
-              <label className="shrink-0 whitespace-nowrap text-muted-foreground">Clone via:</label>
-              <div className="flex shrink-0 rounded-md border">
-                <button
-                  type="button"
-                  className={`px-3 py-1 text-xs ${cloneMethod === 'http' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-                  onClick={() => setCloneMethod('http')}
-                >
-                  HTTPS
-                </button>
-                <button
-                  type="button"
-                  className={`px-3 py-1 text-xs ${cloneMethod === 'ssh' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-                  onClick={() => setCloneMethod('ssh')}
-                >
-                  SSH
-                </button>
-              </div>
-              {cloneMethod === 'ssh' && sshKeyCount === 0 && (
-                <span className="text-destructive text-xs">No SSH keys — add one below.</span>
-              )}
-              {cloneMethod === 'ssh' && sshKeyCount > 0 && (
-                <span className="text-muted-foreground text-xs">{sshKeyCount} key(s) registered</span>
-              )}
+          <div className="flex items-center gap-2 text-sm">
+            <label className="shrink-0 whitespace-nowrap text-muted-foreground">Clone via:</label>
+            <div className="flex shrink-0 rounded-md border">
+              <button
+                type="button"
+                className={`px-3 py-1 text-xs ${cloneMethod === 'http' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+                onClick={() => setCloneMethod('http')}
+              >
+                HTTPS
+              </button>
+              <button
+                type="button"
+                className={`px-3 py-1 text-xs ${cloneMethod === 'ssh' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+                onClick={() => setCloneMethod('ssh')}
+              >
+                SSH
+              </button>
             </div>
-          )}
+            {cloneMethod === 'ssh' && sshKeyCount === 0 && (
+              <span className="text-destructive text-xs">No SSH keys — add one below.</span>
+            )}
+            {cloneMethod === 'ssh' && sshKeyCount > 0 && (
+              <span className="text-muted-foreground text-xs">{sshKeyCount} key(s) registered</span>
+            )}
+          </div>
           {createError && <p className="text-destructive max-h-24 overflow-auto break-all text-xs">{createError}</p>}
-          <Button type="submit" disabled={creating}>
-            {creating ? 'Creating…' : 'Create project'}
+          <Button type="submit" disabled={creating || !repoUrl.trim()}>
+            {creating ? 'Creating…' : 'Clone project'}
           </Button>
         </form>
       </CardContent>

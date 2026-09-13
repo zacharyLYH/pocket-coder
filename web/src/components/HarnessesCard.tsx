@@ -233,8 +233,8 @@ export function ProjectPicker({ projects, picked, onToggle, busy, applyLabel, on
               disabled={busy || isInstalled}
               className="accent-primary"
             />
-            <span>{p.name}</span>
-            {isInstalled && <span className="ml-auto text-muted-foreground">Installed</span>}
+            <span title={p.id} className="min-w-0 flex-1 truncate">{p.id}</span>
+            {isInstalled && <span className="ml-auto shrink-0 text-muted-foreground">Installed</span>}
           </label>
         )
       })}

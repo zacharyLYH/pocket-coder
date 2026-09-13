@@ -80,28 +80,73 @@ func types(evs []events.Event) []string {
 	return out
 }
 
-func TestCreateBlank(t *testing.T) {
+func TestCreateDerivesIDFromRepo(t *testing.T) {
 	s, d, _, _ := newService(t)
 	var name string
 	expectProjectReady(d, &name)
+	d.EXPECT().Exec(mock.Anything, "cid123",
+		[]string{"git", "clone", testRepo, repoTarget + "/repo"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
 
-	id, p, err := s.Create(t.Context(), "", "", "")
+	id, p, err := s.Create(t.Context(), testRepo, "", "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if len(id) != 8 {
-		t.Fatalf("id = %q, want 8 hex chars", id)
+	if id != "x/hello" {
+		t.Fatalf("id = %q, want x/hello", id)
 	}
-	want := Project{Name: "untitled", Repo: "", Branch: "", CloneMethod: "http"}
+	want := Project{Repo: testRepo, Branch: "", CloneMethod: "http"}
 	if !reflect.DeepEqual(p, want) {
 		t.Fatalf("project = %+v, want %+v", p, want)
 	}
-	if name != "pcoder-"+id {
-		t.Fatalf("container name = %q, want pcoder-%s", name, id)
+	if name != "pcoder-x-hello" {
+		t.Fatalf("container name = %q, want pcoder-x-hello", name)
 	}
 	gotTypes := types(eventsOf(t, s))
-	if gotTypes[len(gotTypes)-2] != "project.create" || gotTypes[len(gotTypes)-1] != "project.ready" {
+	joined := strings.Join(gotTypes, ",")
+	if gotTypes[len(gotTypes)-1] != "project.ready" || !strings.Contains(joined, "project.create") || !strings.Contains(joined, "project.clone") {
 		t.Fatalf("unexpected events: %v", gotTypes)
+	}
+}
+
+func TestCreateRequiresGitHubRepo(t *testing.T) {
+	s, _, _, _ := newService(t)
+	for _, tc := range []struct{ repo, branch string }{
+		{"", ""},
+		{"   ", ""},
+		{"https://example.com/x/hello.git", ""},
+		{"git@gitlab.com:x/hello.git", ""},
+		{"https://github.com/onlyone.git", ""},
+		{"not a url at all", ""},
+	} {
+		_, _, err := s.Create(t.Context(), tc.repo, tc.branch, "")
+		if err == nil || !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("Create(%q) err = %v, want ErrInvalidInput", tc.repo, err)
+		}
+	}
+	if entries, _ := s.List(); len(entries) != 0 {
+		t.Fatalf("rejected creates must leave no metadata: %+v", entries)
+	}
+}
+
+func TestCreateDuplicateRepoIsConflict(t *testing.T) {
+	s, d, _, _ := newService(t)
+	var name string
+	expectProjectReady(d, &name)
+	d.EXPECT().Exec(mock.Anything, "cid123", mock.Anything, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+
+	if _, _, err := s.Create(t.Context(), testRepo, "", ""); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	_, _, err := s.Create(t.Context(), testRepo, "", "")
+	if err == nil || !errors.Is(err, ErrConflict) {
+		t.Fatalf("second create err = %v, want ErrConflict", err)
+	}
+	// same repo with different URL spellings is the same project
+	_, _, err = s.Create(t.Context(), "git@github.com:x/hello.git", "", "")
+	if err == nil || !errors.Is(err, ErrConflict) {
+		t.Fatalf("alias create err = %v, want ErrConflict", err)
 	}
 }
 
@@ -124,11 +169,14 @@ func TestCreateClonesInsideContainer(t *testing.T) {
 			t.Fatalf("create: %v", err)
 		}
 		wantBranch := tc.branch
-		want := Project{Name: "hello", Repo: testRepo, Branch: wantBranch, CloneMethod: "http"}
+		want := Project{Repo: testRepo, Branch: wantBranch, CloneMethod: "http"}
 		if !reflect.DeepEqual(p, want) {
 			t.Fatalf("project = %+v, want %+v", p, want)
 		}
-		d.EXPECT().Inspect(mock.Anything, "pcoder-"+id).Return(docker.Container{Running: true, Status: "running"}, nil)
+		if id != "x/hello" {
+			t.Fatalf("id = %q, want x/hello", id)
+		}
+		d.EXPECT().Inspect(mock.Anything, ContainerName(id)).Return(docker.Container{Running: true, Status: "running"}, nil)
 		if _, status, err := s.Get(t.Context(), id); err != nil || status.State != "running" {
 			t.Fatalf("get: %v %+v", err, status)
 		}
@@ -174,8 +222,10 @@ func TestCreateBuildsMissingProjectImage(t *testing.T) {
 		return o.Tag == ProjectImage && o.InputStream != nil
 	}), mock.Anything).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
+	d.EXPECT().Exec(mock.Anything, "cid", mock.Anything, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
 
-	if _, _, err := s.Create(t.Context(), "", "", ""); err != nil {
+	if _, _, err := s.Create(t.Context(), testRepo, "", ""); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 }
@@ -186,7 +236,7 @@ func TestCreateRunFailureCleansUpMetadata(t *testing.T) {
 	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.Anything).Return("", errors.New("engine on fire"))
 
-	if _, _, err := s.Create(t.Context(), "", "", ""); err == nil {
+	if _, _, err := s.Create(t.Context(), testRepo, "", ""); err == nil {
 		t.Fatal("expected run failure")
 	}
 	if entries, _ := s.List(); len(entries) != 0 {
@@ -209,13 +259,15 @@ func TestStartStopRestartEvents(t *testing.T) {
 	s, d, _, _ := newService(t)
 	var cname string
 	expectProjectReady(d, &cname)
-	id, _, err := s.Create(t.Context(), "", "", "")
+	d.EXPECT().Exec(mock.Anything, "cid123", mock.Anything, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	id, _, err := s.Create(t.Context(), testRepo, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	d.EXPECT().Stop(mock.Anything, "pcoder-"+id, stopWait).Return(nil)
-	d.EXPECT().Start(mock.Anything, "pcoder-"+id).Return(nil)
+	d.EXPECT().Stop(mock.Anything, ContainerName(id), stopWait).Return(nil)
+	d.EXPECT().Start(mock.Anything, ContainerName(id)).Return(nil)
 	if err := s.Restart(t.Context(), id); err != nil {
 		t.Fatalf("restart: %v", err)
 	}
@@ -231,7 +283,7 @@ func TestStartStopRestartEvents(t *testing.T) {
 
 func TestStopToleratesMissingContainer(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+	if err := s.store.Create("abc", Project{Repo: testRepo}); err != nil {
 		t.Fatal(err)
 	}
 	wrapped := fmt.Errorf("stop: %w", docker.ErrNotFound)
@@ -257,7 +309,7 @@ func TestDeleteScopes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(string(tc.scope), func(t *testing.T) {
 			s, d, _, _ := newService(t)
-			if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+			if err := s.store.Create("abc", Project{Repo: testRepo}); err != nil {
 				t.Fatal(err)
 			}
 			// volume-taking scopes stop the container first (best effort)
@@ -303,18 +355,54 @@ func TestDeleteValidation(t *testing.T) {
 	}
 }
 
-func TestDefaultName(t *testing.T) {
+func TestParseRepoID(t *testing.T) {
 	cases := map[string]string{
-		testRepo:                      "hello",
-		"https://github.com/x/hello":  "hello",
-		"https://github.com/x/hello/": "hello",
-		"":                            "untitled",
-		"git@gitlab.com:y/thing.git":  "thing",
+		testRepo:                           "x/hello",
+		"https://github.com/x/hello":       "x/hello",
+		"https://github.com/x/hello/":      "x/hello",
+		"https://github.com/X/Hello.git":   "x/hello",
+		"http://github.com/x/hello.git":    "x/hello",
+		"github.com/x/hello":               "x/hello",
+		"git@github.com:x/hello.git":       "x/hello",
+		"git@github.com:X/Hello":           "x/hello",
+		"ssh://git@github.com/x/hello.git": "x/hello",
 	}
-	for url, want := range cases {
-		if got := defaultName(url); got != want {
-			t.Errorf("defaultName(%q) = %q, want %q", url, got, want)
+	for raw, want := range cases {
+		if got, err := ParseRepoID(raw); err != nil || got != want {
+			t.Errorf("ParseRepoID(%q) = %q, %v; want %q", raw, got, err, want)
 		}
+	}
+	for _, bad := range []string{
+		"",
+		"   ",
+		"https://example.com/x/hello.git",
+		"git@gitlab.com:x/hello.git",
+		"https://github.com/onlyone",
+		"https://github.com//.git",
+		"https://github.com/x/hello/extra/path",
+		"just some words",
+		"--upload-pack=evil",
+	} {
+		if got, err := ParseRepoID(bad); err == nil || !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("ParseRepoID(%q) = %q, %v; want ErrInvalidInput", bad, got, err)
+		}
+	}
+}
+
+func TestSanitizeName(t *testing.T) {
+	cases := map[string]string{
+		"x/hello":       "x-hello",
+		"Org/Repo.Name": "org-repo.name",
+		"a/b_c-d.e":     "a-b_c-d.e",
+		"abc":           "abc",
+	}
+	for id, want := range cases {
+		if got := SanitizeName(id); got != want {
+			t.Errorf("SanitizeName(%q) = %q, want %q", id, got, want)
+		}
+	}
+	if got := ContainerName("x/hello"); got != "pcoder-x-hello" {
+		t.Errorf("ContainerName = %q, want pcoder-x-hello", got)
 	}
 }
 
@@ -334,7 +422,7 @@ func TestCreateCloneExecErrorSurfaces(t *testing.T) {
 
 func TestStartMissingContainerPropagates(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+	if err := s.store.Create("abc", Project{Repo: testRepo}); err != nil {
 		t.Fatal(err)
 	}
 	// metadata exists but the container is gone (scope=container deleted):
@@ -355,7 +443,7 @@ func TestStartMissingContainerPropagates(t *testing.T) {
 
 func TestDeletePartialFailureReportsFirstError(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+	if err := s.store.Create("abc", Project{Repo: testRepo}); err != nil {
 		t.Fatal(err)
 	}
 	d.EXPECT().Stop(mock.Anything, "pcoder-abc", stopWait).Return(nil)
@@ -381,7 +469,7 @@ func TestDeletePartialFailureReportsFirstError(t *testing.T) {
 
 func TestDeleteAllKeepsRecordWhenDockerCleanupFails(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+	if err := s.store.Create("abc", Project{Repo: testRepo}); err != nil {
 		t.Fatal(err)
 	}
 	d.EXPECT().Stop(mock.Anything, "pcoder-abc", stopWait).Return(nil)
@@ -401,7 +489,7 @@ func TestDeleteAllKeepsRecordWhenDockerCleanupFails(t *testing.T) {
 
 func TestEnsureContainerRunningIsNoop(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+	if err := s.store.Create("abc", Project{Repo: testRepo}); err != nil {
 		t.Fatal(err)
 	}
 	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
@@ -412,7 +500,7 @@ func TestEnsureContainerRunningIsNoop(t *testing.T) {
 
 func TestEnsureContainerMissingReconciles(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+	if err := s.store.Create("abc", Project{Repo: testRepo}); err != nil {
 		t.Fatal(err)
 	}
 	expectReconcile(d)
@@ -423,7 +511,7 @@ func TestEnsureContainerMissingReconciles(t *testing.T) {
 
 func TestEnsureContainerExitedIsNoop(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+	if err := s.store.Create("abc", Project{Repo: testRepo}); err != nil {
 		t.Fatal(err)
 	}
 	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: false, Status: "exited"}, nil)
@@ -442,7 +530,7 @@ func TestEnsureContainerNotFoundReturnsErrNotFound(t *testing.T) {
 
 func TestEnsureContainerReconcileEvent(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Name: "x"}); err != nil {
+	if err := s.store.Create("abc", Project{Repo: testRepo}); err != nil {
 		t.Fatal(err)
 	}
 	expectReconcile(d)
@@ -467,7 +555,6 @@ func TestEnsureContainerReconcileEvent(t *testing.T) {
 func TestEnsureContainerRecreateIsContainerOnly(t *testing.T) {
 	s, d, _, _ := newService(t)
 	if err := s.store.Create("abc", Project{
-		Name:      "hello",
 		Repo:      testRepo,
 		Harnesses: []string{"opencode"},
 	}); err != nil {
@@ -519,7 +606,6 @@ func TestBringAllUpInstallsRecordedHarnesses(t *testing.T) {
 	// Project with two installed harnesses, container missing → full
 	// provisioning at boot.
 	if err := s.store.Create("abc", Project{
-		Name:      "x",
 		Harnesses: []string{"opencode", "freebuff"},
 	}); err != nil {
 		t.Fatal(err)
@@ -545,7 +631,6 @@ func TestBringAllUpInstallsRecordedHarnesses(t *testing.T) {
 func TestBringAllUpReclonesEmptyRepoVolume(t *testing.T) {
 	s, d, _, _ := newService(t)
 	if err := s.store.Create("abc", Project{
-		Name:      "hello",
 		Repo:      testRepo,
 		Harnesses: []string{"opencode"},
 	}); err != nil {
@@ -591,7 +676,7 @@ func TestBringAllUpReclonesEmptyRepoVolume(t *testing.T) {
 // project's container running, not just the ones Docker still has up.
 func TestBringAllUpStartsExitedContainer(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Name: "x", Harnesses: []string{"opencode"}}); err != nil {
+	if err := s.store.Create("abc", Project{Harnesses: []string{"opencode"}}); err != nil {
 		t.Fatal(err)
 	}
 	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: false, Status: "exited"}, nil).Once()
@@ -612,7 +697,7 @@ func TestBringAllUpStartsExitedContainer(t *testing.T) {
 // no downloads, no restarts, just probes.
 func TestBringAllUpHealthyIsProbeOnly(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Name: "x", Harnesses: []string{"opencode"}}); err != nil {
+	if err := s.store.Create("abc", Project{Harnesses: []string{"opencode"}}); err != nil {
 		t.Fatal(err)
 	}
 	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
@@ -632,10 +717,10 @@ func TestBringAllUpHealthyIsProbeOnly(t *testing.T) {
 // remaining projects.
 func TestBringAllUpContinuesPastInstallFailure(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Name: "x", Harnesses: []string{"broken"}}); err != nil {
+	if err := s.store.Create("abc", Project{Harnesses: []string{"broken"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.store.Create("def", Project{Name: "y", Harnesses: []string{"opencode"}}); err != nil {
+	if err := s.store.Create("def", Project{Harnesses: []string{"opencode"}}); err != nil {
 		t.Fatal(err)
 	}
 	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
@@ -698,7 +783,7 @@ func TestCreateCloneMethodSSH(t *testing.T) {
 	if p.CloneMethod != "ssh" {
 		t.Fatalf("CloneMethod = %q, want ssh", p.CloneMethod)
 	}
-	d.EXPECT().Inspect(mock.Anything, "pcoder-"+id).Return(docker.Container{Running: true}, nil)
+	d.EXPECT().Inspect(mock.Anything, ContainerName(id)).Return(docker.Container{Running: true}, nil)
 	if _, status, err := s.Get(t.Context(), id); err != nil || status.State != "running" {
 		t.Fatalf("get: %v %+v", err, status)
 	}

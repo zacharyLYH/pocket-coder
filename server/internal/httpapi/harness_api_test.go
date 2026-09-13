@@ -25,7 +25,7 @@ import (
 func TestInstallHarnessEndpoint(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
-	if err := project.Open(dataDir).Create("def", project.Project{Name: "stopped-one"}); err != nil {
+	if err := project.Open(dataDir).Create("def", project.Project{Repo: "https://github.com/x/world.git"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -67,7 +67,7 @@ func TestInstallHarnessEndpoint(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Results) != 1 || body.Results[0].Project != "x" || body.Results[0].Status != "ok" {
+	if len(body.Results) != 1 || body.Results[0].Project != "abc" || body.Results[0].Status != "ok" {
 		t.Fatalf("results = %+v, want exactly the selected project ok", body.Results)
 	}
 	waitForEvent(t, d, "harness.install")

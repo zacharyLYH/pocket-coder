@@ -23,6 +23,12 @@ const (
 	EnvJWTSecret  = "PCODER_JWT_SECRET"  // signing key; auto-generated + persisted when unset
 	EnvDockerSock = "PCODER_DOCKER_SOCK" // docker engine endpoint; default unix:///var/run/docker.sock
 
+	// EnvAllowAnyRepo lifts the GitHub-only create requirement for
+	// test stacks that clone from a local git daemon (e2e, live-engine
+	// integration tests). Never set in production: it exists so tests
+	// can exercise the pipeline without touching github.com.
+	EnvAllowAnyRepo = "PCODER_ALLOW_ANY_REPO"
+
 	EnvSMTPHost = "SMTP_HOST"     // Google SMTP by default
 	EnvSMTPPort = "SMTP_PORT"     // 587 by default
 	EnvSMTPUser = "SMTP_USER"     // Gmail address (required for email)
@@ -34,6 +40,7 @@ const (
 var envKeys = []string{
 	EnvDataDir, EnvBind, EnvLoginEmail, EnvJWTSecret, EnvDockerSock,
 	EnvSMTPHost, EnvSMTPPort, EnvSMTPUser, EnvSMTPPass, EnvSMTPFrom,
+	EnvAllowAnyRepo,
 }
 
 // knownKeys backs the unknown-variable check so a typo fails startup
@@ -59,6 +66,9 @@ type Config struct {
 	SMTPPass   string
 	SMTPFrom   string
 	DockerSock string
+	// AllowAnyRepo lifts the GitHub-only create requirement. Test stacks
+	// only (see EnvAllowAnyRepo); production leaves it false.
+	AllowAnyRepo bool
 }
 
 // Load reads configuration from the process environment, layering a `.env`
@@ -142,6 +152,8 @@ func load(env []string) (*Config, error) {
 		SMTPPass:   values["SMTP_PASSWORD"],
 		SMTPFrom:   values["SMTP_FROM"],
 		DockerSock: strEnv(values, "PCODER_DOCKER_SOCK", "unix:///var/run/docker.sock"),
+		AllowAnyRepo: values["PCODER_ALLOW_ANY_REPO"] == "1" ||
+			values["PCODER_ALLOW_ANY_REPO"] == "true",
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err

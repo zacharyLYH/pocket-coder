@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { api } from '@/lib/api'
+import { api, projectPath } from '@/lib/api'
 import { previewSurfacePath } from '@/lib/preview'
 
 // The project is not loaded in this iframe. It loads the authenticated noVNC
@@ -31,7 +31,7 @@ export function PreviewSurface({ projectId }: { projectId: string }) {
       const width = Math.round(frame.clientWidth)
       const height = Math.round(frame.clientHeight)
       if (width < 100 || height < 100) return
-      api(`/api/projects/${projectId}/preview/tools/viewport`, {
+      api(projectPath(projectId, '/preview/tools/viewport'), {
         method: 'POST',
         body: JSON.stringify({ width, height }),
       }).catch(() => {

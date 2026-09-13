@@ -45,6 +45,23 @@ func TestLoadAllFields(t *testing.T) {
 	}
 }
 
+func TestLoadAllowAnyRepoHatch(t *testing.T) {
+	cfg, err := load([]string{"PCODER_LOGIN_EMAIL=me@example.com"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.AllowAnyRepo {
+		t.Fatalf("AllowAnyRepo defaults to %+v, want false", cfg.AllowAnyRepo)
+	}
+	cfg, err = load([]string{"PCODER_LOGIN_EMAIL=me@example.com", "PCODER_ALLOW_ANY_REPO=1"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !cfg.AllowAnyRepo {
+		t.Fatalf("PCODER_ALLOW_ANY_REPO=1 must set AllowAnyRepo")
+	}
+}
+
 func TestLoadRejectsMissingLoginEmail(t *testing.T) {
 	_, err := load(nil)
 	if err == nil || !strings.Contains(err.Error(), "PCODER_LOGIN_EMAIL") {

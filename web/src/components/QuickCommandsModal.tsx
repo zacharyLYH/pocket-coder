@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { api, errMsg } from '@/lib/api'
+import { api, errMsg, projectPath } from '@/lib/api'
 import { useQuickCommands } from '@/hooks/useQuickCommands'
 import { validateQuickCommandRows } from '@/lib/quickcommands'
 
@@ -31,7 +31,7 @@ export function QuickCommandsModal({ projectId, open, onOpenChange, onSaved }: {
     setError(null)
     try {
       const map = validateQuickCommandRows(rows)
-      await api(`/api/projects/${projectId}`, { method: 'PATCH', body: JSON.stringify({ quickCommands: map }) })
+      await api(projectPath(projectId), { method: 'PATCH', body: JSON.stringify({ quickCommands: map }) })
       onOpenChange(false)
       onSaved?.()
     } catch (e) {

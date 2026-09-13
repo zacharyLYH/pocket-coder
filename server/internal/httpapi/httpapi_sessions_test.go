@@ -577,7 +577,7 @@ func hasEventType(d Deps, typ string) bool {
 
 // expectShellCreate pins the exec chain session.Create performs for a plain
 // shell against container "pcoder-<id>", session <name>: the RepoTarget
-// probe (blank project → /workspace) plus the themed new-session argv.
+// probe (no clone → /workspace) plus the themed new-session argv.
 func expectShellCreate(md *dockermocks.MockClient, id, name string) {
 	md.EXPECT().Exec(mock.Anything, "pcoder-"+id,
 		[]string{"test", "-d", "/workspace/repo/.git"}, false).

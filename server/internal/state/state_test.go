@@ -80,7 +80,7 @@ func TestMutatePersistsAndRollsBackOnError(t *testing.T) {
 	}
 
 	if err := st.Mutate(func(doc *Document) error {
-		doc.Projects = map[string]Project{"abc": {Name: "x"}}
+		doc.Projects = map[string]Project{"x/hello": {Repo: "https://github.com/x/hello.git"}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestMutatePersistsAndRollsBackOnError(t *testing.T) {
 
 	// a failed mutate must change nothing on disk or in memory
 	if err := st.Mutate(func(doc *Document) error {
-		doc.Projects["abc"] = Project{Name: "mutated"}
+		doc.Projects["x/hello"] = Project{Repo: "https://github.com/x/other.git"}
 		return os.ErrPermission
 	}); err == nil {
 		t.Fatal("expected mutate error")
@@ -96,7 +96,7 @@ func TestMutatePersistsAndRollsBackOnError(t *testing.T) {
 	// the failed mutate left the file byte-for-byte at the last good state
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user":     map[string]any{"email": "me@example.com"},
-		"projects": map[string]any{"abc": map[string]any{"name": "x", "repo": ""}},
+		"projects": map[string]any{"x/hello": map[string]any{"repo": "https://github.com/x/hello.git"}},
 	})
 }
 

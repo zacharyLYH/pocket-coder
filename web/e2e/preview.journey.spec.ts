@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { deleteAllProjects, engineUp } from './helpers'
+import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createPrecreatedProject, execInProject, waitForInspectContaining } from './preview.helpers'
 
 test.describe('preview user journey', () => {
@@ -15,7 +15,7 @@ test.describe('preview user journey', () => {
     try {
       const projectID = await createPrecreatedProject(request)
       await page.goto('/')
-      await expect(page.getByText('untitled')).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByText(projectID)).toBeVisible({ timeout: 10_000 })
       await page.getByTestId(`project-card-${projectID}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
       // inject start commands via quickCommands (backend + vite)
@@ -28,7 +28,7 @@ test.describe('preview user journey', () => {
       // Wait for vite to actually be listening so the terminal screenshot
       // consistently shows the ready state instead of mid-startup output.
       await expect(async () => {
-        const r = await request.get(`/api/projects/${projectID}/preview/ports`)
+        const r = await request.get(`/api/projects/${projectURL(projectID)}/preview/ports`)
         expect(r.ok()).toBeTruthy()
         const { ports } = (await r.json()) as { ports: { port: number }[] }
         expect(ports.map((p) => p.port)).toContain(3000)
@@ -53,11 +53,11 @@ test.describe('preview user journey', () => {
       await previewPage.waitForTimeout(5000)
       await expect(previewPage).toHaveScreenshot('preview-journey-open.png', { fullPage: true })
       // verify backend state via slots and preview status
-      const portsRes = await request.get(`/api/projects/${projectID}/preview/ports`)
+      const portsRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/ports`)
       expect(portsRes.ok()).toBeTruthy()
       const { ports } = (await portsRes.json()) as { ports: { port: number }[] }
       expect(ports.map((p) => p.port)).toContain(3000)
-      const statusRes = await request.get(`/api/projects/${projectID}/preview`)
+      const statusRes = await request.get(`/api/projects/${projectURL(projectID)}/preview`)
       expect((await statusRes.json()).status).toBe('ready')
       // HMR: edit file
       const newApp = `import React from 'react'; export function App(){ return <main><h1>HMR Journey Works</h1><p data-testid="hmr-marker">HMR is working</p></main>}`
@@ -105,13 +105,13 @@ test.describe('preview user journey', () => {
       // otherwise the shot enshrines a gray "Loading" frame.
       await expect(previewPage2.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
       await expect(async () => {
-        const r = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
+        const r = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
         expect(r.ok()).toBeTruthy()
         expect(((await r.json()) as { html: string }).html).toContain('Full-Stack App')
       }).toPass({ timeout: 60_000 })
       await expect(previewPage2).toHaveScreenshot('preview-multi-first.png', { fullPage: true })
       await expect(page).toHaveScreenshot('preview-multi-second-ready.png', { fullPage: true })
-      const portsRes = await request.get(`/api/projects/${projectID}/preview/ports`)
+      const portsRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/ports`)
       expect((await portsRes.json()).ports.length).toBeGreaterThanOrEqual(1)
     } finally {
       await deleteAllProjects(request)
@@ -151,14 +151,14 @@ test.describe('preview user journey', () => {
       // "Connecting" frame and flakes with sidecar startup speed.
       await expect(previewPage3.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
       await expect(async () => {
-        const r = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
+        const r = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
         expect(r.ok()).toBeTruthy()
         expect(((await r.json()) as { html: string }).html).toContain('Full-Stack App')
       }).toPass({ timeout: 60_000 })
       await expect(previewPage3).toHaveScreenshot('preview-close-before.png', { fullPage: true })
       await page.getByTestId('preview-close-3000').click()
       await page.waitForTimeout(2000)
-      const statusRes = await request.get(`/api/projects/${projectID}/preview`)
+      const statusRes = await request.get(`/api/projects/${projectURL(projectID)}/preview`)
       expect((await statusRes.json()).status).toBe('stopped')
       await expect(page).toHaveScreenshot('preview-close-after.png', { fullPage: true })
     } finally {

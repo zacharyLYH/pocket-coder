@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -73,16 +74,16 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 	// catch-all registered first would shadow the specific one)
 	md.EXPECT().Exec(mock.Anything, mock.Anything, mock.MatchedBy(func(cmd []string) bool {
 		for _, a := range cmd {
-			if strings.Contains(a, "fail.example") {
+			if strings.Contains(a, "github.com/x/fail.git") {
 				return false
 			}
 		}
 		return true
 	}), mock.Anything).
 		Return(docker.ExecResult{ExitCode: 0, Output: "ok"}, nil).Maybe()
-	// one project's clone fails — a failed create must leave NO state behind
+	// one project's clone fails — the create errors but the record stays
 	md.EXPECT().Exec(mock.Anything, mock.Anything, mock.MatchedBy(func(cmd []string) bool {
-		return len(cmd) >= 3 && cmd[0] == "git" && cmd[1] == "clone" && cmd[len(cmd)-2] == "https://fail.example/x.git"
+		return len(cmd) >= 3 && cmd[0] == "git" && cmd[1] == "clone" && cmd[len(cmd)-2] == "https://github.com/x/fail.git"
 	}), mock.Anything).
 		Return(docker.ExecResult{ExitCode: 128, Output: "fatal: repository not found"}, nil).Maybe()
 
@@ -128,35 +129,42 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 		return rec.Code, id
 	}
 	codeA, idA := create(`{"repoUrl":"https://github.com/x/hello.git"}`)
-	if codeA != http.StatusCreated {
+	if codeA != http.StatusCreated || idA != "x/hello" {
 		t.Fatalf("create A: %d %q", codeA, idA)
 	}
-	codeB, idB := create(`{}`)
-	if codeB != http.StatusCreated {
+	codeB, idB := create(`{"repoUrl":"https://github.com/x/world.git"}`)
+	if codeB != http.StatusCreated || idB != "x/world" {
 		t.Fatalf("create B: %d %q", codeB, idB)
 	}
 	codeC, idC := create(`{"repoUrl":"git@github.com:me/private.git","cloneMethod":"ssh"}`)
-	if codeC != http.StatusCreated {
+	if codeC != http.StatusCreated || idC != "me/private" {
 		t.Fatalf("create C: %d %q", codeC, idC)
 	}
-	codeD, idD := create(`{"repoUrl":"https://github.com/x/hello.git","branch":"dev"}`)
-	if codeD != http.StatusCreated {
+	codeD, idD := create(`{"repoUrl":"https://github.com/y/hello.git","branch":"dev"}`)
+	if codeD != http.StatusCreated || idD != "y/hello" {
 		t.Fatalf("create D: %d %q", codeD, idD)
+	}
+	// a duplicate of A is a conflict, not a second project
+	if codeDup, _ := create(`{"repoUrl":"https://github.com/x/hello.git"}`); codeDup != http.StatusConflict {
+		t.Fatalf("duplicate create: %d, want 409", codeDup)
 	}
 	// a failed clone returns an error but KEEPS the project record on
 	// purpose: the project is up, the user can retry the clone. The failed
 	// response carries no id — the audit trail is the record of it.
-	codeE, _ := create(`{"repoUrl":"https://fail.example/x.git"}`)
+	codeE, _ := create(`{"repoUrl":"https://github.com/x/fail.git"}`)
 	if codeE == http.StatusCreated {
 		t.Fatalf("failed clone returned %d, want an error status", codeE)
 	}
-	idE := projectIDByRepo(t, d, "https://fail.example/x.git")
+	idE := projectIDByRepo(t, d, "https://github.com/x/fail.git")
+	if idE != "x/fail" {
+		t.Fatalf("failed clone id = %q, want x/fail", idE)
+	}
 	statetest.AssertSection(t, st.Path(), "projects", map[string]any{
-		idA: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
-		idB: map[string]any{"name": "untitled", "repo": "", "cloneMethod": "http"},
-		idC: map[string]any{"name": "private", "repo": "git@github.com:me/private.git", "cloneMethod": "ssh"},
-		idD: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "branch": "dev", "cloneMethod": "http"},
-		idE: map[string]any{"name": "x", "repo": "https://fail.example/x.git", "cloneMethod": "http"},
+		idA: map[string]any{"repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
+		idB: map[string]any{"repo": "https://github.com/x/world.git", "cloneMethod": "http"},
+		idC: map[string]any{"repo": "git@github.com:me/private.git", "cloneMethod": "ssh"},
+		idD: map[string]any{"repo": "https://github.com/y/hello.git", "branch": "dev", "cloneMethod": "http"},
+		idE: map[string]any{"repo": "https://github.com/x/fail.git", "cloneMethod": "http"},
 	})
 
 	// ─── 4. interleaved operations ───────────────────────────────────────
@@ -169,14 +177,14 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 		t.Fatalf("exec: %d %q", rec.Code, rec.Body)
 	}
 	// a session restart (sessions never touch state, but the pipeline runs)
-	if rec := authedPost(t, h, cookie, "/api/projects/"+idA+"/sessions/fake-1/restart", ""); rec.Code != http.StatusOK {
+	if rec := authedPost(t, h, cookie, "/api/projects/"+url.PathEscape(idA)+"/sessions/fake-1/restart", ""); rec.Code != http.StatusOK {
 		t.Fatalf("session restart: %d %q", rec.Code, rec.Body)
 	}
 	// stop/start cycle
-	if rec := authedRequest(t, h, cookie, http.MethodPost, "/api/projects/"+idB+"/stop"); rec.Code != http.StatusOK {
+	if rec := authedRequest(t, h, cookie, http.MethodPost, "/api/projects/"+url.PathEscape(idB)+"/stop"); rec.Code != http.StatusOK {
 		t.Fatalf("stop: %d %q", rec.Code, rec.Body)
 	}
-	if rec := authedRequest(t, h, cookie, http.MethodPost, "/api/projects/"+idB+"/start"); rec.Code != http.StatusOK {
+	if rec := authedRequest(t, h, cookie, http.MethodPost, "/api/projects/"+url.PathEscape(idB)+"/start"); rec.Code != http.StatusOK {
 		t.Fatalf("start: %d %q", rec.Code, rec.Body)
 	}
 	// key1 is deleted after project C already consumed the key set
@@ -203,23 +211,23 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 
 	// ─── 5. deletes across every scope ───────────────────────────────────
 	// scope=all: record + container + volumes
-	if rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/"+idB+"?scope=all"); rec.Code != http.StatusOK {
+	if rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/"+url.PathEscape(idB)+"?scope=all"); rec.Code != http.StatusOK {
 		t.Fatalf("delete B: %d %q", rec.Code, rec.Body)
 	}
 
 	// scope=repo: container + repo volume go, the RECORD STAYS
-	if rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/"+idC+"?scope=repo"); rec.Code != http.StatusOK {
+	if rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/"+url.PathEscape(idC)+"?scope=repo"); rec.Code != http.StatusOK {
 		t.Fatalf("delete C: %d %q", rec.Code, rec.Body)
 	}
 
 	// scope=metadata: only the record goes
-	if rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/"+idD+"?scope=metadata"); rec.Code != http.StatusOK {
+	if rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/"+url.PathEscape(idD)+"?scope=metadata"); rec.Code != http.StatusOK {
 		t.Fatalf("delete D: %d %q", rec.Code, rec.Body)
 	}
 
 	// one more project after all that churn
-	codeF, idF := create(`{}`)
-	if codeF != http.StatusCreated {
+	codeF, idF := create(`{"repoUrl":"https://github.com/x/final.git"}`)
+	if codeF != http.StatusCreated || idF != "x/final" {
 		t.Fatalf("create F: %d %q", codeF, idF)
 	}
 
@@ -234,12 +242,12 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 			map[string]any{"fingerprint": "sha256-_r_26MQJIPO1QjdZEfShlg", "publicKey": "ssh-ed25519 AAAA-key-two", "email": "me@example.com"},
 		},
 		"projects": map[string]any{
-			idA: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http", "harnesses": []any{"my-agent"}, "sessions": map[string]any{"fake-1": map[string]any{"harness": "fake"}}},
+			idA: map[string]any{"repo": "https://github.com/x/hello.git", "cloneMethod": "http", "harnesses": []any{"my-agent"}, "sessions": map[string]any{"fake-1": map[string]any{"harness": "fake"}}},
 			// scope=repo removed the container, the record survives (install record stays even though harness was deleted)
-			idC: map[string]any{"name": "private", "repo": "git@github.com:me/private.git", "cloneMethod": "ssh", "harnesses": []any{"my-agent"}},
+			idC: map[string]any{"repo": "git@github.com:me/private.git", "cloneMethod": "ssh", "harnesses": []any{"my-agent"}},
 			// the failed-clone project survives too (retryable project)
-			idE: map[string]any{"name": "x", "repo": "https://fail.example/x.git", "cloneMethod": "http"},
-			idF: map[string]any{"name": "untitled", "repo": "", "cloneMethod": "http"},
+			idE: map[string]any{"repo": "https://github.com/x/fail.git", "cloneMethod": "http"},
+			idF: map[string]any{"repo": "https://github.com/x/final.git", "cloneMethod": "http"},
 		},
 	})
 }

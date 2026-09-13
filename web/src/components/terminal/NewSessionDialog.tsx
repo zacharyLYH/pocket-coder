@@ -3,7 +3,7 @@ import { useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { api, errMsg } from '@/lib/api'
+import { api, errMsg, projectPath } from '@/lib/api'
 import { isLaunchable, type Harness } from '@/lib/types'
 
 // The launch timeout: CLI validation can take a while (freebuff downloads a platform binary on first run).
@@ -37,7 +37,7 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
   // createShell creates a plain-shell session under the typed name.
   async function createShell(sessionName: string, signal: AbortSignal) {
     setProgress(`Launching ${sessionName}…`)
-    await api(`/api/projects/${projectId}/sessions`, {
+    await api(projectPath(projectId, '/sessions'), {
       method: 'POST',
       body: JSON.stringify({ name: sessionName, create: true }),
       signal,
@@ -48,7 +48,7 @@ export function NewSessionDialog({ open, onOpenChange, projectId, harnesses, onL
   // createHarness launches a harness session under the explicit name.
   async function createHarness(id: string, sessionName: string, signal: AbortSignal) {
     setProgress(`Launching ${sessionName}…`)
-    const created = await api<{ name?: string }>(`/api/projects/${projectId}/sessions`, {
+    const created = await api<{ name?: string }>(projectPath(projectId, '/sessions'), {
       method: 'POST',
       body: JSON.stringify({ harnessId: id, name: sessionName, create: true }),
       signal,

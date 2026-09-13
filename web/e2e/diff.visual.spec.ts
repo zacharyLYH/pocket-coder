@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { createBlankProject, deleteAllProjects, engineUp, waitForRunning } from './helpers'
+import { createProject, deleteAllProjects, engineUp, projectURL, waitForRunning } from './helpers'
 
 // Visual + behavioral tests for the Diff tab against the real backend:
 // file list, per-file diff, hunk staging, and the copy-only Ask-AI notepad.
@@ -7,19 +7,14 @@ import { createBlankProject, deleteAllProjects, engineUp, waitForRunning } from 
 // Diffs are seeded through /api/projects/exec, which runs shell in the
 // project container — the same path a harness session would take.
 
-// Seed a repo with one committed file, one modified file, and one
-// untracked file. Runs inside the container's /workspace (blank projects
-// have no /workspace/repo clone, so the repo lives at the fallback dir).
+// Seed the cloned repo (/workspace/repo) with one modified tracked file
+// and one untracked file. The fixture clone ships hello.txt committed.
 async function seedDirtyRepo(request: import('@playwright/test').APIRequestContext, id: string) {
   const command = [
-    'cd /workspace',
-    'git init -q 2>/dev/null || true',
+    'cd /workspace/repo',
     'git config user.email t@t.t',
     'git config user.name t',
-    'echo hello > notes.txt',
-    'git add notes.txt',
-    'git commit -qm init 2>/dev/null || true',
-    'echo world >> notes.txt',
+    'echo world >> hello.txt',
     'echo new > untracked.txt',
   ].join(' && ')
   const res = await request.post('/api/projects/exec', { data: { projectIds: [id], command } })
@@ -31,10 +26,10 @@ async function openDiffTab(
   request: import('@playwright/test').APIRequestContext,
   seed: boolean,
 ): Promise<string> {
-  const id = await createBlankProject(request)
+  const id = await createProject(request)
   await waitForRunning(request, id)
   if (seed) await seedDirtyRepo(request, id)
-  await page.goto(`/projects/${id}/terminal/main`)
+  await page.goto(`/projects/${projectURL(id)}/terminal/main`)
   await page.getByTestId('tab-diff').click()
   await expect(page.getByTestId('diff-tab')).toBeVisible({ timeout: 30_000 })
   return id
@@ -59,17 +54,11 @@ test.describe('diff tab empty', () => {
   })
 
   test('clean tree shows the empty state', async ({ page, request }) => {
-    const id = await createBlankProject(request)
+    const id = await createProject(request)
     await waitForRunning(request, id)
     try {
-      const res = await request.post('/api/projects/exec', {
-        data: {
-          projectIds: [id],
-          command: 'cd /workspace && git init -q && git config user.email t@t.t && git config user.name t && echo hi > a.txt && git add a.txt && git commit -qm init',
-        },
-      })
-      expect(res.ok()).toBeTruthy()
-      await page.goto(`/projects/${id}/terminal/main`)
+      // a fresh clone is a clean tree — no seeding needed
+      await page.goto(`/projects/${projectURL(id)}/terminal/main`)
       await page.getByTestId('tab-diff').click()
       await expect(page.getByTestId('diff-empty')).toBeVisible({ timeout: 30_000 })
       await expect(page.getByText('No changes')).toBeVisible()
@@ -99,13 +88,13 @@ test.describe('diff tab with changes', () => {
       // File list shows both the modified and the untracked file.
       await expect(page.getByTestId('diff-file-list')).toBeVisible({ timeout: 30_000 })
       await shotDiffTab(page, 'diff-file-list.png')
-      await expect(page.getByText('notes.txt')).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByText('hello.txt')).toBeVisible({ timeout: 15_000 })
       await expect(page.getByText('untracked.txt')).toBeVisible({ timeout: 15_000 })
 
       // Expand the modified file: hunks render with per-hunk actions. The
       // viewer builds row structure before filling line text, so wait for
       // the added line's text (not just the row boxes) before screenshotting.
-      await page.getByText('notes.txt').click()
+      await page.getByText('hello.txt').click()
       await expect(page.getByTestId('diff-stage-hunk').first()).toBeVisible({ timeout: 30_000 })
       await expect(
         page.getByTestId('diff-file').locator('.diff-table-body').getByText('world').first(),
@@ -114,7 +103,7 @@ test.describe('diff tab with changes', () => {
 
       // Quote a hunk into the notepad.
       await page.getByTestId('diff-quote-hunk').first().click()
-      await expect(page.getByTestId('diff-notes')).toContainText('notes.txt', { timeout: 10_000 })
+      await expect(page.getByTestId('diff-notes')).toContainText('hello.txt', { timeout: 10_000 })
       await shotDiffTab(page, 'diff-notepad.png')
 
       // Close the notepad so the file list regains full height: with the
@@ -158,7 +147,7 @@ test.describe('diff tab phone', () => {
     await openDiffTab(page, request, true)
     try {
       await expect(page.getByTestId('diff-file-list')).toBeVisible({ timeout: 30_000 })
-      await expect(page.getByText('notes.txt')).toBeVisible()
+      await expect(page.getByText('hello.txt')).toBeVisible()
       await shotDiffTab(page, 'diff-phone.png')
     } finally {
       await deleteAllProjects(request)

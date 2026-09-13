@@ -29,11 +29,13 @@ func handleCreateProject(d Deps) http.HandlerFunc {
 		switch {
 		case errors.Is(err, project.ErrInvalidInput):
 			writeErr(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, project.ErrConflict):
+			writeErr(w, http.StatusConflict, err.Error())
 		case err != nil:
 			writeErr(w, http.StatusInternalServerError, err.Error())
 		default:
 			writeJSON(w, http.StatusCreated, map[string]any{
-				"id": id, "name": p.Name, "repo": p.Repo, "branch": p.Branch,
+				"id": id, "repo": p.Repo, "branch": p.Branch,
 			})
 		}
 	}
@@ -63,7 +65,7 @@ func handleGetProject(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "get project", err)
 		default:
 			writeJSON(w, http.StatusOK, map[string]any{
-				"id": r.PathValue("id"), "name": p.Name, "repo": p.Repo,
+				"id": r.PathValue("id"), "repo": p.Repo,
 				"branch": p.Branch, "cloneMethod": p.CloneMethod, "status": status.State,
 				"quickCommands": p.QuickCommands,
 			})
@@ -79,7 +81,6 @@ func handlePatchProject(d Deps) http.HandlerFunc {
 		}
 		var body struct {
 			QuickCommands *map[string]string `json:"quickCommands"`
-			Name          *string            `json:"name"`
 		}
 		if !decodeBody(w, r, &body, false) {
 			return
@@ -115,13 +116,6 @@ func handlePatchProject(d Deps) http.HandlerFunc {
 					p.QuickCommands = nil
 				}
 			}
-			if body.Name != nil {
-				name := strings.TrimSpace(*body.Name)
-				if name == "" {
-					return errors.New("name must be non-empty")
-				}
-				p.Name = name
-			}
 			doc.Projects[id] = p
 			return nil
 		})
@@ -130,10 +124,6 @@ func handlePatchProject(d Deps) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			if strings.Contains(err.Error(), "name must") {
-				writeErr(w, http.StatusBadRequest, err.Error())
-				return
-			}
 			writeInternalErr(w, "patch project", err)
 			return
 		}

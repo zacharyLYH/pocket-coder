@@ -1,5 +1,5 @@
 import { expect, type APIRequestContext, test } from '@playwright/test'
-import { createProjectViaUI, deleteAllProjects, engineUp } from './helpers'
+import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp, projectURL } from './helpers'
 
 // The home-page injection flow, end to end against the real backend:
 //
@@ -21,7 +21,7 @@ async function projectOrder(request: APIRequestContext): Promise<string[]> {
 }
 
 async function crasherInstalled(request: APIRequestContext, id: string): Promise<boolean | undefined> {
-  const res = await request.get(`/api/projects/${id}/harnesses`)
+  const res = await request.get(`/api/projects/${projectURL(id)}/harnesses`)
   expect(res.ok()).toBeTruthy()
   const body = (await res.json()) as { harnesses: { id: string; installed: boolean }[] }
   return body.harnesses.find((h) => h.id === 'crasher-demo')?.installed
@@ -37,10 +37,10 @@ test.describe('harness injection orchestration', () => {
     try {
       await page.goto('/')
       await expect(page.getByText('No projects yet.')).toBeVisible()
-      await createProjectViaUI(page, page.request, '', 'untitled')
-      await expect(page.getByText('untitled')).toHaveCount(1)
-      await createProjectViaUI(page, page.request, '', 'untitled')
-      await expect(page.getByText('untitled')).toHaveCount(2)
+      await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
+      await expect(page.getByText(e2eRepoID(1))).toHaveCount(1)
+      await createProjectViaUI(page, page.request, e2eRepo(2), e2eRepoID(2))
+      await expect(page.getByText(e2eRepoID(2))).toHaveCount(1)
       const order1 = await projectOrder(page.request)
       const a = order1[0]
       const b = order1[1]
@@ -57,8 +57,8 @@ test.describe('harness injection orchestration', () => {
       expect(await crasherInstalled(page.request, b)).toBe(false)
 
       // --- a NEW project is not auto-injected ---
-      await createProjectViaUI(page, page.request, '', 'untitled')
-      await expect(page.getByText('untitled')).toHaveCount(3)
+      await createProjectViaUI(page, page.request, e2eRepo(3), e2eRepoID(3))
+      await expect(page.getByText(e2eRepoID(3))).toHaveCount(1)
       const order2 = await projectOrder(page.request)
       const c = order2.find((id) => id !== a && id !== b)!
       expect(await crasherInstalled(page.request, c)).toBe(false)

@@ -12,20 +12,22 @@ import (
 	"time"
 
 	"pcoder/internal/docker"
+	"pcoder/internal/project"
 )
 
 // TestDockerFactoryStartsReachableWorker drives the real factory against the
 // real engine: start one sidecar for a project container (default dev seed
-// project "deadbeef", override with PCODER_ITEST_PROJECT), then verify the
-// returned loopback endpoint answers CDP from this process — the exact
-// contract the HTTP handlers depend on, on every engine (including Docker
-// Desktop, where container bridge IPs are not routable from the host).
+// project "developit/preact-vite-template", override with
+// PCODER_ITEST_PROJECT), then verify the returned loopback endpoint answers
+// CDP from this process — the exact contract the HTTP handlers depend on,
+// on every engine (including Docker Desktop, where container bridge IPs are
+// not routable from the host).
 func TestDockerFactoryStartsReachableWorker(t *testing.T) {
 	projectID := os.Getenv("PCODER_ITEST_PROJECT")
 	if projectID == "" {
-		projectID = "deadbeef"
+		projectID = "developit/preact-vite-template"
 	}
-	container := "pcoder-" + projectID
+	container := project.ContainerName(projectID)
 
 	d, err := docker.New(os.Getenv("PCODER_DOCKER_SOCK"))
 	if err != nil {

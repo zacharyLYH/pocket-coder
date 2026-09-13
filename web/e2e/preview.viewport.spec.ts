@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
 
-import { deleteAllProjects, engineUp } from './helpers'
+import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createReactProject, openPreviewFromTerminal, waitForChromiumFit } from './preview.helpers'
 
 function pngSize(png: Buffer): { width: number; height: number } {
@@ -9,7 +9,7 @@ function pngSize(png: Buffer): { width: number; height: number } {
 }
 
 async function cdpScreenshot(request: APIRequestContext, projectID: string): Promise<Buffer> {
-  const res = await request.get(`/api/projects/${projectID}/preview/tools/screenshot`)
+  const res = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`)
   expect(res.ok()).toBeTruthy()
   const body = Buffer.from(await res.body())
   expect(body.length).toBeGreaterThan(1_000)
@@ -33,7 +33,7 @@ test.describe('preview chromium viewports', () => {
 
       // Desktop: host viewport stays 1280x720 — only the CDP viewport changes Chromium.
       // (No pixel snapshot: the fixture renders Date.now(), so bytes differ every run.)
-      const desktopRes = await request.post(`/api/projects/${projectID}/preview/tools/viewport`, {
+      const desktopRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/viewport`, {
         data: { width: 1280, height: 800, mobile: false },
       })
       expect(desktopRes.ok()).toBeTruthy()
@@ -43,7 +43,7 @@ test.describe('preview chromium viewports', () => {
       await testInfo.attach('chromium-desktop', { body: desktopPNG, contentType: 'image/png' })
 
       // Phone: same host window, Chromium emulates a phone viewport.
-      const phoneRes = await request.post(`/api/projects/${projectID}/preview/tools/viewport`, {
+      const phoneRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/viewport`, {
         data: { width: 390, height: 844, mobile: true },
       })
       expect(phoneRes.ok()).toBeTruthy()
@@ -57,7 +57,7 @@ test.describe('preview chromium viewports', () => {
       expect(phonePNG.length).toBeLessThan(desktopPNG.length)
 
       // Oversize requests clamp to the sidecar display instead of failing.
-      const bigRes = await request.post(`/api/projects/${projectID}/preview/tools/viewport`, {
+      const bigRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/viewport`, {
         data: { width: 3000, height: 2000 },
       })
       expect(bigRes.ok()).toBeTruthy()
@@ -66,7 +66,7 @@ test.describe('preview chromium viewports', () => {
       expect(pngSize(bigPNG)).toEqual({ width: 1920, height: 1080 })
 
       // Invalid sizes are rejected.
-      const badRes = await request.post(`/api/projects/${projectID}/preview/tools/viewport`, {
+      const badRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/viewport`, {
         data: { width: 10, height: 10 },
       })
       expect(badRes.status()).toBe(400)

@@ -2,8 +2,10 @@
 
 // The create pipeline against a live engine: create from a real local
 // fixture repo (git daemon), reach Running with the clone present,
-// stop/restart with volumes intact, delete every scope, plus the
-// blank-project path. Run with:
+// stop/restart with volumes intact, delete every scope. Projects are
+// owner/repo (the fixture URL carries a unique owner per run), so the
+// blank-project path no longer exists — it is covered as a 400 below.
+// Run with:
 // go test -tags=integration -count=1 ./internal/httpapi/.
 package httpapi
 
@@ -27,18 +29,19 @@ import (
 func TestProjectPipelineLifecycle(t *testing.T) {
 	h, dkr, svc, pinOut, _, _ := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
-	url := fixtureRepo(t)
+	url := fixtureRepo(t).URL
 
 	// create → 201 with the exact metadata echo, running, clone present.
 	// The helper registers a scope=all cleanup; intermediate scoped
 	// deletes below are part of the test, the trailing cleanup delete
 	// turns into a 404 which the helper accepts.
 	id, body := createTestProject(t, h, cookie, url, "main", "")
-	wantPayload := map[string]any{"id": id, "name": "repo", "repo": url, "branch": "main"}
+	wantPayload := map[string]any{"id": id, "repo": url, "branch": "main"}
 	if !reflect.DeepEqual(body, wantPayload) {
 		t.Fatalf("create payload = %v, want %v", body, wantPayload)
 	}
-	res, err := dkr.Exec(t.Context(), "pcoder-"+id, []string{"git", "-C", "/workspace/repo", "log", "--oneline"}, false)
+	cname := project.ContainerName(id)
+	res, err := dkr.Exec(t.Context(), cname, []string{"git", "-C", "/workspace/repo", "log", "--oneline"}, false)
 	if err != nil || res.ExitCode != 0 || !bytes.Contains([]byte(res.Output), []byte("first")) {
 		t.Fatalf("clone verification failed: %+v err=%v", res, err)
 	}
@@ -46,58 +49,72 @@ func TestProjectPipelineLifecycle(t *testing.T) {
 	waitForStatus(t, h, cookie, id, "running")
 
 	// stop → exited, volumes survive; restart → running again
-	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/stop", "")
+	code, body := doJSON(t, h, cookie, http.MethodPost, projectPath(id, "/stop"), "")
 	if code != http.StatusOK || !reflect.DeepEqual(body, map[string]any{"ok": true}) {
 		t.Fatalf("stop: %d %v", code, body)
 	}
 	waitForStatus(t, h, cookie, id, "exited")
 
-	code, body = doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/restart", "")
+	code, body = doJSON(t, h, cookie, http.MethodPost, projectPath(id, "/restart"), "")
 	if code != http.StatusOK || !reflect.DeepEqual(body, map[string]any{"ok": true}) {
 		t.Fatalf("restart: %d %v", code, body)
 	}
 	waitForStatus(t, h, cookie, id, "running")
-	res, err = dkr.Exec(t.Context(), "pcoder-"+id, []string{"cat", "/workspace/repo/hello.txt"}, false)
+	res, err = dkr.Exec(t.Context(), cname, []string{"cat", "/workspace/repo/hello.txt"}, false)
 	if err != nil || res.ExitCode != 0 || res.Output != "hi\n" {
 		t.Fatalf("repo volume did not survive restart: %+v err=%v", res, err)
 	}
 
 	// scoped deletes: the engine refuses to drop a volume referenced by any
 	// container, so scope=repo takes the container with it (home survives)
-	code, body = doJSON(t, h, cookie, http.MethodDelete, "/api/projects/"+id+"?scope=repo", "")
+	code, body = doJSON(t, h, cookie, http.MethodDelete, projectPath(id, "?scope=repo"), "")
 	if code != http.StatusOK || !reflect.DeepEqual(body, map[string]any{"ok": true}) {
 		t.Fatalf("delete repo scope: %d %v", code, body)
 	}
-	if _, err := dkr.Inspect(t.Context(), "pcoder-"+id); !errors.Is(err, docker.ErrNotFound) {
+	if _, err := dkr.Inspect(t.Context(), cname); !errors.Is(err, docker.ErrNotFound) {
 		t.Fatalf("after scope=repo inspect err = %v, want ErrNotFound", err)
 	}
 	entries, listErr := svc.List()
-	wantEntries := []project.Entry{{ID: id, Name: "repo"}}
+	wantEntries := []project.Entry{{ID: id}}
 	if listErr != nil || !reflect.DeepEqual(entries, wantEntries) {
 		t.Fatalf("metadata after scope=repo = %+v err=%v, want %v", entries, listErr, wantEntries)
 	}
-	code, body = doJSON(t, h, cookie, http.MethodDelete, "/api/projects/"+id+"?scope=all", "")
+	code, body = doJSON(t, h, cookie, http.MethodDelete, projectPath(id, "?scope=all"), "")
 	if code != http.StatusOK || !reflect.DeepEqual(body, map[string]any{"ok": true}) {
 		t.Fatalf("delete all: %d %v", code, body)
 	}
-	code, body = doJSON(t, h, cookie, http.MethodGet, "/api/projects/"+id, "")
+	code, body = doJSON(t, h, cookie, http.MethodGet, projectPath(id, ""), "")
 	if code != http.StatusNotFound || !reflect.DeepEqual(body, map[string]any{"error": "no such project"}) {
 		t.Fatalf("get after delete: %d %v", code, body)
 	}
-	if _, err := dkr.Inspect(t.Context(), "pcoder-"+id); err == nil {
+	if _, err := dkr.Inspect(t.Context(), cname); err == nil {
 		t.Fatal("container should be gone after scope=all")
 	}
 }
 
-func TestBlankProjectLifecycle(t *testing.T) {
+func TestCreateValidationLive(t *testing.T) {
 	h, dkr, _, pinOut, _, _ := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
 
-	id, _ := createTestProject(t, h, cookie, "", "", "")
+	// blank URLs are refused before Docker (non-GitHub rejection is
+	// covered by unit tests — the live hatch allows local fixtures)
+	for _, bad := range []string{
+		`{}`,
+		`{"repoUrl":""}`,
+	} {
+		code, body := doJSON(t, h, cookie, http.MethodPost, "/api/projects", bad)
+		if code != http.StatusBadRequest {
+			t.Fatalf("%s: got %d %v, want 400", bad, code, body)
+		}
+	}
+
+	// a created project has the essentials and shows up in the list by id
+	url := fixtureRepo(t).URL
+	id, _ := createTestProject(t, h, cookie, url, "", "")
 
 	ctx := context.Background()
 	waitForStatus(t, h, cookie, id, "running")
-	res, err := dkr.Exec(ctx, "pcoder-"+id,
+	res, err := dkr.Exec(ctx, project.ContainerName(id),
 		[]string{"sh", "-c", "command -v git && command -v tmux && command -v ss"}, false)
 	if err != nil || res.ExitCode != 0 {
 		t.Fatalf("project missing essentials: %+v err=%v", res, err)
@@ -109,9 +126,8 @@ func TestBlankProjectLifecycle(t *testing.T) {
 		}
 	}
 
-	// blank projects are named "untitled"; make sure list works too
 	code, body := doJSON(t, h, cookie, http.MethodGet, "/api/projects", "")
-	wantList := map[string]any{"projects": []any{map[string]any{"id": id, "name": "untitled"}}}
+	wantList := map[string]any{"projects": []any{map[string]any{"id": id}}}
 	if code != http.StatusOK || !reflect.DeepEqual(body, wantList) {
 		t.Fatalf("list: got %d %v, want %v", code, body, wantList)
 	}
@@ -122,11 +138,11 @@ func TestBlankProjectLifecycle(t *testing.T) {
 func TestProjectBranchPinning(t *testing.T) {
 	h, dkr, _, pinOut, _, _ := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
-	url := fixtureRepo(t)
+	url := fixtureRepo(t).URL
 
 	id, _ := createTestProject(t, h, cookie, url, "dev", "")
 
-	res, err := dkr.Exec(context.Background(), "pcoder-"+id,
+	res, err := dkr.Exec(context.Background(), project.ContainerName(id),
 		[]string{"git", "-C", "/workspace/repo", "rev-parse", "--abbrev-ref", "HEAD"}, false)
 	if err != nil || res.ExitCode != 0 || res.Output != "dev\n" {
 		t.Fatalf("branch pinning: got %+v err=%v, want HEAD on dev", res, err)
@@ -140,10 +156,11 @@ func TestCloneFailureLiveKeepsProjectAndLogsError(t *testing.T) {
 	// port 1 on the gateway: connection refused, deterministic failure.
 	// The project survives per design, so we have to clean it up ourselves
 	// (the helper would have fataled on the non-201 response).
+	badURL := "git://host.docker.internal:1/itest-fail/nope.git"
 	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/projects",
-		`{"repoUrl":"git://host.docker.internal:1/nope.git"}`)
+		`{"repoUrl":"git://host.docker.internal:1/itest-fail/nope.git"}`)
 	errMsg, _ := body["error"].(string)
-	wantPrefix := "clone git://host.docker.internal:1/nope.git: "
+	wantPrefix := "clone " + badURL + ": "
 	if code != http.StatusInternalServerError || !strings.HasPrefix(errMsg, wantPrefix) {
 		t.Fatalf("clone failure: got %d %q, want 500 with %q…", code, errMsg, wantPrefix)
 	}
@@ -151,14 +168,14 @@ func TestCloneFailureLiveKeepsProjectAndLogsError(t *testing.T) {
 	if listErr != nil || len(entries) != 1 {
 		t.Fatalf("project must survive failed clone: %+v err=%v", entries, listErr)
 	}
-	wantEntries := []project.Entry{{ID: entries[0].ID, Name: "nope"}}
+	wantEntries := []project.Entry{{ID: "itest-fail/nope"}}
 	if !reflect.DeepEqual(entries, wantEntries) {
 		t.Fatalf("project must survive failed clone as %+v: %+v", wantEntries, entries)
 	}
 	id := entries[0].ID
 	deleteTestProject(t, h, cookie, id)
-	code, body = doJSON(t, h, cookie, http.MethodGet, "/api/projects/"+id, "")
-	wantStatus := map[string]any{"id": id, "name": "nope", "repo": "git://host.docker.internal:1/nope.git", "branch": "", "cloneMethod": "http", "status": "running", "quickCommands": nil}
+	code, body = doJSON(t, h, cookie, http.MethodGet, projectPath(id, ""), "")
+	wantStatus := map[string]any{"id": id, "repo": badURL, "branch": "", "cloneMethod": "http", "status": "running", "quickCommands": nil}
 	if code != http.StatusOK || !reflect.DeepEqual(body, wantStatus) {
 		t.Fatalf("post-failure status: got %d %v, want %v", code, body, wantStatus)
 	}
@@ -201,10 +218,10 @@ func TestProjectIsolationAndRestartSurvival(t *testing.T) {
 	h, _, _, pinOut, ev, st := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
 
-	// inline create keeps the inline lambda simple — both ids are tracked
-	// by the helper and survive any single cleanup racing the next create.
-	idA, _ := createTestProject(t, h, cookie, "", "", "")
-	idB, _ := createTestProject(t, h, cookie, "", "", "")
+	// one repo is one project: two distinct fixture repos, both tracked
+	// by the helper and surviving any single cleanup racing the next create.
+	idA, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
+	idB, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
 	if idA == idB {
 		t.Fatal("ids collided")
 	}
@@ -212,7 +229,7 @@ func TestProjectIsolationAndRestartSurvival(t *testing.T) {
 	waitForStatus(t, h, cookie, idB, "running")
 
 	// deleting A leaves B untouched
-	if code, _ := doJSON(t, h, cookie, http.MethodDelete, "/api/projects/"+idA, ""); code != http.StatusOK {
+	if code, _ := doJSON(t, h, cookie, http.MethodDelete, projectPath(idA, ""), ""); code != http.StatusOK {
 		t.Fatal("delete A failed")
 	}
 	waitForStatus(t, h, cookie, idB, "running")
@@ -232,7 +249,7 @@ func TestProjectIsolationAndRestartSurvival(t *testing.T) {
 	lc2 := testutil.NewLifecycle(t)
 	h2 := New(Deps{Events: ev2, Version: "itest", Auth: auth2,
 		Projects: project.NewService(project.Open(st), lc2.Docker(), ev2)})
-	code, body := doJSON(t, h2, cookie, http.MethodGet, "/api/projects/"+idB, "")
+	code, body := doJSON(t, h2, cookie, http.MethodGet, projectPath(idB, ""), "")
 	if code != http.StatusOK || body["status"] != "running" {
 		t.Fatalf("restarted server lost the project: %d %v", code, body)
 	}

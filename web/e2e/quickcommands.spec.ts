@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { createBlankProject, deleteAllProjects, engineUp } from './helpers'
+import { createProject, deleteAllProjects, engineUp, projectURL } from './helpers'
 
 test.describe('quick commands', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -11,9 +11,9 @@ test.describe('quick commands', () => {
     }
     await deleteAllProjects(request)
     try {
-      const id = await createBlankProject(request)
+      const id = await createProject(request)
       await page.goto('/')
-      await expect(page.getByText('untitled')).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByText(id)).toBeVisible({ timeout: 10_000 })
       const menu = page.getByTestId(`project-menu-${id}`)
       await expect(menu).toBeVisible()
       await menu.click()
@@ -26,7 +26,7 @@ test.describe('quick commands', () => {
       await expect(dialog).toHaveScreenshot('quickcommands-modal.png')
       await dialog.getByTestId('qc-save').click()
       await expect(dialog).not.toBeVisible({ timeout: 5_000 })
-      const get = await request.get(`/api/projects/${id}`)
+      const get = await request.get(`/api/projects/${projectURL(id)}`)
       const body = (await get.json()) as { quickCommands: Record<string, string> }
       expect(body.quickCommands.dev).toBe('npm run dev -- --host 0.0.0.0 --port 3000')
       await page.getByTestId(`project-menu-${id}`).click()
@@ -45,10 +45,10 @@ test.describe('quick commands', () => {
     }
     await deleteAllProjects(request)
     try {
-      const id = await createBlankProject(request)
-      await request.patch(`/api/projects/${id}`, { data: { quickCommands: { hello: 'echo hello-quick' } } })
+      const id = await createProject(request)
+      await request.patch(`/api/projects/${projectURL(id)}`, { data: { quickCommands: { hello: 'echo hello-quick' } } })
       await page.goto('/')
-      await expect(page.getByText('untitled')).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByText(id)).toBeVisible({ timeout: 10_000 })
       await page.getByTestId(`project-card-${id}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
       await page.getByTestId('terminal-actions-trigger').click()
@@ -70,8 +70,8 @@ test.describe('quick commands', () => {
     }
     await deleteAllProjects(request)
     try {
-      const id = await createBlankProject(request)
-      await request.patch(`/api/projects/${id}`, { data: { quickCommands: { a: 'echo a', b: 'echo b' } } })
+      const id = await createProject(request)
+      await request.patch(`/api/projects/${projectURL(id)}`, { data: { quickCommands: { a: 'echo a', b: 'echo b' } } })
       await page.goto('/')
       await page.getByTestId(`project-menu-${id}`).click()
       await page.getByRole('menuitem', { name: 'Update quick commands' }).click()
@@ -83,7 +83,7 @@ test.describe('quick commands', () => {
       await dialog.getByTestId('qc-delete-1').click()
       await dialog.getByTestId('qc-save').click()
       await expect(dialog).not.toBeVisible({ timeout: 5_000 })
-      let body = (await (await request.get(`/api/projects/${id}`)).json()) as { quickCommands: Record<string, string> }
+      let body = (await (await request.get(`/api/projects/${projectURL(id)}`)).json()) as { quickCommands: Record<string, string> }
       expect(body.quickCommands.a).toBe('echo a-updated')
       expect(body.quickCommands.b).toBeUndefined()
       // via Terminal modal delete remaining
@@ -96,7 +96,7 @@ test.describe('quick commands', () => {
       await d2.getByTestId('qc-delete-0').click()
       await d2.getByTestId('qc-save').click()
       await expect(d2).not.toBeVisible({ timeout: 5_000 })
-      body = (await (await request.get(`/api/projects/${id}`)).json()) as { quickCommands: Record<string, string> }
+      body = (await (await request.get(`/api/projects/${projectURL(id)}`)).json()) as { quickCommands: Record<string, string> }
       expect(body.quickCommands == null || Object.keys(body.quickCommands ?? {}).length === 0).toBeTruthy()
       await expect(page).toHaveScreenshot('quickcommands-update-after.png', { fullPage: true })
     } finally {

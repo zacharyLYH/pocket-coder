@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 
 	"pcoder/internal/docker"
 	"pcoder/internal/harness"
+	"pcoder/internal/project"
 	"pcoder/internal/state"
 )
 
@@ -53,7 +55,7 @@ func TestHarnessConfigLandsInContainer(t *testing.T) {
 	}
 	cookie := login(t, h, pinOut)
 
-	id, _ := createTestProject(t, h, cookie, "", "", "")
+	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
 	waitForStatus(t, h, cookie, id, "running")
 
 	// installs are explicit: inject the CLI before launching
@@ -63,7 +65,7 @@ func TestHarnessConfigLandsInContainer(t *testing.T) {
 		t.Fatalf("install: %d %v", code, body)
 	}
 
-	code, body = doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions",
+	code, body = doJSON(t, h, cookie, http.MethodPost, projectPath(id, "/sessions"),
 		`{"harnessId":"cfg-cli"}`)
 	if code != http.StatusCreated {
 		t.Fatalf("launch cfg-cli: %d %v", code, body)
@@ -72,7 +74,7 @@ func TestHarnessConfigLandsInContainer(t *testing.T) {
 	ctx := context.Background()
 	var cat docker.ExecResult
 	for i := 0; i < 10; i++ {
-		res, err := dkr.Exec(ctx, "pcoder-"+id,
+		res, err := dkr.Exec(ctx, project.ContainerName(id),
 			[]string{"cat", "/root/.fakecli/config.json"}, false)
 		if err == nil && res.ExitCode == 0 {
 			cat = res
@@ -94,7 +96,7 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 
 	cookie := login(t, h, pinOut)
 
-	id, _ := createTestProject(t, h, cookie, "", "", "")
+	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
 	waitForStatus(t, h, cookie, id, "running")
 
 	ctx := context.Background()
@@ -106,46 +108,46 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("install: %d %v", code, body)
 	}
-	code, body = doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions",
+	code, body = doJSON(t, h, cookie, http.MethodPost, projectPath(id, "/sessions"),
 		`{"harnessId":"fake-cli"}`)
 	if code != http.StatusCreated || body["name"] != "fake-cli-1" {
 		t.Fatalf("launch: %d %v", code, body)
 	}
-	if res, err := dkr.Exec(ctx, "pcoder-"+id, []string{"tmux", "has-session", "-t", "fake-cli-1"}, false); err != nil || res.ExitCode != 0 {
+	if res, err := dkr.Exec(ctx, project.ContainerName(id), []string{"tmux", "has-session", "-t", "fake-cli-1"}, false); err != nil || res.ExitCode != 0 {
 		t.Fatalf("session missing after launch: %+v err=%v", res, err)
 	}
-	if res, err := dkr.Exec(ctx, "pcoder-"+id, []string{"bash", "-lc", "command -v fakecli"}, false); err != nil || res.ExitCode != 0 {
+	if res, err := dkr.Exec(ctx, project.ContainerName(id), []string{"bash", "-lc", "command -v fakecli"}, false); err != nil || res.ExitCode != 0 {
 		t.Fatalf("install did not put fakecli on PATH: %+v err=%v", res, err)
 	}
 	// launching an uninstalled harness is the 422 PRD rejection
-	code, body = doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions",
+	code, body = doJSON(t, h, cookie, http.MethodPost, projectPath(id, "/sessions"),
 		`{"harnessId":"sleepy"}`)
 	if code != http.StatusUnprocessableEntity {
 		t.Fatalf("uninstalled launch: %d %v, want 422", code, body)
 	}
 
 	// listed among sessions
-	code, body = doJSON(t, h, cookie, http.MethodGet, "/api/projects/"+id+"/sessions", "")
+	code, body = doJSON(t, h, cookie, http.MethodGet, projectPath(id, "/sessions"), "")
 	if names, ok := body["sessions"].([]any); code != http.StatusOK || !ok || len(names) == 0 {
 		t.Fatalf("list sessions: %d %v", code, body)
 	}
 
 	// --- kill → gone from tmux ---
-	code, _ = doJSON(t, h, cookie, http.MethodDelete, "/api/projects/"+id+"/sessions/fake-cli-1", "")
+	code, _ = doJSON(t, h, cookie, http.MethodDelete, projectPath(id, "/sessions/fake-cli-1"), "")
 	if code != http.StatusOK {
 		t.Fatalf("kill: %d", code)
 	}
-	if res, err := dkr.Exec(ctx, "pcoder-"+id, []string{"tmux", "has-session", "-t", "fake-cli-1"}, false); err == nil && res.ExitCode == 0 {
+	if res, err := dkr.Exec(ctx, project.ContainerName(id), []string{"tmux", "has-session", "-t", "fake-cli-1"}, false); err == nil && res.ExitCode == 0 {
 		t.Fatal("killed session still exists in tmux")
 	}
 
 	// --- restart → same name back through the full pipeline ---
 	code, body = doJSON(t, h, cookie, http.MethodPost,
-		"/api/projects/"+id+"/sessions/fake-cli-1/restart", "")
+		projectPath(id, "/sessions/fake-cli-1/restart"), "")
 	if code != http.StatusOK || body["name"] != "fake-cli-1" {
 		t.Fatalf("restart: %d %v", code, body)
 	}
-	if res, err := dkr.Exec(ctx, "pcoder-"+id, []string{"tmux", "has-session", "-t", "fake-cli-1"}, false); err != nil || res.ExitCode != 0 {
+	if res, err := dkr.Exec(ctx, project.ContainerName(id), []string{"tmux", "has-session", "-t", "fake-cli-1"}, false); err != nil || res.ExitCode != 0 {
 		t.Fatalf("restarted session missing: %+v err=%v", res, err)
 	}
 
@@ -154,7 +156,7 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 	var exitLine string
 	for i := 0; i < 24; i++ {
 		time.Sleep(250 * time.Millisecond)
-		capres, cerr := dkr.Exec(ctx, "pcoder-"+id,
+		capres, cerr := dkr.Exec(ctx, project.ContainerName(id),
 			[]string{"tmux", "capture-pane", "-t", "fake-cli-1", "-p"}, false)
 		if cerr == nil && capres.ExitCode == 0 && strings.Contains(capres.Output, "exited:") {
 			exitLine = capres.Output
@@ -172,7 +174,7 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("install sleepy: %d %v", code, body)
 	}
-	code, body = doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions",
+	code, body = doJSON(t, h, cookie, http.MethodPost, projectPath(id, "/sessions"),
 		`{"harnessId":"sleepy"}`)
 	errMsg, _ := body["error"].(string)
 	if code != http.StatusUnprocessableEntity ||
@@ -204,17 +206,18 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 func TestRealTUIGate(t *testing.T) {
 	h, dkr, _, pinOut, ev, st := newLiveDeps(t)
 
-	// vi opens /workspace/hello.txt; write-quit makes the session exit,
-	// which lets us assert keystroke fidelity by reading the file back
+	// vi opens hello.txt in the session workdir (/workspace/repo — sessions
+	// start in the clone); write-quit makes the session exit, which lets us
+	// assert keystroke fidelity by reading the file back
 	writePlugin(t, st, "Vi", "vi hello.txt", "")
 	cookie := login(t, h, pinOut)
 
-	id, _ := createTestProject(t, h, cookie, "", "", "")
+	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
 	waitForStatus(t, h, cookie, id, "running")
 	ctx := context.Background()
 
 	// launch the vi harness session
-	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions",
+	code, body := doJSON(t, h, cookie, http.MethodPost, projectPath(id, "/sessions"),
 		`{"harnessId":"vi"}`)
 	if code != http.StatusCreated {
 		t.Fatalf("launch vi: %d %v", code, body)
@@ -226,7 +229,7 @@ func TestRealTUIGate(t *testing.T) {
 
 	dial := func(name string) *websocket.Conn {
 		t.Helper()
-		return dialSessionWS(t, "ws://"+ts.Listener.Addr().String()+"/ws/projects/"+id+"/sessions/"+name, cookie)
+		return dialSessionWS(t, "ws://"+ts.Listener.Addr().String()+"/ws/projects/"+url.PathEscape(id)+"/sessions/"+name, cookie)
 	}
 
 	conn := dial(sessionName)
@@ -267,7 +270,7 @@ func TestRealTUIGate(t *testing.T) {
 	// silent — that path is covered by the fakecli crash above.)
 	var cat docker.ExecResult
 	for i := 0; i < 15; i++ {
-		res, err := dkr.Exec(ctx, "pcoder-"+id, []string{"cat", "/workspace/hello.txt"}, false)
+		res, err := dkr.Exec(ctx, project.ContainerName(id), []string{"cat", "/workspace/repo/hello.txt"}, false)
 		if err == nil && res.ExitCode == 0 && strings.Contains(res.Output, "hello from the tui gate") {
 			cat = res
 			break

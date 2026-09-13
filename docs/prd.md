@@ -30,7 +30,7 @@ Each Codespaces concept maps 1:1 here.
 
 | GitHub Codespaces | Pocket Coder |
 |---|---|
-| Create a codespace (repo + branch) | Create a project (repo + branch, or blank) |
+| Create a codespace (repo + branch) | Clone a project (GitHub repo + branch) |
 | devcontainer.json builds the environment | a shared sandbox image; users install what they need inside |
 | Open in browser | terminal-driven web UI, mobile-first |
 | Terminal | tmux-backed persistent terminal |
@@ -117,7 +117,7 @@ The only reason for system login is safe access to the self-hosted box over the 
 2. Log in: enter the email, receive a PIN by email, enter it. The browser gets a JWT.
 3. You land on the projects screen. Empty? "Clone a repo →".
 4. Default harnesses (terminal, opencode, freebuff, cline) are already in "+ New Session". Nothing to configure first.
-5. Clone a repo (or start blank) → "Ready" in seconds. Open it.
+5. Clone a GitHub repo → "Ready" in seconds. Open it.
 6. The first time you launch a harness that needs credentials, auth happens right then (see Harness auth). Later launches are one tap.
 
 No gate. The user is useful before configuring anything.
@@ -355,7 +355,7 @@ Cut to "later, when a user actually hits the wall":
 - [ ] System auth: email + one-time PIN → JWT, middleware on all requests
 - [ ] First-run: log in with email+PIN → land on projects → clone → ready; harness auth is on-demand
 - [ ] Persistence: docker volumes for system config + per-project state; restart keeps state
-- [ ] Create project from repo → clone in sandbox → "Ready" (blank sandboxes allowed too)
+- [ ] Clone a GitHub repo into a project → clone in sandbox → "Ready"
 - [ ] Terminal tab: xterm.js ↔ tmux via ws, resize, reconnect
 - [ ] Creature-comfort buttons: ↑ repeat-last-command, Ctrl-C, Ctrl-L, Tab, Esc
 - [ ] Global harness plugins: builtins seeded as files + "Add harness" form, one code path

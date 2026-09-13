@@ -10,6 +10,9 @@ services:
       PCODER_DOCKER_SOCK: unix:///var/run/docker.sock
       SMTP_USER: ""
       SMTP_PASSWORD: ""
+      # E2E clones come from the per-run git daemon on the host
+      # (web/e2e/global-setup.ts), not from GitHub.
+      PCODER_ALLOW_ANY_REPO: "1"
     volumes:
       - ${PCODER_E2E_DATA_DIR}:/data
       - /var/run/docker.sock:/var/run/docker.sock

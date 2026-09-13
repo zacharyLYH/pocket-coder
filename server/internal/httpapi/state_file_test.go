@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -92,7 +93,7 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 			"email":       "me@example.com",
 		}},
 		"projects": map[string]any{
-			proj.ID: map[string]any{"name": "hello", "repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
+			proj.ID: map[string]any{"repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
 		},
 	})
 
@@ -103,11 +104,12 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 	}
 
 	// --- 5. delete the project entirely ---
-	md.EXPECT().Stop(mock.Anything, "pcoder-"+proj.ID, mock.Anything).Return(nil)
-	md.EXPECT().Remove(mock.Anything, "pcoder-"+proj.ID, true).Return(nil)
-	md.EXPECT().RemoveVolume(mock.Anything, "pcoder-"+proj.ID+"-home").Return(nil)
-	md.EXPECT().RemoveVolume(mock.Anything, "pcoder-"+proj.ID+"-repo").Return(nil)
-	rec = authedRequest(t, h, cookie, "DELETE", "/api/projects/"+proj.ID+"?scope=all")
+	cname := project.ContainerName(proj.ID)
+	md.EXPECT().Stop(mock.Anything, cname, mock.Anything).Return(nil)
+	md.EXPECT().Remove(mock.Anything, cname, true).Return(nil)
+	md.EXPECT().RemoveVolume(mock.Anything, cname+"-home").Return(nil)
+	md.EXPECT().RemoveVolume(mock.Anything, cname+"-repo").Return(nil)
+	rec = authedRequest(t, h, cookie, "DELETE", "/api/projects/"+url.PathEscape(proj.ID)+"?scope=all")
 	if rec.Code != 200 {
 		t.Fatalf("delete project: %d %s", rec.Code, rec.Body)
 	}

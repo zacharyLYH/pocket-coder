@@ -10,38 +10,41 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"pcoder/internal/project"
 )
 
 func TestTerminalLiveLifecycle(t *testing.T) {
 	h, dkr, _, pinOut, _, _ := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
 
-	// blank project (embedded image ships tmux)
-	id, _ := createTestProject(t, h, cookie, "", "", "")
+	// fixture project (embedded image ships tmux)
+	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
 	waitForStatus(t, h, cookie, id, "running")
 
 	// create → 201 + event; duplicate → 409; list → [main]
-	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions", `{"name":"main"}`)
+	code, body := doJSON(t, h, cookie, http.MethodPost, projectPath(id, "/sessions"), `{"name":"main"}`)
 	if code != http.StatusCreated || body["name"] != "main" {
 		t.Fatalf("create session: %d %v", code, body)
 	}
-	code, _ = doJSON(t, h, cookie, http.MethodPost, "/api/projects/"+id+"/sessions", `{"name":"main"}`)
+	code, _ = doJSON(t, h, cookie, http.MethodPost, projectPath(id, "/sessions"), `{"name":"main"}`)
 	if code != http.StatusOK {
 		t.Fatalf("duplicate session (ensure semantics): %d, want 200", code)
 	}
-	code, body = doJSON(t, h, cookie, http.MethodGet, "/api/projects/"+id+"/sessions", "")
+	code, body = doJSON(t, h, cookie, http.MethodGet, projectPath(id, "/sessions"), "")
 	if names, ok := body["sessions"].([]any); code != http.StatusOK || !ok || len(names) != 1 || names[0].(map[string]any)["name"] != "main" {
 		t.Fatalf("list sessions: %d %v", code, body)
 	}
 
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
-	ws := "ws://" + ts.Listener.Addr().String() + "/ws/projects/" + id + "/sessions/main"
+	ws := "ws://" + ts.Listener.Addr().String() + "/ws/projects/" + url.PathEscape(id) + "/sessions/main"
 
 	dial := func() *websocket.Conn {
 		t.Helper()
@@ -95,7 +98,7 @@ func TestTerminalLiveLifecycle(t *testing.T) {
 	defer conn2.Close()
 	send(conn2, map[string]any{"type": "input", "data": "echo back\n"})
 	readUntilOutputContains(conn2, "back")
-	res, err := dkr.Exec(t.Context(), "pcoder-"+id, []string{"tmux", "capture-pane", "-t", "main", "-p"}, false)
+	res, err := dkr.Exec(t.Context(), project.ContainerName(id), []string{"tmux", "capture-pane", "-t", "main", "-p"}, false)
 	if err != nil || res.ExitCode != 0 || !strings.Contains(res.Output, "hi7") {
 		t.Fatalf("scrollback lost across reconnect: %+v err=%v", res, err)
 	}

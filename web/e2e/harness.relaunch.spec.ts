@@ -1,5 +1,5 @@
 import { expect, type APIRequestContext, test } from '@playwright/test'
-import { deleteAllProjects, engineUp, resetHarnessRegistry, waitForRunning } from './helpers'
+import { createProject, deleteAllProjects, engineUp, projectURL, resetHarnessRegistry, terminalUrl, waitForRunning } from './helpers'
 
 // Read a marker file's mtime from inside the container. Returns 0 if absent.
 async function markerMtime(request: APIRequestContext, id: string): Promise<number> {
@@ -32,11 +32,7 @@ test.describe('harness relaunch', () => {
 
     try {
       // Create project via API (fast)
-      const projRes = await request.post('/api/projects', {
-        data: { repo: 'https://example.com/test-repo' },
-      })
-      expect(projRes.ok()).toBeTruthy()
-      const { id } = (await projRes.json()) as { id: string }
+      const id = await createProject(request)
       await waitForRunning(request, id)
 
       // Install harness in project via API
@@ -46,14 +42,14 @@ test.describe('harness relaunch', () => {
       expect(installRes.ok()).toBeTruthy()
 
       // Launch harness session via API (auto-named helper-1)
-      const launchRes = await request.post(`/api/projects/${id}/sessions`, {
+      const launchRes = await request.post(`/api/projects/${projectURL(id)}/sessions`, {
         data: { harnessId: 'helper' },
       })
       expect(launchRes.status()).toBe(201)
       const sessionName = (await launchRes.json()) as { name: string }
 
       // Navigate to terminal and attach via UI
-      await page.goto(`/projects/${id}/terminal/${sessionName.name}`)
+      await page.goto(terminalUrl(id, sessionName.name))
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
       await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
 
@@ -82,12 +78,12 @@ test.describe('harness relaunch', () => {
 
       // --- Part 2: re-entry cleans dead sessions ---
       // Kill the harness session via the API
-      await request.delete(`/api/projects/${id}/sessions/${sessionName.name}`)
+      await request.delete(`/api/projects/${projectURL(id)}/sessions/${sessionName.name}`)
       await page.waitForTimeout(2000)
 
       // Go home, then re-enter the terminal (navigate away and back)
       await page.goto('/')
-      await page.goto(`/projects/${id}/terminal/${sessionName.name}`)
+      await page.goto(terminalUrl(id, sessionName.name))
       // The ensure path runs LaunchNamed (validateCLI + tmux create),
       // which can take ~20s. Be generous.
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 30_000 })

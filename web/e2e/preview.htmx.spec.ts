@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { deleteAllProjects, engineUp } from './helpers'
+import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createHtmxProject, openPreviewFromTerminal } from './preview.helpers'
 
 test.describe('preview htmx', () => {
@@ -20,7 +20,7 @@ test.describe('preview htmx', () => {
       await page.goto('/')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       await expect(previewPage).toHaveScreenshot('preview-htmx-initial.png', { fullPage: true })
-      const inspect = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
+      const inspect = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
       expect((await inspect.json()).html).toContain('HTMX')
       await expect(previewPage).toHaveScreenshot('preview-htmx-hmr.png', { fullPage: true })
       await previewPage.close()

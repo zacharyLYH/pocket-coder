@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"pcoder/internal/project"
 )
 
 func TestSSHKeyRegistrationAndClone(t *testing.T) {
@@ -67,14 +69,14 @@ func TestSSHKeyInjectOnCreate(t *testing.T) {
 	fp := body["fingerprint"].(string)
 	defer doJSON(t, h, cookie, http.MethodDelete, "/api/ssh-keys/"+fp, "")
 
-	// create a blank project — the key should land in ~/.ssh/authorized_keys
-	id, _ := createTestProject(t, h, cookie, "", "", "")
+	// create a fixture project — the key should land in ~/.ssh/authorized_keys
+	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
 	waitForStatus(t, h, cookie, id, "running")
 
 	// verify authorized_keys exists and contains the key
 	var catResult string
 	for i := 0; i < 15; i++ {
-		res, err := dkr.Exec(t.Context(), "pcoder-"+id,
+		res, err := dkr.Exec(t.Context(), project.ContainerName(id),
 			[]string{"cat", "/root/.ssh/authorized_keys"}, false)
 		if err == nil && res.ExitCode == 0 {
 			catResult = strings.TrimSpace(res.Output)
@@ -91,11 +93,11 @@ func TestCloneMethodHTTP(t *testing.T) {
 	cookie := login(t, h, pinOut)
 
 	// create with explicit http cloneMethod against a local fixture repo
-	url := fixtureRepo(t)
+	url := fixtureRepo(t).URL
 	id, _ := createTestProject(t, h, cookie, url, "", "http")
 
 	// get shows cloneMethod
-	code, body := doJSON(t, h, cookie, http.MethodGet, "/api/projects/"+id, "")
+	code, body := doJSON(t, h, cookie, http.MethodGet, projectPath(id, ""), "")
 	if code != http.StatusOK || body["cloneMethod"] != "http" {
 		t.Fatalf("get cloneMethod: %d %v", code, body)
 	}
@@ -106,24 +108,24 @@ func TestReconcileMissingContainer(t *testing.T) {
 	cookie := login(t, h, pinOut)
 
 	// create a project
-	id, _ := createTestProject(t, h, cookie, "", "", "")
+	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
 	waitForStatus(t, h, cookie, id, "running")
 
 	// manually kill the container (simulate engine restart / docker rm)
-	if err := dkr.Stop(t.Context(), "pcoder-"+id, 0); err != nil {
+	if err := dkr.Stop(t.Context(), project.ContainerName(id), 0); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
-	if err := dkr.Remove(t.Context(), "pcoder-"+id, true); err != nil {
+	if err := dkr.Remove(t.Context(), project.ContainerName(id), true); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 
 	// verify the container is gone
-	if _, err := dkr.Inspect(t.Context(), "pcoder-"+id); err == nil {
+	if _, err := dkr.Inspect(t.Context(), project.ContainerName(id)); err == nil {
 		t.Fatal("container should be gone")
 	}
 
 	// listing sessions should trigger reconciliation and succeed
-	code, body := doJSON(t, h, cookie, http.MethodGet, "/api/projects/"+id+"/sessions", "")
+	code, body := doJSON(t, h, cookie, http.MethodGet, projectPath(id, "/sessions"), "")
 	if code != http.StatusOK {
 		t.Fatalf("list sessions after reconcile: %d %v", code, body)
 	}

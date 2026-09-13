@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,7 +136,10 @@ func (l *Lifecycle) CleanupVolume(t *testing.T, name string) {
 // GitDaemonFixture manages a temporary git repo served by git daemon.
 // The daemon is started automatically and stopped on test cleanup.
 type GitDaemonFixture struct {
-	URL     string
+	URL string
+	// ID is the project id a service with the allow-any-repo hatch
+	// derives from URL ("owner/repo", lowercased).
+	ID      string
 	cleanup func()
 }
 
@@ -173,6 +177,17 @@ func NewGitDaemonFixture(t *testing.T) *GitDaemonFixture {
 	port := listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
 
+	// Serve from a two-segment path so the URL parses to an owner/repo id
+	// under the PCODER_ALLOW_ANY_REPO test hatch; the owner embeds the
+	// port so every fixture (and its project) is unique per run.
+	owner := fmt.Sprintf("itest-%d", port)
+	if err := os.MkdirAll(filepath.Join(dir, owner), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(repo, filepath.Join(dir, owner, "repo")); err != nil {
+		t.Fatal(err)
+	}
+
 	daemon := exec.Command("git", "daemon",
 		"--base-path="+dir, "--export-all", "--reuseaddr",
 		"--listen=0.0.0.0", "--port="+fmt.Sprint(port))
@@ -181,7 +196,8 @@ func NewGitDaemonFixture(t *testing.T) *GitDaemonFixture {
 	}
 
 	g := &GitDaemonFixture{
-		URL: fmt.Sprintf("git://host.docker.internal:%d/repo", port),
+		URL: fmt.Sprintf("git://host.docker.internal:%d/%s/repo", port, owner),
+		ID:  strings.ToLower(owner + "/repo"),
 		cleanup: func() {
 			_ = daemon.Process.Kill()
 			_, _ = daemon.Process.Wait()

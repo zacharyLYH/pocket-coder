@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { api, errMsg } from '@/lib/api'
+import { api, errMsg, projectPath } from '@/lib/api'
 import type { GitDiffResponse, GitFileStatus, GitStatusResponse } from '@/lib/types'
 
 // parseHunks splits raw unified diff text into its @@ hunks, dropping the
@@ -108,7 +108,7 @@ export function DiffTab({ projectId }: { projectId: string }) {
 
   const refresh = useCallback(async (): Promise<GitStatusResponse | null> => {
     try {
-      const d = await api<GitStatusResponse>(`/api/projects/${projectId}/git/status`)
+      const d = await api<GitStatusResponse>(projectPath(projectId, '/git/status'))
       setStatus(d)
       setError(null)
       return d
@@ -139,7 +139,7 @@ export function DiffTab({ projectId }: { projectId: string }) {
     setDiffs((prev) => ({ ...prev, [key]: { ...emptyFileDiff, loading: true } }))
     try {
       const d = await api<GitDiffResponse>(
-        `/api/projects/${projectId}/git/diff?path=${encodeURIComponent(path)}&staged=${staged}`,
+        projectPath(projectId, `/git/diff?path=${encodeURIComponent(path)}&staged=${staged}`),
       )
       setDiffs((prev) => ({
         ...prev,
@@ -192,7 +192,7 @@ export function DiffTab({ projectId }: { projectId: string }) {
     setBusy(key)
     setError(null)
     try {
-      await api(`/api/projects/${projectId}/git/${unstage ? 'unstage' : 'stage'}`, {
+      await api(projectPath(projectId, `/git/${unstage ? 'unstage' : 'stage'}`), {
         method: 'POST',
         body: JSON.stringify({ path }),
       })
@@ -216,7 +216,7 @@ export function DiffTab({ projectId }: { projectId: string }) {
     setBusy(key)
     setError(null)
     try {
-      await api(`/api/projects/${projectId}/git/stage-hunk`, {
+      await api(projectPath(projectId, '/git/stage-hunk'), {
         method: 'POST',
         body: JSON.stringify({ path, patch: hunkPatch(path, hunk), reverse }),
       })

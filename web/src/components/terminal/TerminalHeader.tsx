@@ -17,7 +17,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { api, errMsg } from '@/lib/api'
+import { api, errMsg, projectPath } from '@/lib/api'
 import { useQuickCommands } from '@/hooks/useQuickCommands'
 import { QuickCommandsModal } from '@/components/QuickCommandsModal'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -47,7 +47,7 @@ export function TerminalHeader({ projectId, current, status, onBack, onRestart, 
   async function inject(command: string) {
     setInjectError(null)
     try {
-      await api(`/api/projects/${projectId}/sessions/${current}/inject`, { method: 'POST', body: JSON.stringify({ command }) })
+      await api(projectPath(projectId, `/sessions/${current}/inject`), { method: 'POST', body: JSON.stringify({ command }) })
     } catch (e) {
       setInjectError(errMsg(e))
     }

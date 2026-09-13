@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
+import { projectPath } from '@/lib/api'
 import { parseTerminalFrame } from '@/lib/terminalFrame'
 
 export type ConnStatus = 'connecting' | 'live' | 'ended'
@@ -75,7 +76,7 @@ export function TerminalPane({ projectId, session, redial, hostRef, onStatus, on
     async function ensureSessionThenDial() {
       onStatus('connecting')
       try {
-        const res = await fetch(`/api/projects/${projectId}/sessions`, {
+        const res = await fetch(projectPath(projectId, '/sessions'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: session }),
@@ -96,7 +97,7 @@ export function TerminalPane({ projectId, session, redial, hostRef, onStatus, on
       }
 
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      ws = new WebSocket(`${proto}://${location.host}/ws/projects/${projectId}/sessions/${session}`)
+      ws = new WebSocket(`${proto}://${location.host}/ws/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(session)}`)
 
       ws.onopen = () => {
         if (disposed || !ws) return

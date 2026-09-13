@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { terminalPath } from '@/lib/paths'
-import { api, errMsg } from '@/lib/api'
+import { api, errMsg, projectPath } from '@/lib/api'
 import type { Harness } from '@/lib/types'
 import { TerminalHeader } from '@/components/terminal/TerminalHeader'
 import { TerminalTabs, type FixedView } from '@/components/terminal/TerminalTabs'
@@ -32,7 +32,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
 
   // ─── data fetching ──────────────────────────────────────────────────
   const refreshSessions = useCallback(() => {
-    api<{ sessions: { name: string }[] }>(`/api/projects/${projectId}/sessions`)
+    api<{ sessions: { name: string }[] }>(projectPath(projectId, '/sessions'))
       .then((d) => setSessions(d.sessions))
       .catch(() => {})
   }, [projectId])
@@ -48,7 +48,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   }, [status, refreshSessions])
 
   useEffect(() => {
-    api<{ harnesses: Harness[] }>(`/api/projects/${projectId}/harnesses`)
+    api<{ harnesses: Harness[] }>(projectPath(projectId, '/harnesses'))
       .then((d) => setHarnesses(d.harnesses))
       .catch(() => {})
   }, [projectId])
@@ -72,7 +72,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
 
   async function restart() {
     try {
-      await api(`/api/projects/${projectId}/sessions/${current}/restart`, { method: 'POST' })
+      await api(projectPath(projectId, `/sessions/${current}/restart`), { method: 'POST' })
       setRedial((n) => n + 1)
     } catch (err) {
       setError(errMsg(err))
@@ -88,7 +88,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   // Kill (current tab) share this path.
   async function killSession(name: string) {
     try {
-      await api(`/api/projects/${projectId}/sessions/${name}`, { method: 'DELETE' })
+      await api(projectPath(projectId, `/sessions/${name}`), { method: 'DELETE' })
       if (name === current) setStatus('ended')
       refreshSessions()
     } catch (err) {
@@ -102,9 +102,9 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   // the API refuses to delete the last one, so a fallback is never needed.
   const del = useCallback(async (name: string) => {
     try {
-      await api(`/api/projects/${projectId}/sessions/${name}/delete`, { method: 'DELETE' })
+      await api(projectPath(projectId, `/sessions/${name}/delete`), { method: 'DELETE' })
       if (name === current) {
-        const d = await api<{ sessions: { name: string }[] }>(`/api/projects/${projectId}/sessions`)
+        const d = await api<{ sessions: { name: string }[] }>(projectPath(projectId, '/sessions'))
         const next = d.sessions.map((s) => s.name).find((n) => n !== name)
         if (!next) throw new Error('cannot delete the last session')
         setSessions(d.sessions)
@@ -120,7 +120,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   }, [projectId, current, refreshSessions])
 
   async function rename(newName: string) {
-    await api(`/api/projects/${projectId}/sessions/${current}/rename`, {
+    await api(projectPath(projectId, `/sessions/${current}/rename`), {
       method: 'POST',
       body: JSON.stringify({ name: newName }),
     })

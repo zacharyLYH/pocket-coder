@@ -138,7 +138,7 @@ func newSessionDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer,
 
 func seedProject(t *testing.T, st *state.Store, id string) {
 	t.Helper()
-	if err := project.Open(st).Create(id, project.Project{Name: "x"}); err != nil {
+	if err := project.Open(st).Create(id, project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
 		t.Fatal(err)
 	}
 }

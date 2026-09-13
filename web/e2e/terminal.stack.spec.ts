@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { deleteAllProjects, engineUp, fetchEvents } from './helpers'
+import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp, fetchEvents } from './helpers'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -26,14 +26,10 @@ test('create a project in the UI, open its terminal, type', async ({ page }) => 
     await deleteAllProjects(page.request)
 
     // --- create through the REAL form, exactly as a user would ---
-    await page.getByPlaceholder(/Repo URL/).fill('')
-    await page.getByRole('button', { name: 'Create project' }).click()
-    // create is synchronous (project up before the response); done when the
-    // button comes back. On a cold engine this includes building
-    // pcoder-project — minutes on a fresh CI runner, so stay generous.
-    await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({
-      timeout: 300_000,
-    })
+    // (createProjectViaUI resubmits if the Vite dev client drops its
+    // websocket and reloads mid-submit; on a cold engine the first create
+    // includes building pcoder-project — minutes, so budgets stay generous)
+    await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
     const terminalButtons = page.getByRole('button', { name: 'Terminal' })
     await expect(terminalButtons).toHaveCount(1)
 
@@ -83,8 +79,7 @@ test('real OpenCode session renders through the backend terminal bridge', async 
 
   try {
     await deleteAllProjects(page.request)
-    await page.getByRole('button', { name: 'Create project' }).click()
-    await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
+    await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
 
     // installs are explicit and per project: install OpenCode through the
     // home page (real npm download) BEFORE launching it

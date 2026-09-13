@@ -1,4 +1,5 @@
 import { expect, type APIRequestContext, type Page } from '@playwright/test'
+import { e2eRepo, projectURL } from './helpers'
 
 // Real full-stack fixture per devin-clone.md section 6.3:
 //   frontend: localhost:3000, backend: localhost:4000
@@ -122,12 +123,12 @@ export const reactFiles: Record<string, string> = {
 }
 
 // ── shared project-creation plumbing ──────────────────────────────────
-// createProject makes a blank project and returns its id. writeFilesCmd
-// writes file contents into /workspace/app. The running-Vite and
-// preinstalled flows below reuse these, so each framework fixture is just
-// its file map plus a readiness variant.
-export async function createProject(request: APIRequestContext): Promise<string> {
-  const created = await request.post('/api/projects', { data: {} })
+// createProject clones a fixture repo (slot) and returns its id.
+// writeFilesCmd writes file contents into /workspace/app. The running-Vite
+// and preinstalled flows below reuse these, so each framework fixture is
+// just its file map plus a readiness variant.
+export async function createProject(request: APIRequestContext, repoUrl = e2eRepo(1)): Promise<string> {
+  const created = await request.post('/api/projects', { data: { repoUrl } })
   expect(created.status()).toBe(201)
   const { id } = (await created.json()) as { id: string }
   return id
@@ -152,15 +153,15 @@ async function waitForNpmInstall(request: APIRequestContext, id: string) {
 
 // Vite dev server on :3000 plus the shared Node backend on :4000, started
 // immediately and held until both answer. Used by the React/Htmx/Vue fixtures.
-async function createRunningViteProject(request: APIRequestContext, files: Record<string, string>): Promise<string> {
-  return createRunningViteProjectOnPort(request, 3000, files)
+async function createRunningViteProject(request: APIRequestContext, files: Record<string, string>, slot = 1): Promise<string> {
+  return createRunningViteProjectOnPort(request, 3000, files, slot)
 }
 
 // createRunningViteProjectOnPort is the parameterized version: spins up the
 // same Vite + Node backend fixture on an arbitrary port, so e2e tests can
 // exercise BROWSER_TARGET paths other than the historical :3000 default.
-export async function createRunningViteProjectOnPort(request: APIRequestContext, port: number, files: Record<string, string>): Promise<string> {
-  const id = await createProject(request)
+export async function createRunningViteProjectOnPort(request: APIRequestContext, port: number, files: Record<string, string>, slot = 1): Promise<string> {
+  const id = await createProject(request, e2eRepo(slot))
   const command = `${writeFilesCmd(files)}; nohup bash -lc '
     cd /workspace/app;
     npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/pcoder-npm.log 2>&1;
@@ -176,26 +177,26 @@ export async function createRunningViteProjectOnPort(request: APIRequestContext,
 
 // Preinstalled project with code but no running servers, plus quickCommands
 // so a test can start them via inject (the user-driven flow).
-async function createPreinstalledProject(request: APIRequestContext, files: Record<string, string>): Promise<string> {
-  const id = await createProject(request)
+async function createPreinstalledProject(request: APIRequestContext, files: Record<string, string>, slot = 1): Promise<string> {
+  const id = await createProject(request, e2eRepo(slot))
   const install = `${writeFilesCmd(files)}; cd /workspace/app && npm install --no-audit --no-fund --fetch-retries=0 --fetch-timeout=10000 >/tmp/pcoder-npm.log 2>&1; echo $? >/tmp/pcoder-npm.status`
   const res = await request.post('/api/projects/exec', { data: { projectIds: [id], command: install } })
   expect(res.ok()).toBeTruthy()
   await waitForNpmInstall(request, id)
-  await request.patch(`/api/projects/${id}`, {
+  await request.patch(`/api/projects/${projectURL(id)}`, {
     data: { quickCommands: { dev: 'cd /workspace/app && npm run dev -- --host 0.0.0.0 --port 3000', backend: 'cd /workspace/app && nohup node server.js >/tmp/pcoder-backend.log 2>&1 &' } },
   })
   return id
 }
 
 // React fixture: full-stack app (frontend 3000, backend 4000, counter, HMR).
-export async function createReactProject(request: APIRequestContext): Promise<string> {
-  return createRunningViteProject(request, reactFiles)
+export async function createReactProject(request: APIRequestContext, slot = 1): Promise<string> {
+  return createRunningViteProject(request, reactFiles, slot)
 }
 
 // Precreated React project with code but no running servers.
-export async function createPrecreatedProject(request: APIRequestContext): Promise<string> {
-  return createPreinstalledProject(request, reactFiles)
+export async function createPrecreatedProject(request: APIRequestContext, slot = 1): Promise<string> {
+  return createPreinstalledProject(request, reactFiles, slot)
 }
 
 export async function execInProject(request: APIRequestContext, id: string, command: string): Promise<string> {
@@ -216,7 +217,7 @@ export async function waitForInspectContaining(
   attempts = 60,
 ): Promise<void> {
   for (let i = 0; i < attempts; i++) {
-    const res = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
+    const res = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
     if (res.ok() && ((await res.json()) as { html: string }).html.includes(marker)) return
     await new Promise((r) => setTimeout(r, 1000))
   }
@@ -296,7 +297,7 @@ export async function waitForChromiumFit(page: Page, request: APIRequestContext,
   const box = await page.locator('iframe[title="Remote project preview"]').boundingBox()
   const want = { width: Math.round(box?.width ?? 0), height: Math.round(box?.height ?? 0) }
   await expect(async () => {
-    const res = await request.get(`/api/projects/${projectId}/preview/tools/screenshot`)
+    const res = await request.get(`/api/projects/${projectURL(projectId)}/preview/tools/screenshot`)
     expect(res.ok()).toBeTruthy()
     const { width, height } = pngSize(Buffer.from(await res.body()))
     expect(Math.abs(width - want.width) <= 4).toBe(true)
@@ -332,8 +333,8 @@ const htmxFiles: Record<string, string> = {
   'server.js': reactFiles['server.js'],
 }
 
-export async function createHtmxProject(request: APIRequestContext): Promise<string> {
-  return createRunningViteProject(request, htmxFiles)
+export async function createHtmxProject(request: APIRequestContext, slot = 1): Promise<string> {
+  return createRunningViteProject(request, htmxFiles, slot)
 }
 
 // ── vanilla HTML fixture ──

@@ -14,10 +14,10 @@ import (
 // Project aliases the canonical persisted shape.
 type Project = state.Project
 
-// Entry is one row of the projects index.
+// Entry is one row of the projects index. The id is the repo's
+// owner/repo — it is also the display name.
 type Entry struct {
 	ID        string   `json:"id"`
-	Name      string   `json:"name"`
 	Harnesses []string `json:"harnesses,omitempty"`
 }
 
@@ -106,10 +106,9 @@ func (s *StateStore) RecordInstall(projectID, harnessID string) error {
 	})
 }
 
-// List returns every project as an entry, sorted by name then id. Name,
-// then id: blank projects are all "untitled", and an unstable tiebreak
-// would reorder the list between API calls (the home page's project pickers
-// must not shuffle under the user).
+// List returns every project as an entry, sorted by id. Ids are
+// owner/repo and unique, so the order is stable across calls (the home
+// page's project pickers must not shuffle under the user).
 func (s *StateStore) List() ([]Entry, error) {
 	out := []Entry{}
 	s.st.View(func(doc *state.Document) {
@@ -120,13 +119,10 @@ func (s *StateStore) List() ([]Entry, error) {
 				copy(cp, h)
 				h = cp
 			}
-			out = append(out, Entry{ID: id, Name: p.Name, Harnesses: h})
+			out = append(out, Entry{ID: id, Harnesses: h})
 		}
 	})
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
-		}
 		return out[i].ID < out[j].ID
 	})
 	return out, nil

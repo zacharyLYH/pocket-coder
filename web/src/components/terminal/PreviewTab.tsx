@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { api, errMsg } from '@/lib/api'
+import { api, errMsg, projectPath } from '@/lib/api'
 
 export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; onOpenPreview: () => void }) {
   const [ports, setPorts] = useState<{ port: number; status: string }[]>([])
@@ -13,7 +13,7 @@ export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; on
 
   const refresh = useCallback(async () => {
     try {
-      const d = await api<{ ports: { port: number; status: string }[] }>(`/api/projects/${projectId}/preview/ports`)
+      const d = await api<{ ports: { port: number; status: string }[] }>(projectPath(projectId, '/preview/ports'))
       setPorts(d.ports ?? [])
     } catch {
       // Keep the last-known list: a transient probe failure shouldn't
@@ -34,7 +34,7 @@ export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; on
     try {
       // POST blocks until the sidecar proves the page (or fails loudly) —
       // no client-side guessing, no force-ready.
-      await api(`/api/projects/${projectId}/preview/start`, { method: 'POST', body: JSON.stringify({ port }) })
+      await api(projectPath(projectId, '/preview/start'), { method: 'POST', body: JSON.stringify({ port }) })
       setReadyPort(port)
       return true
     } catch (e) {
@@ -63,7 +63,7 @@ export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; on
 
   async function closePreview() {
     try {
-      await api(`/api/projects/${projectId}/preview`, { method: 'DELETE' })
+      await api(projectPath(projectId, '/preview'), { method: 'DELETE' })
       setReadyPort(null)
     } catch (e) {
       setError(errMsg(e))

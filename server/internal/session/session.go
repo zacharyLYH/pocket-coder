@@ -291,10 +291,10 @@ func (s *Service) Installed(ctx context.Context, container string, cmds []string
 }
 
 // RepoTarget is the shared "cd to the repo" helper: /workspace/repo when
-// a clone lives there, else /workspace for blank projects. Every entry
-// point that hands a shell to the user (plain shells and harness
-// launches) resolves its start dir through here, so nobody needs to cd
-// themselves.
+// a clone lives there, else /workspace (legacy projects with no recorded
+// repo). Every entry point that hands a shell to the user (plain shells
+// and harness launches) resolves its start dir through here, so nobody
+// needs to cd themselves.
 func (s *Service) RepoTarget(ctx context.Context, container string) (string, error) {
 	res, err := s.dkr.Exec(ctx, container, []string{"test", "-d", repoDir + "/.git"}, false)
 	if err != nil {

@@ -9,7 +9,7 @@ import { mockFetch } from '@/test/mockFetch'
 // are exactly what slow e2e tests are bad at pinning.
 
 describe('ProjectsCard', () => {
-  const PROJECTS: Project[] = [{ id: 'p1', name: 'alpha' }]
+  const PROJECTS: Project[] = [{ id: 'x/alpha' }]
 
   function renderCard(over: Partial<Parameters<typeof ProjectsCard>[0]> = {}) {
     const props = {
@@ -34,43 +34,61 @@ describe('ProjectsCard', () => {
     expect(screen.getByText(/Failed to load projects: HTTP 500/)).toBeInTheDocument()
   })
 
+  it('lists projects by owner/repo id', () => {
+    renderCard()
+    expect(screen.getByText('x/alpha')).toBeInTheDocument()
+    expect(screen.getByTestId('project-card-x/alpha')).toBeInTheDocument()
+  })
+
   it('surfaces a failed create and keeps the form values', async () => {
     vi.stubGlobal('fetch', mockFetch((url, init) =>
       url === '/api/projects' && init?.method === 'POST'
-        ? { status: 409, body: { error: 'clone failed: repo not found' } }
+        ? { status: 409, body: { error: 'project already exists: "x/y"' } }
         : undefined))
     const { props } = renderCard()
 
-    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'https://x/y.git' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Create project' }))
-    expect(await screen.findByText(/clone failed/)).toHaveClass('text-destructive')
-    expect(screen.getByPlaceholderText(/Repo URL/)).toHaveValue('https://x/y.git')
+    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'https://github.com/x/y.git' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Clone project' }))
+    expect(await screen.findByText(/project already exists/)).toHaveClass('text-destructive')
+    expect(screen.getByPlaceholderText(/Repo URL/)).toHaveValue('https://github.com/x/y.git')
     expect(props.refresh).not.toHaveBeenCalled()
   })
 
   it('create success clears the form and refreshes; delete confirms first', async () => {
     const fetchMock = mockFetch((url, init) => {
-      if (url === '/api/projects' && init?.method === 'POST') return { status: 201, body: { id: 'p2' } }
-      if (url === '/api/projects/p1' && init?.method === 'DELETE') return { status: 200, body: { ok: true } }
+      if (url === '/api/projects' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body))
+        expect(body.repoUrl).toBe('https://github.com/x/y.git')
+        expect(body.cloneMethod).toBe('ssh')
+        return { status: 201, body: { id: 'x/y' } }
+      }
+      if (url === '/api/projects/x%2Falpha' && init?.method === 'DELETE') return { status: 200, body: { ok: true } }
       return undefined
     })
     vi.stubGlobal('fetch', fetchMock)
     const { props } = renderCard({ sshKeyCount: 2 })
 
-    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'https://x/y.git' } })
-    fireEvent.click(screen.getByRole('button', { name: 'HTTPS' }).nextSibling as Element) // SSH toggle
-    fireEvent.click(screen.getByRole('button', { name: 'Create project' }))
+    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'https://github.com/x/y.git' } })
+    fireEvent.click(screen.getByRole('button', { name: 'SSH' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Clone project' }))
     await waitFor(() => expect(props.refresh).toHaveBeenCalled())
     expect(screen.getByPlaceholderText(/Repo URL/)).toHaveValue('')
 
-    expect(screen.getByTestId('project-menu-p1')).toBeInTheDocument()
+    expect(screen.getByTestId('project-menu-x/alpha')).toBeInTheDocument()
     // delete is behind dropdown — tested in e2e; unit just checks trigger exists
   })
 
   it('clone-via hint counts registered SSH keys', () => {
     renderCard({ sshKeyCount: 2 })
-    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'git@x:y.git' } })
+    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'git@github.com:x/y.git' } })
     fireEvent.click(screen.getByRole('button', { name: 'SSH' }))
     expect(screen.getByText('2 key(s) registered')).toBeInTheDocument()
+  })
+
+  it('disables clone while the repo URL is blank', () => {
+    renderCard()
+    expect(screen.getByRole('button', { name: 'Clone project' })).toBeDisabled()
+    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'https://github.com/x/y.git' } })
+    expect(screen.getByRole('button', { name: 'Clone project' })).not.toBeDisabled()
   })
 })

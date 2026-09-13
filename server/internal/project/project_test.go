@@ -22,50 +22,50 @@ func newStore(t *testing.T) (*state.Store, *StateStore) {
 
 func TestCRUD(t *testing.T) {
 	st, s := newStore(t)
-	p := Project{Name: "hello", Repo: "https://github.com/x/hello", Branch: "main"}
+	p := Project{Repo: "https://github.com/x/hello", Branch: "main"}
 
-	if err := s.Create("abc", p); err != nil {
+	if err := s.Create("x/hello", p); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	// on disk: exactly this project, exactly these fields — set fields only
-	// (no empty branch/cloneMethod), nothing else in the document
+	// (no empty cloneMethod), nothing else in the document
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user":     map[string]any{"email": ""},
-		"projects": map[string]any{"abc": map[string]any{"name": "hello", "repo": "https://github.com/x/hello", "branch": "main"}},
+		"projects": map[string]any{"x/hello": map[string]any{"repo": "https://github.com/x/hello", "branch": "main"}},
 	})
 
-	got, err := s.Get("abc")
+	got, err := s.Get("x/hello")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Name != "hello" || got.Repo != p.Repo || got.Branch != "main" {
+	if got.Repo != p.Repo || got.Branch != "main" {
 		t.Fatalf("round trip mismatch: %+v", got)
 	}
 
-	p.Name = "hello2"
-	if err := s.Update("abc", p); err != nil {
+	p.Branch = "dev"
+	if err := s.Update("x/hello", p); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if got, _ := s.Get("abc"); got.Name != "hello2" {
+	if got, _ := s.Get("x/hello"); got.Branch != "dev" {
 		t.Fatalf("update not applied: %+v", got)
 	}
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user":     map[string]any{"email": ""},
-		"projects": map[string]any{"abc": map[string]any{"name": "hello2", "repo": "https://github.com/x/hello", "branch": "main"}},
+		"projects": map[string]any{"x/hello": map[string]any{"repo": "https://github.com/x/hello", "branch": "dev"}},
 	})
 
 	entries, err := s.List()
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(entries) != 1 || entries[0].ID != "abc" || entries[0].Name != "hello2" {
+	if len(entries) != 1 || entries[0].ID != "x/hello" {
 		t.Fatalf("index wrong: %+v", entries)
 	}
 
-	if err := s.Delete("abc"); err != nil {
+	if err := s.Delete("x/hello"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := s.Get("abc"); err == nil {
+	if _, err := s.Get("x/hello"); err == nil {
 		t.Fatal("get after delete should fail")
 	}
 	if entries, _ := s.List(); len(entries) != 0 {
@@ -94,10 +94,10 @@ func TestFileModesAndNoTempLeftovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := Open(st)
-	if err := s.Create("abc", Project{Name: "x"}); err != nil {
+	if err := s.Create("x/hello", Project{Repo: "https://github.com/x/hello.git"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Update("abc", Project{Name: "y"}); err != nil {
+	if err := s.Update("x/hello", Project{Repo: "https://github.com/x/hello.git", Branch: "dev"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -121,23 +121,23 @@ func TestFileModesAndNoTempLeftovers(t *testing.T) {
 	})
 }
 
-// A blank project persists with name+repo only — no omitempty noise.
-func TestCreateBlankProjectExactFile(t *testing.T) {
+// A minimal project persists with repo only — no omitempty noise.
+func TestCreateMinimalProjectExactFile(t *testing.T) {
 	st, s := newStore(t)
-	if err := s.Create("abc", Project{Name: "untitled"}); err != nil {
+	if err := s.Create("x/hello", Project{Repo: "https://github.com/x/hello.git"}); err != nil {
 		t.Fatal(err)
 	}
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user":     map[string]any{"email": ""},
-		"projects": map[string]any{"abc": map[string]any{"name": "untitled", "repo": ""}},
+		"projects": map[string]any{"x/hello": map[string]any{"repo": "https://github.com/x/hello.git"}},
 	})
 }
 
-// List ordering is stable across calls: name, then id as tiebreak.
+// List ordering is stable across calls: sorted by id.
 func TestListStableOrder(t *testing.T) {
 	_, s := newStore(t)
-	for _, id := range []string{"b", "a", "c"} {
-		if err := s.Create(id, Project{Name: "untitled"}); err != nil {
+	for _, id := range []string{"b/repo", "a/repo", "c/repo"} {
+		if err := s.Create(id, Project{Repo: "https://github.com/" + id}); err != nil {
 			t.Fatal(err)
 		}
 	}

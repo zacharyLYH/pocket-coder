@@ -1,13 +1,36 @@
 import { readFileSync } from 'node:fs'
 import { expect, type Page, type APIRequestContext } from '@playwright/test'
 
-import { SERVER_LOG } from './env'
+import { GIT_PORT, RUN_SLUG, SERVER_LOG } from './env'
 
 // Shared plumbing for the real-backend e2e suite: real PIN login, and
 // per-test cleanup so order never matters (the stack data dir only resets
 // between runs — see playwright.config.ts).
 
 export const LOGIN_EMAIL = 'me@example.com'
+
+// e2eRepo returns the fixture repo URL for a slot: one repo is one project
+// (ids are owner/repo), so tests holding N projects at once use slots
+// 1..N. Served by the per-run git daemon (global-setup.ts) — hermetic,
+// instant, and namespaced per run so parallel groups sharing one engine
+// never collide.
+export function e2eRepo(slot = 1): string {
+  return `git://host.docker.internal:${GIT_PORT}/e2e/${RUN_SLUG}-${slot}`
+}
+
+// e2eRepoID is the project id a slot's repo creates.
+export function e2eRepoID(slot = 1): string {
+  return `e2e/${RUN_SLUG}-${slot}`
+}
+
+// projectURL escapes an owner/repo id for API paths and page URLs.
+export function projectURL(id: string): string {
+  return encodeURIComponent(id)
+}
+
+export function terminalUrl(id: string, session: string): string {
+  return `/projects/${projectURL(id)}/terminal/${encodeURIComponent(session)}`
+}
 
 // login drives the real email + console-mailer PIN flow end to end.
 export async function login(page: Page) {
@@ -36,13 +59,19 @@ export async function engineUp(request: APIRequestContext): Promise<boolean> {
 // throw: a silent cleanup failure is how invisible volume orphans happen.
 export async function deleteAllProjects(request: APIRequestContext): Promise<void> {
   const res = await request.get('/api/projects')
-  if (!res.ok()) return
+  // 500 means the engine is down (callers skip on engineUp); anything else
+  // failing must throw — with deterministic owner/repo ids, silently
+  // keeping a project poisons every later create of the same repo.
+  if (!res.ok()) {
+    if (res.status() === 500) return
+    throw new Error(`deleteAllProjects: list projects → ${res.status()}`)
+  }
   const failures: string[] = []
   for (const p of ((await res.json()) as { projects: { id: string }[] }).projects) {
     let ok = false
     for (let attempt = 0; attempt < 3 && !ok; attempt++) {
       if (attempt > 0) await new Promise((r) => setTimeout(r, 1000))
-      ok = (await request.delete(`/api/projects/${p.id}?scope=all`)).ok()
+      ok = (await request.delete(`/api/projects/${projectURL(p.id)}?scope=all`)).ok()
     }
     if (!ok) failures.push(p.id)
   }
@@ -98,9 +127,22 @@ function waitForPin(afterOffset: number): string {
   throw new Error(`no PIN found in ${SERVER_LOG} — does the console mailer print it?`)
 }
 
-// createBlankProject makes an empty project via the API and returns its id.
-export async function createBlankProject(request: APIRequestContext): Promise<string> {
-  const res = await request.post('/api/projects', { data: {} })
+// createProject clones a fixture repo via the API and returns its id
+// (owner/repo). The repo defaults to slot 1; tests holding several
+// projects at once pass distinct slots.
+export async function createProject(request: APIRequestContext, repoUrl = e2eRepo(1)): Promise<string> {
+  let res = await request.post('/api/projects', { data: { repoUrl } })
+  if (res.status() === 409) {
+    // Same-id project leaked by an earlier cleanup failure (ids are this
+    // run's fixture slots, so it is always ours): drop everything listed
+    // and retry once.
+    const probe = await request.get('/api/projects')
+    const ids = ((await probe.json()) as { projects: { id: string }[] }).projects.map((p) => p.id)
+    for (const id of ids) {
+      await request.delete(`/api/projects/${projectURL(id)}?scope=all`)
+    }
+    res = await request.post('/api/projects', { data: { repoUrl } })
+  }
   expect(res.status()).toBe(201)
   const { id } = (await res.json()) as { id: string }
   return id
@@ -133,18 +175,23 @@ export async function createProjectViaUI(
   page: Page,
   request: APIRequestContext,
   repoUrl: string,
-  expectedName: string,
+  expectedID: string,
 ): Promise<string> {
-  // Count projects already named expectedName, so the helper also works for
-  // the repeated "untitled" case (it must create a NEW one, not see the old).
   const countNamed = async (): Promise<number> => {
     const res = await request.get('/api/projects')
     if (!res.ok()) return 0
-    return ((await res.json()) as { projects: { name: string }[] }).projects.filter(
-      (p) => p.name === expectedName,
+    return ((await res.json()) as { projects: { id: string }[] }).projects.filter(
+      (p) => p.id === expectedID,
     ).length
   }
-  const before = await countNamed()
+  let before = await countNamed()
+  if (before > 0) {
+    // A same-id project is already listed (a previous cleanup failed or
+    // was skipped): remove it first so this create is not a 409 loop.
+    // Ids are this run's namespaced fixture slots, so this is always ours.
+    await request.delete(`/api/projects/${projectURL(expectedID)}?scope=all`)
+    before = await countNamed()
+  }
 
   // Under CI load the Vite dev client can drop its websocket and reload the
   // page mid-submit, replacing the form ("element(s) not found") and losing
@@ -152,32 +199,32 @@ export async function createProjectViaUI(
   // until the project actually exists. Each POST is synchronous server-side
   // and the count check runs before every resubmit, so a slow-but-successful
   // create is never duplicated.
+  //
+  // The project count is the source of truth here, not the button: a
+  // SUCCESSFUL create clears the form, and the empty required repo field
+  // leaves the button disabled. Only a FAILED attempt re-enables it.
   for (let attempt = 0; attempt < 5 && (await countNamed()) <= before; attempt++) {
     if ((await page.getByPlaceholder(/Repo URL/).count()) === 0) {
       await page.goto('/')
     }
     await page.getByPlaceholder(/Repo URL/).fill(repoUrl)
-    await page.getByRole('button', { name: 'Create project' }).click()
-    // The button is disabled ("Creating…") while the POST is in flight and
-    // comes back enabled when it lands; a page reload also lands here.
-    await expect(page.getByRole('button', { name: /Create project|Creating…/ })).toBeVisible({
-      timeout: 120_000,
-    })
-    await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 120_000 })
+    await page.getByRole('button', { name: 'Clone project' }).click()
+    await expect(async () => {
+      const created = (await countNamed()) > before
+      const failed = await page.getByRole('button', { name: 'Clone project' }).isEnabled()
+      expect(created || failed).toBe(true)
+    }).toPass({ timeout: 120_000 })
   }
   if ((await countNamed()) <= before) {
-    throw new Error(`project ${expectedName} not created after retries`)
+    throw new Error(`project ${expectedID} not created after retries`)
   }
 
   await page.reload()
-  // Count-aware: several specs create duplicate names ('untitled'), so a
-  // bare toBeVisible strict-violates on 2+ matches. The create loop above
-  // guarantees exactly before+1 once the reload settles.
-  await expect(page.getByText(expectedName)).toHaveCount(before + 1, { timeout: 10_000 })
+  await expect(page.getByText(expectedID)).toHaveCount(before + 1, { timeout: 10_000 })
   const orderRes = await request.get('/api/projects')
-  const orderBody = (await orderRes.json()) as { projects: { id: string; name: string }[] }
-  const created = orderBody.projects.find((p) => p.name === expectedName)
-  if (!created) throw new Error(`project ${expectedName} not found after create`)
+  const orderBody = (await orderRes.json()) as { projects: { id: string }[] }
+  const created = orderBody.projects.find((p) => p.id === expectedID)
+  if (!created) throw new Error(`project ${expectedID} not found after create`)
   await waitForRunning(request, created.id)
   return created.id
 }
@@ -185,7 +232,7 @@ export async function createProjectViaUI(
 // waitForRunning polls a project until its container reports running.
 export async function waitForRunning(request: APIRequestContext, id: string): Promise<void> {
   for (let i = 0; i < 60; i++) {
-    const res = await request.get(`/api/projects/${id}`)
+    const res = await request.get(`/api/projects/${projectURL(id)}`)
     if (res.ok() && ((await res.json()) as { status: string }).status === 'running') return
     await new Promise((r) => setTimeout(r, 500))
   }

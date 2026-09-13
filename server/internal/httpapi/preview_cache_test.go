@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 
 	"pcoder/internal/docker"
 	"pcoder/internal/preview"
+	"pcoder/internal/project"
 	"pcoder/internal/session"
 )
 
@@ -80,7 +82,9 @@ func TestProjectStopEvictsCDPSession(t *testing.T) {
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
 	md.EXPECT().InspectImage(mock.Anything, mock.Anything).Return(nil)
 	md.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
-	rec := authedPost(t, h, cookie, "/api/projects", `{}`)
+	md.EXPECT().Exec(mock.Anything, "cid", mock.Anything, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	rec := authedPost(t, h, cookie, "/api/projects", `{"repoUrl":"https://github.com/x/hello.git"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d body=%s", rec.Code, rec.Body)
 	}
@@ -92,8 +96,8 @@ func TestProjectStopEvictsCDPSession(t *testing.T) {
 	}
 
 	seedCacheSession(t, created.ID)
-	md.EXPECT().Stop(mock.Anything, "pcoder-"+created.ID, mock.Anything).Return(nil)
-	rec = authedPost(t, h, cookie, "/api/projects/"+created.ID+"/stop", ``)
+	md.EXPECT().Stop(mock.Anything, project.ContainerName(created.ID), mock.Anything).Return(nil)
+	rec = authedPost(t, h, cookie, "/api/projects/"+url.PathEscape(created.ID)+"/stop", ``)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("stop = %d body=%s", rec.Code, rec.Body)
 	}

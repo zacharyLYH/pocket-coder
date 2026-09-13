@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { deleteAllProjects, engineUp } from './helpers'
+import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createResponsiveProject, openPreviewFromTerminal, waitForChromiumFit } from './preview.helpers'
 
 // The responsive fixture renders TOTALLY different styles per layout
@@ -24,7 +24,7 @@ test.describe('preview window fit', () => {
 
       // Wide window: desktop styles.
       await waitForChromiumFit(previewPage, request, projectID)
-      const desktopRes = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
+      const desktopRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
       expect(desktopRes.ok()).toBeTruthy()
       expect(((await desktopRes.json()) as { html: string }).html).toContain('data-mode="desktop"')
       await expect(previewPage).toHaveScreenshot('preview-fit-desktop.png', { fullPage: true })
@@ -32,7 +32,7 @@ test.describe('preview window fit', () => {
       // Narrow window: the same Chromium must switch to phone styles.
       await previewPage.setViewportSize({ width: 390, height: 844 })
       await waitForChromiumFit(previewPage, request, projectID)
-      const phoneRes = await request.get(`/api/projects/${projectID}/preview/tools/inspect`)
+      const phoneRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
       expect(phoneRes.ok()).toBeTruthy()
       expect(((await phoneRes.json()) as { html: string }).html).toContain('data-mode="phone"')
       await expect(previewPage).toHaveScreenshot('preview-fit-phone.png', { fullPage: true })

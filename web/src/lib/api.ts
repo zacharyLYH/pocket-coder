@@ -6,6 +6,12 @@ export function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+// projectPath builds an /api/projects/{id} URL with the id escaped —
+// ids are owner/repo, and the slash must not split the route segment.
+export function projectPath(id: string, suffix = ''): string {
+  return `/api/projects/${encodeURIComponent(id)}${suffix}`
+}
+
 // api calls the JSON API and returns the parsed body, or throws an Error
 // carrying the server's message ("body.error") or the HTTP status.
 export async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {

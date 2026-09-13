@@ -73,13 +73,14 @@ run_group() {
   name="$1"; offset="$2"; specs="$3"
   api=$((8080 + offset * 10))
   web=$((5170 + offset * 10))
+  git=$((9070 + offset * 10))
   # bootstrap boots from a seeded state.json (see ALL_GROUPS above)
   seed=""
   [ "$name" = "bootstrap" ] && seed="E2E_SEED=bootstrap.seed.json"
   # Clean up any leftover containers from crashed runs
   docker compose -f ../docker-compose.e2e.yml -p "$(proj_name "$name")" down 2>/dev/null
-  echo "[$name] starting: api:$api web:$web → test-results/$name.log + test-results/$name/progress.md"
-  env E2E_RUN_ID="$name" E2E_API_PORT="$api" E2E_WEB_PORT="$web" $seed \
+  echo "[$name] starting: api:$api web:$web git:$git → test-results/$name.log + test-results/$name/progress.md"
+  env E2E_RUN_ID="$name" E2E_API_PORT="$api" E2E_WEB_PORT="$web" E2E_GIT_PORT="$git" $seed \
     npx playwright test --config=playwright.config.ts --reporter=list --reporter=./e2e/progress-reporter.ts $specs > "test-results/$name.log" 2>&1 &
   GROUP_PIDS="$GROUP_PIDS $name:$!"
   STARTED_GROUPS="$STARTED_GROUPS $name"

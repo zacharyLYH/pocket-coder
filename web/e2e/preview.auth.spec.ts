@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { deleteAllProjects, engineUp } from './helpers'
+import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createReactProject, openPreviewFromTerminal } from './preview.helpers'
 
 // Auth + isolation for the preview endpoints. The "unauthenticated is
@@ -33,16 +33,16 @@ test.describe('preview auth and isolation', () => {
     }
     await deleteAllProjects(request)
     try {
-      const idA = await createReactProject(request)
+      const idA = await createReactProject(request, 1)
       // Second project exists so the backend is exercised with real
       // cross-project state present; its preview is covered by the Go tests.
-      await createReactProject(request)
+      await createReactProject(request, 2)
 
       await page.goto('/')
       const _previewPage2 = await openPreviewFromTerminal(page, idA)
       await _previewPage2.close()
 
-      const resA = await request.get(`/api/projects/${idA}/preview/tools/screenshot`)
+      const resA = await request.get(`/api/projects/${projectURL(idA)}/preview/tools/screenshot`)
       expect(resA.ok()).toBeTruthy()
       expect(resA.headers()['content-type']).toContain('image/png')
     } finally {

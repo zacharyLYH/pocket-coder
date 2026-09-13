@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { deleteAllProjects, engineUp } from './helpers'
+import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp } from './helpers'
 
 // Mobile typing is the whole requirement: tap the terminal on a phone
 // viewport and typed text reaches the session. No copy/paste, no accessory
@@ -8,8 +8,7 @@ import { deleteAllProjects, engineUp } from './helpers'
 
 async function openShellTerminal(page: Page) {
   await page.goto('/')
-  await page.getByRole('button', { name: 'Create project' }).click()
-  await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
+  await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
   await page.getByRole('button', { name: 'Terminal' }).click()
   await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
@@ -54,8 +53,7 @@ test.describe('mobile typing (opencode TUI)', () => {
   test('tap focuses and typed text reaches the opencode prompt', async ({ page }) => {
     test.setTimeout(600_000)
     await page.goto('/')
-    await page.getByRole('button', { name: 'Create project' }).click()
-    await expect(page.getByRole('button', { name: 'Create project' })).toBeEnabled({ timeout: 300_000 })
+    await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
 
     const row = page.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
     await row.getByRole('button', { name: 'Install…' }).click()

@@ -2,12 +2,19 @@ import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 
 import { COMPOSE_PROJECT, DATA_DIR } from './env'
+import { stopDaemon } from './global-setup'
 
-// Runs after every test in the process, even when tests fail: takes down
-// this run's backend stack. The webServer's own EXIT trap is not reliable
-// (Playwright may SIGKILL the shell before `compose down` finishes), which
-// used to leave `pcoder-e2e-<run>-server-1` containers behind on the engine.
+// Runs after every test in the process, even when tests fail: stops this
+// run's git daemon, then takes down this run's backend stack. The
+// webServer's own EXIT trap is not reliable (Playwright may SIGKILL the
+// shell before `compose down` finishes), which used to leave
+// `pcoder-e2e-<run>-server-1` containers behind on the engine.
 export default function globalTeardown(): void {
+  try {
+    stopDaemon()
+  } catch {
+    // Best effort: a failed teardown must not fail the run.
+  }
   try {
     execFileSync(
       'docker',

@@ -88,6 +88,7 @@ func main() {
 	sshKeyStore := sshkeys.New(st)
 	svc := project.NewService(project.Open(st), dkr, ev)
 	svc.SetSSHKeys(sshKeyStore)
+	svc.SetAllowAnyRepo(cfg.AllowAnyRepo)
 
 	sessions := session.New(dkr)
 	svc.SetInstaller(&harnessInstaller{harnesses: harnesses, sessions: sessions})
