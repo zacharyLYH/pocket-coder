@@ -30,19 +30,19 @@ import {
 import { api, errMsg } from '@/lib/api'
 import { useQuickCommands } from '@/hooks/useQuickCommands'
 import { QuickCommandsModal } from '@/components/QuickCommandsModal'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import type { ConnStatus } from '@/components/terminal/TerminalPane'
 
-// The terminal header: back to projects, connection status, the session
-// picker, and the new-session / restart / rename / delete / kill actions.
-export function TerminalHeader({ projectId, current, sessions, status, onBack, onSwitch, onDelete, onNewSession, onRestart, onRename, onKill }: {
+// The terminal header: back to projects, connection status, the current
+// session name, and the restart / rename / delete / kill actions. Session
+// switching lives in the tab strip below (TerminalTabs), not here.
+export function TerminalHeader({ projectId, current, isLastSession, status, onBack, onDelete, onRestart, onRename, onKill }: {
   projectId: string
   current: string
-  sessions: { name: string }[]
+  isLastSession: boolean
   status: ConnStatus
   onBack: () => void
-  onSwitch: (name: string) => void
   onDelete: (name: string) => Promise<void> | void
-  onNewSession: () => void
   onRestart: () => void
   onRename: (newName: string) => Promise<void> | void
   onKill: () => void
@@ -69,7 +69,6 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
 
   // Deleting removes a session for good; the terminal always keeps at
   // least one, so the last remaining session cannot be deleted.
-  const isLastSession = sessions.length <= 1
 
   const statusMeta = {
     connecting: { label: 'Connecting…', dot: 'bg-amber-500' },
@@ -131,38 +130,12 @@ export function TerminalHeader({ projectId, current, sessions, status, onBack, o
         <span className="font-mono text-xs text-muted-foreground">
           {projectId}
         </span>
+        <span className="truncate font-mono text-xs" data-testid="current-session" title={current}>
+          {current}
+        </span>
         <span className="flex-1" />
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" aria-label="Session" className="min-w-[8rem] justify-between">
-              <span className="truncate">{current}</span>
-              <span className="text-muted-foreground">▾</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {sessions.map((s) => (
-              <DropdownMenuItem
-                key={s.name}
-                onSelect={() => {
-                  if (s.name !== current) onSwitch(s.name)
-                }}
-                data-current={s.name === current || undefined}
-                className={s.name === current ? 'bg-accent text-accent-foreground' : ''}
-              >
-                {s.name}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={onNewSession}
-        >
-          + New Session
-        </Button>
+        <ThemeToggle />
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

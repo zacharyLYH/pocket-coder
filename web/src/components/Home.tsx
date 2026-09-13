@@ -6,6 +6,7 @@ import { BusyOverlay } from '@/components/BusyOverlay'
 import { HarnessesCard } from '@/components/HarnessesCard'
 import { ProjectsCard } from '@/components/ProjectsCard'
 import { SshKeysCard } from '@/components/SshKeysCard'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { api } from '@/lib/api'
 import type { SSHKey } from '@/lib/types'
 import { useProjects } from '@/hooks/useProjects'
@@ -45,9 +46,12 @@ export function Home({ email, onLogout, navigate }: {
       <main className="mx-auto w-full max-w-md p-4">
         <header className="flex items-center justify-between py-4">
           <h1 className="text-lg font-semibold">Pocket Coder</h1>
-          <Button variant="ghost" size="sm" onClick={logout}>
-            Log out
-          </Button>
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
+            <Button variant="ghost" size="sm" onClick={logout}>
+              Log out
+            </Button>
+          </div>
         </header>
         <Card>
           <CardHeader>
