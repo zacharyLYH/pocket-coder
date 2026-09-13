@@ -1,6 +1,8 @@
 # RFC: codemaps and a reusable agent loop
 
-Status: proposed. Covers Devin-style codemaps, the settings to power them, and the agent loop future features will reuse.
+Status: implemented as v1. Covers Devin-style codemaps, the settings to power them, and the agent loop future features reuse.
+
+Styling follows the assistant-ui thread shape (user bubbles right, answers left with avatar, docked round composer, suggestion chips as the empty state), copied as classes with no new dependency. Only shadcn primitives plus two local shadcn-shaped components (avatar, skeleton).
 
 ## Summary
 
@@ -55,9 +57,9 @@ Off intent prompts get a redirect, not an error. The system prompt scopes codema
 
 Routes, next to the git routes in server/internal/httpapi/httpapi.go.
 
-- POST /api/projects/{id}/codemap takes prompt and optional history. It checks the global key first and returns 409 ai not configured when empty. On success it appends codemap.request and codemap.response events and returns sections.
-- GET /api/projects/{id}/codemap/history takes limit, default 20. It reads events.log, keeps only codemap.request and codemap.response for that project, joins them into turns, and returns newest last. The frontend never pulls the full global log.
-- GET /api/projects/{id}/file takes path, start, end. It reuses gitRepoDir and validGitPath from gitdiff.go, reads with sed or cat, caps at 100 KB, and returns path, content, total lines, and a binary flag. Binary and over cap files return the flag with empty content instead of text. Read only. No write path exists.
+- POST /api/projects/{id}/codemap takes prompt and optional history. It checks the global key first and returns 409 ai not configured when empty. It mints a turn id, records the repo git sha, and returns 409 codemap busy when a run for that project is already in flight. On success it appends codemap.request and codemap.response events carrying the same turn id and sha, and returns turn id, sha, and sections.
+- GET /api/projects/{id}/codemap/history takes limit, default 20. It reads events.log, keeps only codemap.request and codemap.response for that project, joins them on turn id, and returns newest last. The frontend never pulls the full global log.
+- GET /api/projects/{id}/file takes path, start, end, and optional sha. It reuses gitRepoDir and validGitPath from gitdiff.go, reads with sed or cat, caps at 100 KB, and returns path, content, total lines, current sha, and a binary flag. When sha is passed and differs from current, the overlay shows "tree has moved since generated" above the content. Binary and over cap files return the flag with empty content instead of text. Read only. No write path exists.
 
 Follow up turns send the prior sections back as context. The backend holds no session. Each request carries what the model needs.
 
@@ -78,14 +80,14 @@ New web/src/components/terminal/FileOverlay.tsx.
 - Header shows back chevron, path, and line range. Body shows pre with line numbers and the target lines highlighted. Binary or over cap files show "not shown" with an "open in terminal" hint instead of content.
 - No inputs, no stage buttons. Closing drops no state because it never owned any.
 
-Gating uses a small useAiConfig hook on GET /api/ai/config. When configured is false, the tab shows "Add a key in Home, AI" and the Generate button stays disabled.
+Gating uses the useAiConfig hook on GET /api/ai/config. The Codemap tab does not render at all until configured is true, so key-less backends (including every existing e2e seed) never show it. TerminalView owns the fetch and passes showCodemap into TerminalTabs.
 
 ## History
 
 Conversations are history, and history lives in events.log per the comment at the top of state.go. No new store.
 
-- codemap.request holds project and prompt.
-- codemap.response holds project and sections, which are the final rendered answer with refs only. No intermediate turns and no tool call transcripts persist. Tool traces go to projectlog.Manager for live tailing only. They are ephemeral by design.
+- codemap.request holds project, turn id, sha, and prompt.
+- codemap.response holds project, turn id, sha, and sections, which are the final rendered answer with refs only. No intermediate turns and no tool call transcripts persist. Tool traces go to projectlog.Manager for live tailing only. They are ephemeral by design.
 
 This keeps state.json small and desired state only. A later feature that needs full message replay can move to a per project JSONL file without changing the event names.
 
@@ -100,7 +102,11 @@ Backend, against a fixture project with a real container.
 
 Frontend, with mocked API.
 
-1. No key hides Generate and links to Home AI settings.
+1. No key hides the Codemap tab and links to Home AI settings.
 2. Generate renders sections and snippet buttons.
 3. Tapping a snippet opens the overlay at the right lines. Back returns with scroll and prompt intact.
 4. Overlay has no editable controls.
+
+E2E lives in web/e2e/codemap.spec.ts (visual group): home AI card shot, tab hidden without key, prompt with key mocked, mocked one-turn reply plus overlay and back. The project id is fake and session endpoints are route-mocked, so no engine or model is needed.
+
+Backend tests mock the model at the HTTP level (httptest fake on /chat/completions), never at the function level: server/internal/httpapi/codemap_test.go covers config test-before-save, 409/400/404 paths, the full search-read-answer loop, bad model JSON, busy contention, and file validation/binary/moved flags. server/internal/agent/agent_test.go covers baseURL shapes and weak-endpoint mapping. server/internal/codemap/codemap_test.go pins shell quoting and arg rejection.

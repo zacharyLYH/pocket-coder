@@ -22,6 +22,9 @@ const (
 	EnvLoginEmail = "PCODER_LOGIN_EMAIL" // recipient of login PINs (required)
 	EnvJWTSecret  = "PCODER_JWT_SECRET"  // signing key; auto-generated + persisted when unset
 	EnvDockerSock = "PCODER_DOCKER_SOCK" // docker engine endpoint; default unix:///var/run/docker.sock
+	EnvAIBaseURL  = "PCODER_AI_BASE_URL" // OpenAI-compatible base URL for the codemap agent
+	EnvAPIKey     = "PCODER_AI_API_KEY"  // single global model key; empty disables codemaps
+	EnvAIModel    = "PCODER_AI_MODEL"    // model name sent with chat completions
 
 	// EnvAllowAnyRepo lifts the GitHub-only create requirement for
 	// test stacks that clone from a local git daemon (e2e, live-engine
@@ -40,7 +43,7 @@ const (
 var envKeys = []string{
 	EnvDataDir, EnvBind, EnvLoginEmail, EnvJWTSecret, EnvDockerSock,
 	EnvSMTPHost, EnvSMTPPort, EnvSMTPUser, EnvSMTPPass, EnvSMTPFrom,
-	EnvAllowAnyRepo,
+	EnvAllowAnyRepo, EnvAIBaseURL, EnvAPIKey, EnvAIModel,
 }
 
 // knownKeys backs the unknown-variable check so a typo fails startup
@@ -66,6 +69,9 @@ type Config struct {
 	SMTPPass   string
 	SMTPFrom   string
 	DockerSock string
+	AIBaseURL  string
+	AIAPIKey   string
+	AIModel    string
 	// AllowAnyRepo lifts the GitHub-only create requirement. Test stacks
 	// only (see EnvAllowAnyRepo); production leaves it false.
 	AllowAnyRepo bool
@@ -152,6 +158,9 @@ func load(env []string) (*Config, error) {
 		SMTPPass:   values["SMTP_PASSWORD"],
 		SMTPFrom:   values["SMTP_FROM"],
 		DockerSock: strEnv(values, "PCODER_DOCKER_SOCK", "unix:///var/run/docker.sock"),
+		AIBaseURL:  values["PCODER_AI_BASE_URL"],
+		AIAPIKey:   values["PCODER_AI_API_KEY"],
+		AIModel:    values["PCODER_AI_MODEL"],
 		AllowAnyRepo: values["PCODER_ALLOW_ANY_REPO"] == "1" ||
 			values["PCODER_ALLOW_ANY_REPO"] == "true",
 	}

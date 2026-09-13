@@ -6,10 +6,12 @@ import type { Harness } from '@/lib/types'
 import { TerminalHeader } from '@/components/terminal/TerminalHeader'
 import { TerminalTabs, type FixedView } from '@/components/terminal/TerminalTabs'
 import { TerminalPane, type ConnStatus } from '@/components/terminal/TerminalPane'
+import { useAiConfig } from '@/hooks/useAiConfig'
 import { NewSessionDialog } from '@/components/terminal/NewSessionDialog'
 import { PreviewTab } from '@/components/terminal/PreviewTab'
 import { LogsTab } from '@/components/terminal/LogsTab'
 import { DiffTab } from '@/components/terminal/DiffTab'
+import { CodemapTab } from '@/components/terminal/CodemapTab'
 
 // The terminal screen: header (status, session picker, actions) above the
 // live terminal pane. Owns which session is attached and the shared status/
@@ -29,6 +31,10 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   const [newDialogOpen, setNewDialogOpen] = useState(false)
   const [tab, setTab] = useState<'terminal' | FixedView>('terminal')
   const hostRef = useRef<HTMLDivElement>(null)
+  // The Codemap tab only exists once a model key is configured. Hidden
+  // until the config loads so key-less backends never show it.
+  const { status: aiStatus, refresh: refreshAi } = useAiConfig()
+  useEffect(() => { void refreshAi() }, [refreshAi])
 
   // ─── data fetching ──────────────────────────────────────────────────
   const refreshSessions = useCallback(() => {
@@ -156,6 +162,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
         sessions={sessions}
         current={current}
         view={tab}
+        showCodemap={aiStatus?.configured ?? false}
         onSelectSession={(name) => { setTab('terminal'); switchSession(name) }}
         onDeleteSession={(name) => void del(name)}
         onNewTab={() => setNewDialogOpen(true)}
@@ -171,6 +178,10 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
       {tab === 'preview' ? (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">
           <PreviewTab projectId={projectId} onOpenPreview={onOpenPreview} />
+        </div>
+      ) : tab === 'codemap' ? (
+        <div className="min-h-0 flex-1 w-full px-3 pb-3">
+          <CodemapTab projectId={projectId} />
         </div>
       ) : tab === 'diff' ? (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">

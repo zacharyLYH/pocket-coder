@@ -48,6 +48,7 @@ func main() {
 	st, err := state.Open(cfg.DataDir, state.Bootstrap{
 		LoginEmail: cfg.LoginEmail,
 		SMTP:       smtpFromConfig(cfg),
+		AI:         aiFromConfig(cfg),
 	})
 	if err != nil {
 		slog.Error("open state", "err", err)
@@ -112,11 +113,21 @@ func main() {
 	}
 	logger.Info("data dir ready", "data_dir", cfg.DataDir, "seeded_harnesses", seeded)
 
+	plm := projectlog.NewManager(0)
+	ev.SetOnAppend(func(typ string, data map[string]any) {
+		if data == nil {
+			return
+		}
+		if projID, ok := data["project"].(string); ok && projID != "" {
+			plm.Append(projID, typ, typ, data)
+		}
+	})
+
 	srv := &http.Server{Addr: cfg.Bind, Handler: httpapi.New(httpapi.Deps{
 		Events: ev, Version: version, Auth: authSvc, Projects: svc,
 		Sessions: sessions, Harnesses: harnesses,
 		SSHKeys: sshKeyStore, State: st, Preview: previewManager,
-		ProjectLogs: projectlog.NewManager(0),
+		ProjectLogs: plm,
 	})}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -170,6 +181,15 @@ func smtpFromConfig(cfg *config.Config) *state.SMTP {
 		return nil
 	}
 	return &state.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, User: cfg.SMTPUser, Password: cfg.SMTPPass, From: cfg.SMTPFrom}
+}
+
+// aiFromConfig seeds the single global model credential from env. Any part
+// missing means no seed: the settings form fills it later.
+func aiFromConfig(cfg *config.Config) *state.AIConfig {
+	if cfg.AIBaseURL == "" || cfg.AIAPIKey == "" || cfg.AIModel == "" {
+		return nil
+	}
+	return &state.AIConfig{BaseURL: cfg.AIBaseURL, APIKey: cfg.AIAPIKey, Model: cfg.AIModel}
 }
 
 // newAuthService builds the auth service from state (email + SMTP creds,

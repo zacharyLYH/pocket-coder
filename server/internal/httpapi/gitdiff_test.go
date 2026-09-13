@@ -64,7 +64,10 @@ func TestGitStatusEndpointKeepsLeadingSpace(t *testing.T) {
 	if len(body.Files) != 2 {
 		t.Fatalf("files = %+v, want 2", body.Files)
 	}
-	byPath := map[string]struct{ staged, unstaged string; unstagedAdd int }{}
+	byPath := map[string]struct {
+		staged, unstaged string
+		unstagedAdd      int
+	}{}
 	for _, f := range body.Files {
 		byPath[f.Path] = struct {
 			staged      string

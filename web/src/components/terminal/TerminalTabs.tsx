@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 
-export type FixedView = 'diff' | 'preview' | 'logs'
+export type FixedView = 'diff' | 'preview' | 'logs' | 'codemap'
 
 // TerminalTabs is the single browser-like tab strip: one tab per session,
 // a "+ New Tab" opener, then the pinned Diff/Preview/Logs views. Session
@@ -14,16 +14,18 @@ export type FixedView = 'diff' | 'preview' | 'logs'
 // removed), so the tab disappears permanently — like closing a browser tab.
 // On the last remaining session the ✕ is hidden: the UI cannot represent
 // zero sessions.
-export function TerminalTabs({ sessions, current, view, onSelectSession, onDeleteSession, onNewTab, onSelectView }: {
+export function TerminalTabs({ sessions, current, view, showCodemap, onSelectSession, onDeleteSession, onNewTab, onSelectView }: {
   sessions: { name: string }[]
   current: string
   view: 'terminal' | FixedView
+  showCodemap: boolean
   onSelectSession: (name: string) => void
   onDeleteSession: (name: string) => void
   onNewTab: () => void
   onSelectView: (view: FixedView) => void
 }) {
   const fixed: { id: FixedView; label: string; testid: string }[] = [
+    ...(showCodemap ? [{ id: 'codemap' as FixedView, label: 'Codemap', testid: 'tab-codemap' }] : []),
     { id: 'diff', label: 'Diff', testid: 'tab-diff' },
     { id: 'preview', label: 'Preview', testid: 'tab-preview' },
     { id: 'logs', label: 'Logs', testid: 'tab-logs' },

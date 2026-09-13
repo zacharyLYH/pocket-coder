@@ -24,6 +24,7 @@ import (
 type Document struct {
 	User      User               `json:"user"`
 	SMTP      *SMTP              `json:"smtp,omitempty"`
+	AI        *AIConfig          `json:"ai,omitempty"`
 	Projects  map[string]Project `json:"projects,omitempty"`  // keyed by project id
 	Harnesses map[string]Harness `json:"harnesses,omitempty"` // keyed by harness slug id
 	SSHKeys   []SSHKey           `json:"sshKeys,omitempty"`
@@ -78,6 +79,15 @@ type Harness struct {
 	Config     json.RawMessage `json:"config,omitempty"`
 }
 
+// AIConfig is the single global OpenAI-compatible credential used by the
+// codemap agent loop. One key only: when it is absent the codemap feature
+// is disabled in both the frontend and the backend.
+type AIConfig struct {
+	BaseURL string `json:"baseURL"`
+	APIKey  string `json:"apiKey"`
+	Model   string `json:"model"`
+}
+
 // SSHKey is a registered public key, injected into projects for
 // git SSH clones. Fingerprint is derived from PublicKey content.
 type SSHKey struct {
@@ -92,6 +102,7 @@ type SSHKey struct {
 type Bootstrap struct {
 	LoginEmail string
 	SMTP       *SMTP
+	AI         *AIConfig
 }
 
 // Store is the in-memory handle over state.json. All reads go through
@@ -206,5 +217,8 @@ func (s *Store) seed(b Bootstrap) {
 	}
 	if b.SMTP != nil && s.doc.SMTP == nil {
 		s.doc.SMTP = b.SMTP
+	}
+	if b.AI != nil && s.doc.AI == nil {
+		s.doc.AI = b.AI
 	}
 }

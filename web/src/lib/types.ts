@@ -25,6 +25,13 @@ export type GitDiffResponse = {
   binary: boolean
 }
 
+export type AIConfigStatus = { baseURL: string; model: string; configured: boolean }
+export type CodemapRef = { path: string; startLine: number; endLine: number; snippet: string }
+export type CodemapSection = { title: string; summary: string; refs: CodemapRef[] }
+export type CodemapToolCall = { tool: string; args: string }
+export type CodemapTurn = { turnId: string; sha: string; prompt: string; sections: CodemapSection[] | null; tools?: CodemapToolCall[] | null; time?: string }
+export type CodemapFile = { path: string; content: string; binary: boolean; moved: boolean; sha: string }
+
 // isLaunchable reports whether a harness offers its own session type in
 // "+ New Tab". The bash shell is a plain terminal, not a launch target.
 export const isLaunchable = (h: Harness) => h.command !== 'bash'

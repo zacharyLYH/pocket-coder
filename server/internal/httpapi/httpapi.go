@@ -100,6 +100,15 @@ func New(d Deps) http.Handler {
 		authed("POST", "/api/projects/{id}/git/stage", func(d Deps) http.HandlerFunc { return handleGitStage(d, false) })
 		authed("POST", "/api/projects/{id}/git/unstage", func(d Deps) http.HandlerFunc { return handleGitStage(d, true) })
 		authed("POST", "/api/projects/{id}/git/stage-hunk", handleGitStageHunk)
+		authed("POST", "/api/projects/{id}/codemap", handleCodemap)
+		authed("GET", "/api/projects/{id}/codemap/history", handleCodemapHistory)
+		authed("GET", "/api/projects/{id}/file", handleCodemapFile)
+	}
+
+	if d.State != nil {
+		authed("GET", "/api/ai/config", handleGetAIConfig)
+		authed("POST", "/api/ai/test", handleTestAI)
+		authed("POST", "/api/ai/config", handleSaveAIConfig)
 	}
 
 	if d.Preview != nil {

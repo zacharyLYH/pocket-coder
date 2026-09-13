@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { BusyOverlay } from '@/components/BusyOverlay'
+import { AICard } from '@/components/AICard'
 import { HarnessesCard } from '@/components/HarnessesCard'
 import { ProjectsCard } from '@/components/ProjectsCard'
 import { SshKeysCard } from '@/components/SshKeysCard'
@@ -69,6 +70,7 @@ export function Home({ email, onLogout, navigate }: {
           />
         </div>
         <HarnessesCard projects={projects} onInstalled={refresh} onBusyChange={setHarnessBusy} />
+        <AICard />
         <SshKeysCard keys={sshKeys} onChanged={loadSshKeys} />
       </main>
       {harnessBusy && <BusyOverlay />}
