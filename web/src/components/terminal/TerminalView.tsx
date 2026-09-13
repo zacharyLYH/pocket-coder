@@ -167,8 +167,8 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           <LogsTab projectId={projectId} />
         </div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl">
-          <div ref={hostRef} className="h-full w-full" />
+        <div className="min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl touch-manipulation">
+          <div ref={hostRef} className="h-full w-full touch-manipulation" />
           <TerminalPane
             projectId={projectId}
             session={current}
