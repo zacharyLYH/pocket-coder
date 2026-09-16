@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"pcoder/internal/auth"
+	"pcoder/internal/codemapthreads"
 	"pcoder/internal/config"
 	"pcoder/internal/docker"
 	"pcoder/internal/events"
@@ -91,6 +92,11 @@ func main() {
 	svc.SetSSHKeys(sshKeyStore)
 	svc.SetAllowAnyRepo(cfg.AllowAnyRepo)
 
+	// Codemap chats are project-scoped artifacts: deleting a project
+	// deletes its chats (threads + lineage) from the data dir.
+	codemapStore := codemapthreads.New(filepath.Join(cfg.DataDir, "codemaps"))
+	svc.SetCodemaps(codemapStore)
+
 	sessions := session.New(dkr)
 	svc.SetInstaller(&harnessInstaller{harnesses: harnesses, sessions: sessions})
 	previewManager := preview.NewManager(&preview.DockerFactory{Docker: dkr})
@@ -127,7 +133,7 @@ func main() {
 		Events: ev, Version: version, Auth: authSvc, Projects: svc,
 		Sessions: sessions, Harnesses: harnesses,
 		SSHKeys: sshKeyStore, State: st, Preview: previewManager,
-		ProjectLogs: plm,
+		ProjectLogs: plm, Codemaps: codemapStore,
 	})}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

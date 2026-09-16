@@ -91,6 +91,27 @@ func mockEnsure(md *dockermocks.MockClient) {
 		Return(docker.ExecResult{ExitCode: 1}, nil)
 }
 
+// mockOrientation stubs the repo-root listing Ask runs for prompt
+// orientation (stack-appropriate first searches). Every codemap POST
+// needs it alongside mockRepoDir.
+func mockOrientation(md *dockermocks.MockClient, out string) {
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
+		mock.MatchedBy(func(argv []string) bool {
+			return len(argv) == 3 && strings.Contains(argv[2], "ls -1")
+		}), false).
+		Return(docker.ExecResult{ExitCode: 0, Output: out}, nil)
+}
+
+// mockHydrate stubs the exact-line reads hydrateRef runs for every
+// returned ref (sed -n). Any fake whose final JSON carries refs needs it.
+func mockHydrate(md *dockermocks.MockClient, out string) {
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
+		mock.MatchedBy(func(argv []string) bool {
+			return len(argv) == 3 && strings.Contains(argv[2], "sed -n")
+		}), false).
+		Return(docker.ExecResult{ExitCode: 0, Output: out}, nil)
+}
+
 // mockRepoDir wires Inspect + RepoTarget fallback (/workspace) + HEAD sha
 // for project "abc", shared by every codemap handler test.
 func mockRepoDir(md *dockermocks.MockClient, sha string) {

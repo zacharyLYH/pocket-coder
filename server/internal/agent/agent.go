@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -144,168 +143,12 @@ func isSchemaError(err error) bool {
 	return strings.Contains(s, "response_format") || strings.Contains(s, "json_schema")
 }
 
-// TraceEvent is one debuggable moment of a run: a tool starting with
-// its full args, a tool finishing with a result preview, or a model
-// failure. Callers plog these so runs are inspectable after the fact.
-type TraceEvent struct {
-	Kind   string // "tool_start" | "tool_done" | "model_error"
-	Tool   string
-	Args   string
-	Result string
-	Err    string
-}
-
 // Run executes the turn cycle: send messages, run tool calls, append
 // results, repeat until the model answers without tools or maxSteps hits.
 // onTrace receives every tool start/done plus model failures; it may be
-// nil when the caller does not care.
-func Run(ctx context.Context, cfg Config, sysPrompt, userPrompt string, history []map[string]any, tools []Tool, schemaName string, schema map[string]any, maxSteps int, onTrace func(TraceEvent)) (string, error) {
-	if !cfg.Valid() {
-		return "", fmt.Errorf("ai not configured")
-	}
-	if maxSteps <= 0 {
-		maxSteps = 8
-	}
-	client := NewClient(cfg)
-	msgs := []openai.ChatCompletionMessageParamUnion{{
-		OfDeveloper: &openai.ChatCompletionDeveloperMessageParam{
-			Content: openai.ChatCompletionDeveloperMessageParamContentUnion{OfString: openai.String(sysPrompt)},
-		},
-	}}
-	for _, h := range history {
-		role, _ := h["role"].(string)
-		content, _ := h["content"].(string)
-		if content == "" {
-			continue
-		}
-		if role == "assistant" {
-			msgs = append(msgs, openai.ChatCompletionMessageParamUnion{
-				OfAssistant: &openai.ChatCompletionAssistantMessageParam{
-					Content: openai.ChatCompletionAssistantMessageParamContentUnion{OfString: openai.String(content)},
-				},
-			})
-		} else {
-			msgs = append(msgs, openai.ChatCompletionMessageParamUnion{
-				OfUser: &openai.ChatCompletionUserMessageParam{
-					Content: openai.ChatCompletionUserMessageParamContentUnion{OfString: openai.String(content)},
-				},
-			})
-		}
-	}
-	msgs = append(msgs, openai.ChatCompletionMessageParamUnion{
-		OfUser: &openai.ChatCompletionUserMessageParam{
-			Content: openai.ChatCompletionUserMessageParamContentUnion{OfString: openai.String(userPrompt)},
-		},
-	})
-
-	byName := map[string]Tool{}
-	for _, t := range tools {
-		byName[t.Name] = t
-	}
-	var params openai.ChatCompletionNewParams
-	params.Model = cfg.Model
-	params.Tools = sdkTools(tools)
-	if schema != nil {
-		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
-			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{
-				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
-					Name:   schemaName,
-					Strict: openai.Bool(false),
-					Schema: schema,
-				},
-			},
-		}
-	}
-
-	for step := 0; step < maxSteps; step++ {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		params.Messages = msgs
-		
-		reqRaw, _ := json.Marshal(params)
-		slog.Info("LLM Request", "payload", string(reqRaw))
-
-		stepCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		res, err := client.Chat.Completions.New(stepCtx, params)
-		cancel()
-		if err != nil {
-			if onTrace != nil {
-				onTrace(TraceEvent{Kind: "model_error", Err: err.Error()})
-			}
-			return "", err
-		}
-		
-		resRaw, _ := json.Marshal(res)
-		slog.Info("LLM Response", "payload", string(resRaw))
-
-		if len(res.Choices) == 0 {
-			return "", fmt.Errorf("model returned no choices")
-		}
-		msg := res.Choices[0].Message
-		if len(msg.ToolCalls) == 0 {
-			out := strings.TrimSpace(msg.Content)
-			if out == "" {
-				return "", fmt.Errorf("model returned an empty answer")
-			}
-			return out, nil
-		}
-		// Echo the assistant turn with its tool calls so the next
-		// request keeps the call ids the tool replies reference.
-		echo := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(msg.ToolCalls))
-		for _, tc := range msg.ToolCalls {
-			if tc.Type != "function" {
-				continue
-			}
-			echo = append(echo, openai.ChatCompletionMessageToolCallUnionParam{
-				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
-					ID: tc.ID,
-					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
-						Name:      tc.Function.Name,
-						Arguments: tc.Function.Arguments,
-					},
-				},
-			})
-		}
-		assistantText := msg.Content
-		if assistantText == "" {
-			assistantText = "(calling tools)"
-		}
-		msgs = append(msgs, openai.ChatCompletionMessageParamUnion{
-			OfAssistant: &openai.ChatCompletionAssistantMessageParam{
-				Content:   openai.ChatCompletionAssistantMessageParamContentUnion{OfString: openai.String(assistantText)},
-				ToolCalls: echo,
-			},
-		})
-		for _, tc := range msg.ToolCalls {
-			if tc.Type != "function" {
-				continue
-			}
-			tool, ok := byName[tc.Function.Name]
-			if !ok {
-				msgs = append(msgs, toolReply(tc.ID, "unknown tool "+tc.Function.Name))
-				continue
-			}
-			if onTrace != nil {
-				onTrace(TraceEvent{Kind: "tool_start", Tool: tool.Name, Args: tc.Function.Arguments})
-			}
-			out, rerr := tool.Run(ctx, tc.Function.Arguments)
-			if rerr != nil {
-				out = "error: " + rerr.Error()
-			}
-			if onTrace != nil {
-				ev := TraceEvent{Kind: "tool_done", Tool: tool.Name, Args: tc.Function.Arguments, Result: out}
-				if rerr != nil {
-					ev.Err = rerr.Error()
-				}
-				onTrace(ev)
-			}
-			msgs = append(msgs, toolReply(tc.ID, out))
-		}
-	}
-	return "", fmt.Errorf("model kept calling tools after %d steps", maxSteps)
-}
-
+// nil when the caller does not care. lin records the full debug lineage
+// (nil disables). The json_schema is enforced exactly once, post-loop,
+// in a tools-free format call — never inside the tool loop.
 func toolReply(id, content string) openai.ChatCompletionMessageParamUnion {
 	if content == "" {
 		content = "(empty)"
@@ -316,4 +159,39 @@ func toolReply(id, content string) openai.ChatCompletionMessageParamUnion {
 			ToolCallID: id,
 		},
 	}
+}
+
+// replayStep mirrors codemap.ToolStep without importing it (agent stays
+// dependency-free of callers).
+type replayStep struct {
+	Tool   string
+	Args   string
+	Output string
+	Err    string
+}
+
+// parseToolSteps decodes the internal toolSteps array on rebuilt assistant
+// history entries. Old shapes ({tool,args} without output) parse with
+// empty results; callers decide whether to replay them.
+func parseToolSteps(v any) []replayStep {
+	raw, err := json.Marshal(v)
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	var arr []map[string]any
+	if err := json.Unmarshal(raw, &arr); err != nil || len(arr) == 0 {
+		return nil
+	}
+	out := make([]replayStep, 0, len(arr))
+	for _, m := range arr {
+		tool, _ := m["tool"].(string)
+		if strings.TrimSpace(tool) == "" {
+			continue
+		}
+		args, _ := m["args"].(string)
+		output, _ := m["output"].(string)
+		errStr, _ := m["error"].(string)
+		out = append(out, replayStep{Tool: tool, Args: args, Output: output, Err: errStr})
+	}
+	return out
 }

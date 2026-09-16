@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"pcoder/internal/auth"
+	"pcoder/internal/codemapthreads"
 	"pcoder/internal/events"
 	"pcoder/internal/harness"
 	"pcoder/internal/preview"
@@ -35,7 +36,16 @@ var pinRe = regexp.MustCompile(`\d{6}`)
 
 func newTestDeps(t *testing.T) (Deps, *bytes.Buffer) {
 	t.Helper()
-	ev, err := events.Open(filepath.Join(t.TempDir(), "events.log"))
+	d, pinOut, _ := newTestDepsInDir(t) //nolint:dogsled
+	return d, pinOut
+}
+
+// newTestDepsInDir is newTestDeps, also returning the data dir so tests
+// can assert on the files the codemap store writes under it.
+func newTestDepsInDir(t *testing.T) (Deps, *bytes.Buffer, string) {
+	t.Helper()
+	dataDir := t.TempDir()
+	ev, err := events.Open(filepath.Join(dataDir, "events.log"))
 	if err != nil {
 		t.Fatalf("open event log: %v", err)
 	}
@@ -43,7 +53,8 @@ func newTestDeps(t *testing.T) (Deps, *bytes.Buffer) {
 	var pinOut bytes.Buffer
 	svc := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut})
 	svc.MailerName = "console"
-	return Deps{Events: ev, Version: "dev", Auth: svc, ProjectLogs: projectlog.NewManager(0)}, &pinOut
+	return Deps{Events: ev, Version: "dev", Auth: svc, ProjectLogs: projectlog.NewManager(0),
+		Codemaps: codemapthreads.New(filepath.Join(dataDir, "codemaps"))}, &pinOut, dataDir
 }
 
 func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
@@ -110,13 +121,16 @@ func lastEvent(t *testing.T, d Deps) events.Event {
 // Returns the shared state store so tests can seed it directly.
 func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer, *state.Store) {
 	t.Helper()
-	d, pinOut := newTestDeps(t)
+	d, pinOut, _ := newTestDepsInDir(t)
 	md := dockermocks.NewMockClient(t)
 	st, err := state.Open(t.TempDir(), state.Bootstrap{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	d.Projects = project.NewService(project.Open(st), md, d.Events)
+	// Same store instance the handlers use, mirroring main.go's wiring:
+	// project deletion must cascade into the codemap files.
+	d.Projects.SetCodemaps(d.Codemaps)
 	d.State = st
 	return d, md, pinOut, st
 }

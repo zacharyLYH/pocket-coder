@@ -12,8 +12,22 @@ export function projectPath(id: string, suffix = ''): string {
   return `/api/projects/${encodeURIComponent(id)}${suffix}`
 }
 
-// api calls the JSON API and returns the parsed body, or throws an Error
-// carrying the server's message ("body.error") or the HTTP status.
+// ApiError carries the HTTP status and parsed body of a failed call, so
+// callers can recover server-provided identity (e.g. a codemap threadId
+// on a failed turn) instead of only seeing the message.
+export class ApiError extends Error {
+  status: number
+  body: any
+  constructor(status: number, body: any, message: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.body = body
+  }
+}
+
+// api calls the JSON API and returns the parsed body, or throws an
+// ApiError carrying the server's message ("body.error") or the status.
 export async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
@@ -21,13 +35,14 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
   })
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
+    let body: any = null
     try {
-      const body = await res.json()
+      body = await res.json()
       if (body?.error) detail = body.error
     } catch {
       // non-JSON error body — keep the status
     }
-    throw new Error(detail)
+    throw new ApiError(res.status, body, detail)
   }
   return res.json() as Promise<T>
 }

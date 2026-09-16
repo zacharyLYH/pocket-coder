@@ -55,7 +55,9 @@ async function mockConfigured(page: Page) {
 }
 
 test.describe('codemap desktop', () => {
-  test.use({ viewport: { width: 1280, height: 720 } })
+  // UTC pins the locale timestamps in the thread list/turns so baselines
+  // are identical on every runner timezone.
+  test.use({ viewport: { width: 1280, height: 720 }, timezoneId: 'UTC' })
 
   test('AI card renders on home', async ({ page }) => {
     await page.goto('/')
@@ -88,18 +90,31 @@ test.describe('codemap desktop', () => {
   test('mocked one-turn reply and file overlay', async ({ page }) => {
     await mockSessions(page)
     await mockConfigured(page)
+    await page.route('**/api/projects/*/codemap/threads', async (route) => {
+      if (route.request().method() === 'POST') {
+        await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ thread: { id: 'c1', title: 'New chat', turns: [] } }) })
+      } else {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threads: [] }) })
+      }
+    })
     await page.route('**/api/projects/*/codemap', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(TURN) })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...TURN, threadId: 'c1', threadTitle: 'Where does login happen?' }) })
     })
     await page.route('**/api/projects/*/file*', async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(FILE_BODY) })
     })
     await page.goto(terminalUrl(FAKE_ID, 'main'))
     await page.getByTestId('tab-codemap').click()
+    // Past chats live in the history drawer, discoverable from the pane.
+    await expect(page.getByTestId('codemap-history-toggle')).toBeVisible()
+    await page.getByTestId('codemap-history-toggle').click()
+    await expect(page.getByTestId('codemap-thread-list')).toBeVisible()
+    await page.getByTestId('codemap-history-toggle').click()
     await page.getByTestId('codemap-prompt').fill('Where does login happen?')
     await page.getByTestId('codemap-generate').click()
     await expect(page.getByTestId('codemap-turn')).toBeVisible()
     await expect(page.getByText('PIN login lives in the auth package')).toBeVisible()
+    await expect(page.getByTestId('codemap-new-chat')).toBeVisible()
     await expect(page).toHaveScreenshot('codemap-turn.png')
     await page.getByTestId('codemap-ref').click()
     await expect(page.getByTestId('file-overlay')).toBeVisible()
@@ -108,6 +123,128 @@ test.describe('codemap desktop', () => {
     await page.getByTestId('file-back').click()
     await expect(page.getByTestId('file-overlay')).toHaveCount(0)
     await expect(page.getByTestId('codemap-turn')).toBeVisible()
+  })
+
+  // Two previous chats on the server: the drawer lists them newest-first
+  // and reopening one renders its stored turns. Times are fixed UTC
+  // strings; the describe-level timezoneId keeps them stable per runner.
+  const THREADS = [
+    { id: 'c1', title: 'Where does login happen?', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T12:00:00Z', turnCount: 1, preview: 'Where does login happen?' },
+    { id: 'c2', title: 'Map this repo', createdAt: '2026-08-31T12:00:00Z', updatedAt: '2026-08-31T14:00:00Z', turnCount: 2, preview: 'How does data flow?' },
+  ]
+
+  const THREAD_BODIES: Record<string, unknown> = {
+    c1: {
+      thread: {
+        id: 'c1', project: FAKE_ID, title: 'Where does login happen?',
+        createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T12:00:00Z',
+        turns: [
+          {
+            turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
+            sections: TURN.sections, tools: [{ tool: 'search_code', args: '{"pattern":"login"}' }],
+            time: '2026-09-02T12:00:00Z',
+          },
+        ],
+      },
+    },
+    c2: {
+      thread: {
+        id: 'c2', project: FAKE_ID, title: 'Map this repo',
+        createdAt: '2026-08-31T12:00:00Z', updatedAt: '2026-08-31T14:00:00Z',
+        turns: [
+          {
+            turnId: 't0a', sha: 'abc123', prompt: 'Map this repo',
+            sections: [
+              { title: 'Entrypoints', summary: 'main.go boots the server and mounts the API.', refs: [] },
+              { title: 'Data flow', summary: 'Handlers call services, services hit docker.', refs: [] },
+            ],
+            tools: [{ tool: 'search_code', args: '{"pattern":"func main"}' }],
+            time: '2026-08-31T13:00:00Z',
+          },
+          {
+            turnId: 't0b', sha: 'abc123', prompt: 'How does data flow?',
+            sections: [{ title: 'Data flow', summary: 'Requests flow through the mux into services.', refs: [] }],
+            tools: [],
+            time: '2026-08-31T14:00:00Z',
+          },
+        ],
+      },
+    },
+  }
+
+  async function mockThreads(page: Page, deleted = new Set<string>()) {
+    // Regex: one handler for list, create, detail, and delete — a
+    // trailing glob `threads*` would not cross the `/` before a thread id.
+    await page.route(/\/api\/projects\/.*\/codemap\/threads(\/.*)?$/, async (route) => {
+      const url = route.request().url()
+      const method = route.request().method()
+      const detail = url.match(/\/codemap\/threads\/([^/?]+)/)?.[1]
+      if (method === 'POST') {
+        await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ thread: { id: 'c3', title: 'New chat', turns: [] } }) })
+      } else if (method === 'DELETE' && detail) {
+        deleted.add(detail)
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ deleted: true }) })
+      } else if (detail && THREAD_BODIES[detail] && !deleted.has(detail)) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(THREAD_BODIES[detail]) })
+      } else if (detail) {
+        await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'unknown thread' }) })
+      } else {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threads: THREADS.filter((t) => !deleted.has(t.id)) }) })
+      }
+    })
+  }
+
+  test('previous chats list renders', async ({ page }) => {
+    await mockSessions(page)
+    await mockConfigured(page)
+    await mockThreads(page)
+    await page.goto(terminalUrl(FAKE_ID, 'main'))
+    await page.getByTestId('tab-codemap').click()
+    // Mount auto-opens the newest chat; the drawer lists every chat.
+    await expect(page.getByTestId('codemap-turn')).toBeVisible()
+    await page.getByTestId('codemap-history-toggle').click()
+    await expect(page.getByTestId('codemap-thread-list')).toBeVisible()
+    await expect(page.getByTestId('codemap-thread-item')).toHaveCount(2)
+    await expect(page.getByTestId('codemap-thread-list')).toContainText('Where does login happen?')
+    await expect(page.getByTestId('codemap-thread-list')).toContainText('Map this repo')
+    await expect(page).toHaveScreenshot('codemap-threads.png')
+  })
+
+  test('reopened previous chat renders its turns', async ({ page }) => {
+    await mockSessions(page)
+    await mockConfigured(page)
+    await mockThreads(page)
+    await page.goto(terminalUrl(FAKE_ID, 'main'))
+    await page.getByTestId('tab-codemap').click()
+    await expect(page.getByTestId('codemap-turn')).toBeVisible()
+    await page.getByTestId('codemap-history-toggle').click()
+    await expect(page.getByTestId('codemap-thread-item')).toHaveCount(2)
+    await page.getByRole('menuitem', { name: /Map this repo/ }).click()
+    await expect(page.getByText('Requests flow through the mux into services.')).toBeVisible()
+    await expect(page.getByTestId('codemap-turn')).toHaveCount(2)
+    await expect(page.getByTestId('codemap-steps-toggle')).toBeVisible()
+    await page.getByTestId('codemap-steps-toggle').click()
+    await expect(page.getByTestId('codemap-steps')).toContainText('search_code')
+    await expect(page).toHaveScreenshot('codemap-thread-open.png')
+  })
+
+  test('delete chat removes it from the menu', async ({ page }) => {
+    await mockSessions(page)
+    await mockConfigured(page)
+    await mockThreads(page)
+    await page.goto(terminalUrl(FAKE_ID, 'main'))
+    await page.getByTestId('tab-codemap').click()
+    // Newest chat auto-opens; delete it from the menu.
+    await expect(page.getByTestId('codemap-turn')).toBeVisible()
+    await page.getByTestId('codemap-history-toggle').click()
+    await expect(page.getByTestId('codemap-thread-item')).toHaveCount(2)
+    await page.locator('[data-thread-id="c1"]').hover()
+    await page.locator('[data-thread-id="c1"] [data-testid="codemap-thread-delete"]').click()
+    // Deleting the active chat lands back on the empty state.
+    await expect(page.getByText('Ask about this codebase')).toBeVisible()
+    await page.getByTestId('codemap-history-toggle').click()
+    await expect(page.getByTestId('codemap-thread-item')).toHaveCount(1)
+    await expect(page.getByTestId('codemap-thread-list')).toContainText('Map this repo')
   })
 })
 

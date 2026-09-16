@@ -57,11 +57,11 @@ Off intent prompts get a redirect, not an error. The system prompt scopes codema
 
 Routes, next to the git routes in server/internal/httpapi/httpapi.go.
 
-- POST /api/projects/{id}/codemap takes prompt and optional history. It checks the global key first and returns 409 ai not configured when empty. It mints a turn id, records the repo git sha, and returns 409 codemap busy when a run for that project is already in flight. On success it appends codemap.request and codemap.response events carrying the same turn id and sha, and returns turn id, sha, and sections.
-- GET /api/projects/{id}/codemap/history takes limit, default 20. It reads events.log, keeps only codemap.request and codemap.response for that project, joins them on turn id, and returns newest last. The frontend never pulls the full global log.
+- POST /api/projects/{id}/codemap takes prompt, thread id (auto-created when empty), and optional history. It checks the global key first and returns 409 ai not configured when empty. It mints a turn id, records the repo git sha, and returns 409 codemap busy when a run for that project is already in flight. On success it appends the turn to the thread file and returns turn id, sha, sections, and thread id.
+- Thread CRUD under /api/projects/{id}/codemap/threads: list chats newest-first, create, get one with all turns, rename, delete.
 - GET /api/projects/{id}/file takes path, start, end, and optional sha. It reuses gitRepoDir and validGitPath from gitdiff.go, reads with sed or cat, caps at 100 KB, and returns path, content, total lines, current sha, and a binary flag. When sha is passed and differs from current, the overlay shows "tree has moved since generated" above the content. Binary and over cap files return the flag with empty content instead of text. Read only. No write path exists.
 
-Follow up turns send the prior sections back as context. The backend holds no session. Each request carries what the model needs.
+Each request carries the last few turns as context; the backend holds no session beyond the thread files.
 
 No token streaming in v1. POST stays synchronous with a spinner. The loop writes progress lines with plog (codemap.search, codemap.read) and the tab tails GET logs while the request runs. This reuses the LogsTab pattern and answers "is it stuck" without SSE. Add SSE only when a writer agent needs it.
 
@@ -72,7 +72,7 @@ New web/src/components/terminal/CodemapTab.tsx, added as a fourth tab in Termina
 - Prompt box plus Generate button at the top, with "Explain the current diff" and "Map this repo" chips that prefill it. Generate stays disabled while a run is in flight.
 - Sections render as accordions with Card, Badge, and Button from the existing set.
 - Each ref is a button showing path:Lstart-Lend with a 3 line snippet preview.
-- History is a thread, oldest at top. It loads once from GET codemap/history when the tab opens, then appends new turns locally. Old turns render collapsed, tap to expand. One Follow up box per turn sends that turn's sections as context. One New button clears context. No delete in v1 because events.log is append only. Draft input may persist in localStorage like diff notes, but events.log is the record.
+- History is a thread picker: the header's history button opens a menu listing every chat newest-first (title, turn count, time, preview). Selecting one loads its turns; New chat starts pending until the first send auto-creates the thread. Each row deletes its own chat.
 
 New web/src/components/terminal/FileOverlay.tsx.
 
@@ -84,12 +84,18 @@ Gating uses the useAiConfig hook on GET /api/ai/config. The Codemap tab does not
 
 ## History
 
-Conversations are history, and history lives in events.log per the comment at the top of state.go. No new store.
+Conversations are one thread per chat, many chats per project. Each thread
+is its own file under `$DATA_DIR/codemaps/<escaped-project>/<title>.json`.
+Duplicate titles use the familiar ` (1)`, ` (2)` suffixes; the thread ID
+inside the JSON remains the stable API identity.
+(`server/internal/codemapthreads`): id, title (from the first prompt),
+timestamps, and the ordered turn list. The Codemap pane lists threads
+newest-first in its history drawer, so past chats are discoverable,
+reopenable, and deletable per chat.
 
-- codemap.request holds project, turn id, sha, and prompt.
-- codemap.response holds project, turn id, sha, and sections, which are the final rendered answer with refs only. No intermediate turns and no tool call transcripts persist. Tool traces go to projectlog.Manager for live tailing only. They are ephemeral by design.
-
-This keeps state.json small and desired state only. A later feature that needs full message replay can move to a per project JSONL file without changing the event names.
+`events.log` carries only a lightweight `codemap.turn` audit line per turn
+(project, thread id, turn id, prompt excerpt, section/tool counts) — never
+the sections themselves.
 
 ## Gate
 

@@ -219,17 +219,48 @@ func finalCodemapJSON() string {
 func TestCodemapSuccess(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
+	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockSearchRead(md, "main.go:10:func main() {\n", "func main() {\n")
 	f := newFakeModel(t,
-		func(w http.ResponseWriter, _ map[string]any) {
-			writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("c1", "search_code", `{"pattern":"main"}`)})
-		},
-		func(w http.ResponseWriter, _ map[string]any) {
-			writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("c2", "read_file", `{"path":"main.go","start":10,"end":12}`)})
+		func(w http.ResponseWriter, body map[string]any) {
+			// Tool loop stays schema-free: providers null out choices
+			// or skip tool calls when json_schema rides with tools.
+			if _, ok := body["response_format"]; ok {
+				t.Errorf("tool-loop call must not carry json_schema")
+			}
+			writeCompletion(w, "tool_calls", "", []map[string]any{
+				toolCall("c1", "search_code", `{"pattern":"main"}`),
+				toolCall("c2", "search_code", `{"pattern":"App"}`),
+			})
 		},
 		func(w http.ResponseWriter, body map[string]any) {
+			if _, ok := body["response_format"]; ok {
+				t.Errorf("tool-loop call must not carry json_schema")
+			}
+			writeCompletion(w, "tool_calls", "", []map[string]any{
+				toolCall("c3", "read_file", `{"path":"main.go","start":10,"end":12}`),
+				toolCall("c4", "read_file", `{"path":"app.go","start":1,"end":12}`),
+			})
+		},
+		func(w http.ResponseWriter, body map[string]any) {
+			if _, ok := body["response_format"]; ok {
+				t.Errorf("tool-loop call must not carry json_schema")
+			}
+			writeCompletion(w, "tool_calls", "", []map[string]any{
+				toolCall("c5", "search_code", `{"pattern":"hydrate"}`),
+				toolCall("c6", "read_file", `{"path":"index.html","start":1,"end":12}`),
+			})
+		},
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", finalCodemapJSON(), nil)
+		},
+		func(w http.ResponseWriter, body map[string]any) {
+			// Formatting call: schema enforced, no tools attached.
 			if _, ok := body["response_format"]; !ok {
-				t.Errorf("codemap call drops json_schema")
+				t.Errorf("format call drops json_schema")
+			}
+			if tools, _ := body["tools"].([]any); len(tools) != 0 {
+				t.Errorf("format call must not carry tools")
 			}
 			writeCompletion(w, "stop", finalCodemapJSON(), nil)
 		},
@@ -244,6 +275,7 @@ func TestCodemapSuccess(t *testing.T) {
 	}
 	var body struct {
 		TurnID   string `json:"turnId"`
+		ThreadID string `json:"threadId"`
 		SHA      string `json:"sha"`
 		Sections []struct {
 			Title string `json:"title"`
@@ -252,8 +284,10 @@ func TestCodemapSuccess(t *testing.T) {
 			} `json:"refs"`
 		} `json:"sections"`
 		Tools []struct {
-			Tool string `json:"tool"`
-			Args string `json:"args"`
+			Tool   string `json:"tool"`
+			Args   string `json:"args"`
+			Output string `json:"output"`
+			Err    string `json:"error"`
 		} `json:"tools"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
@@ -262,14 +296,24 @@ func TestCodemapSuccess(t *testing.T) {
 	if body.TurnID == "" || body.SHA != "abc123" {
 		t.Fatalf("turn meta = %+v, want turnId set and sha abc123", body)
 	}
+	if body.ThreadID == "" {
+		t.Fatalf("missing threadId in response %+v", body)
+	}
 	if len(body.Sections) != 1 || body.Sections[0].Refs[0].Path != "main.go" {
 		t.Fatalf("sections = %+v", body.Sections)
 	}
-	if len(body.Tools) != 2 || body.Tools[0].Tool != "search_code" || body.Tools[1].Tool != "read_file" {
-		t.Fatalf("tools = %+v, want the two calls with args", body.Tools)
+	if len(body.Tools) != 6 || body.Tools[0].Tool != "search_code" || body.Tools[5].Tool != "read_file" {
+		t.Fatalf("tools = %+v, want six calls with args", body.Tools)
 	}
-	if !strings.Contains(body.Tools[0].Args, "main") || !strings.Contains(body.Tools[1].Args, "main.go") {
+	if !strings.Contains(body.Tools[0].Args, "main") || !strings.Contains(body.Tools[2].Args, "main.go") {
 		t.Fatalf("tool args lost: %+v", body.Tools)
+	}
+	// Tool outputs persist per step: this is what follow-ups replay.
+	if !strings.Contains(body.Tools[0].Output, "func main()") {
+		t.Fatalf("search output lost: %+v", body.Tools[0])
+	}
+	if !strings.Contains(body.Tools[1].Output, "func main()") {
+		t.Fatalf("read output lost: %+v", body.Tools[1])
 	}
 	// The live project log carries the full trace for the Logs tab.
 	gotTypes := map[string]int{}
@@ -281,43 +325,145 @@ func TestCodemapSuccess(t *testing.T) {
 			t.Fatalf("project log missing %q (have %v)", want, gotTypes)
 		}
 	}
-	if gotTypes["codemap.tool"] != 2 || gotTypes["codemap.tool_result"] != 2 {
-		t.Fatalf("tool trace counts = %v, want 2 starts + 2 results", gotTypes)
+	if gotTypes["codemap.tool"] != 6 || gotTypes["codemap.tool_result"] != 6 {
+		t.Fatalf("tool trace counts = %v, want 6 starts + 6 results", gotTypes)
 	}
-	// History joins the pair on turn id.
-	rec = authedGet(t, h, cookie, "/api/projects/abc/codemap/history")
-	var hist struct {
-		Turns []struct {
-			TurnID   string `json:"turnId"`
-			Prompt   string `json:"prompt"`
-			Sections []struct {
-				Title string `json:"title"`
-			} `json:"sections"`
-			Tools []struct {
-				Tool string `json:"tool"`
-			} `json:"tools"`
-		} `json:"turns"`
+	// The turn persists in its thread file (one chat per file), and the
+	// global log keeps only a lightweight audit line — never the sections.
+	// The thread file is what the UI rebuilds off of, so assert its
+	// integrity directly from the store: prompt, sections JSON, tool
+	// steps with outputs, turnId/sha/time all present.
+	rec = authedGet(t, h, cookie, "/api/projects/abc/codemap/threads/"+body.ThreadID)
+	var got struct {
+		Thread struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+			Turns []struct {
+				TurnID   string `json:"turnId"`
+				Prompt   string `json:"prompt"`
+				Sections []struct {
+					Title string `json:"title"`
+				} `json:"sections"`
+				Tools []struct {
+					Tool   string `json:"tool"`
+					Output string `json:"output"`
+				} `json:"tools"`
+			} `json:"turns"`
+		} `json:"thread"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &hist); err != nil {
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(hist.Turns) != 1 || hist.Turns[0].TurnID != body.TurnID || hist.Turns[0].Prompt != "where is main?" {
-		t.Fatalf("history = %+v", hist)
+	if got.Thread.ID != body.ThreadID {
+		t.Fatalf("thread id = %q, want %q", got.Thread.ID, body.ThreadID)
 	}
-	if len(hist.Turns[0].Sections) != 1 {
-		t.Fatalf("history sections = %+v", hist.Turns[0].Sections)
+	if len(got.Thread.Turns) != 1 || got.Thread.Turns[0].TurnID != body.TurnID || got.Thread.Turns[0].Prompt != "where is main?" {
+		t.Fatalf("thread turns = %+v", got.Thread.Turns)
 	}
-	if len(hist.Turns[0].Tools) != 2 {
-		t.Fatalf("history tools = %+v, want persisted tool summary", hist.Turns[0].Tools)
+	if len(got.Thread.Turns[0].Sections) != 1 {
+		t.Fatalf("thread sections = %+v", got.Thread.Turns[0].Sections)
+	}
+	// The thread endpoint exposes the same flat step shape as POST.
+	rounds := got.Thread.Turns[0].Tools
+	if len(rounds) != 6 || rounds[0].Tool != "search_code" || rounds[5].Tool != "read_file" {
+		t.Fatalf("thread tools = %+v, want six flat steps", got.Thread.Turns[0].Tools)
+	}
+	th, err := d.Codemaps.Get("abc", body.ThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(th.Turns) != 1 {
+		t.Fatalf("store turns = %d, want 1", len(th.Turns))
+	}
+	stored := th.Turns[0]
+	if stored.TurnID == "" || stored.SHA != "abc123" || stored.Prompt != "where is main?" || stored.Time.IsZero() {
+		t.Fatalf("stored turn meta incomplete: %+v", stored)
+	}
+	var storedSections []map[string]any
+	if err := json.Unmarshal(stored.Sections, &storedSections); err != nil || len(storedSections) != 1 {
+		t.Fatalf("stored sections invalid: %s (%v)", string(stored.Sections), err)
+	}
+	var storedRounds []map[string]any
+	if err := json.Unmarshal(stored.Tools, &storedRounds); err != nil || len(storedRounds) != 3 {
+		t.Fatalf("stored tools invalid: %s (%v)", string(stored.Tools), err)
+	}
+	for i, r := range storedRounds {
+		steps, _ := r["steps"].([]any)
+		if len(steps) != 2 {
+			t.Fatalf("stored round %d steps = %v, want 2", i, r)
+		}
+		sm, _ := steps[0].(map[string]any)
+		out, _ := sm["output"].(string)
+		if !strings.Contains(out, "func main()") {
+			t.Fatalf("stored tool %d missing output: %v", i, sm)
+		}
+	}
+	var extractor map[string]any
+	if err := json.Unmarshal(stored.ExtractorOutput, &extractor); err != nil {
+		t.Fatalf("extractor output invalid: %v", err)
+	}
+	result, _ := extractor["result"].(map[string]any)
+	sections, _ := result["sections"].([]any)
+	if len(sections) != 1 {
+		t.Fatalf("extractor result missing sections: %s", stored.ExtractorOutput)
+	}
+	refs, _ := sections[0].(map[string]any)["refs"].([]any)
+	if len(refs) != 1 || refs[0].(map[string]any)["path"] != "main.go" {
+		t.Fatalf("extractor refs = %v", refs)
+	}
+	lineageRaw, err := d.Codemaps.ReadLineage("abc", body.ThreadID)
+	if err != nil {
+		t.Fatalf("read lineage: %v", err)
+	}
+	var lineage map[string]any
+	if err := json.Unmarshal(lineageRaw, &lineage); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := lineage["extractorInput"]; !ok {
+		t.Fatalf("lineage missing extractorInput: %s", lineageRaw)
+	}
+	if _, ok := lineage["extractorOutput"]; ok {
+		t.Fatalf("lineage must not own extractorOutput: %s", lineageRaw)
+	}
+	events, _ := lineage["events"].([]any)
+	if len(events) < 20 {
+		t.Fatalf("lineage events = %d, want a multi-round conversation graph", len(events))
+	}
+	toolStarts := 0
+	for _, rawEvent := range events {
+		if event, _ := rawEvent.(map[string]any); event["kind"] == "tool_start" {
+			toolStarts++
+		}
+	}
+	if toolStarts != 6 {
+		t.Fatalf("lineage tool starts = %d, want 6", toolStarts)
+	}
+	if ev := lastEvent(t, d); ev.Type != "codemap.turn" {
+		t.Fatalf("last event = %q, want codemap.turn audit", ev.Type)
+	}
+	if _, hasSections := lastEvent(t, d).Data["sections"]; hasSections {
+		// sections count is fine; full section bodies must not land here
+		if _, ok := lastEvent(t, d).Data["prompt"]; !ok {
+			t.Fatalf("audit event missing prompt excerpt")
+		}
 	}
 }
 
 func TestCodemapModelBadJSON(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
-	f := newFakeModel(t, func(w http.ResponseWriter, _ map[string]any) {
-		writeCompletion(w, "stop", "not json at all", nil)
-	})
+	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
+	f := newFakeModel(t,
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", "not json at all", nil)
+		},
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", "not json at all", nil)
+		},
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", "not json at all", nil)
+		},
+	)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
@@ -329,17 +475,38 @@ func TestCodemapModelBadJSON(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "not json") {
 		t.Fatalf("bad json error hides model output: %q", rec.Body)
 	}
+	gotTypes := map[string]int{}
+	for _, e := range d.ProjectLogs.Read("abc", 0, 0) {
+		gotTypes[e.Type]++
+	}
+	if gotTypes["codemap.thread_initialized"] != 1 || gotTypes["codemap.lineage_saved"] != 1 || gotTypes["codemap.error"] != 1 {
+		t.Fatalf("failed turn boundary logs = %v, want initialization, lineage save, and run error", gotTypes)
+	}
+	threads, err := d.Codemaps.List("abc")
+	if err != nil || len(threads) != 1 || threads[0].TurnCount != 0 {
+		t.Fatalf("failed turn thread record = %+v, %v; expected an explicit empty thread", threads, err)
+	}
 }
 
 func TestCodemapBusy(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
+	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	release := make(chan struct{})
+	mockHydrate(md, "func main() {\n")
 	var once sync.Once
-	f := newFakeModel(t, func(w http.ResponseWriter, _ map[string]any) {
-		<-release
-		writeCompletion(w, "stop", finalCodemapJSON(), nil)
-	})
+	f := newFakeModel(t,
+		func(w http.ResponseWriter, _ map[string]any) {
+			<-release
+			writeCompletion(w, "stop", finalCodemapJSON(), nil)
+		},
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", finalCodemapJSON(), nil)
+		},
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", finalCodemapJSON(), nil)
+		},
+	)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
@@ -352,8 +519,8 @@ func TestCodemapBusy(t *testing.T) {
 	deadline := false
 	for i := 0; i < 100 && !deadline; i++ {
 		codemapBusy.mu.Lock()
+		_, held := codemapBusy.m["abc"]
 		_, deadline = codemapBusy.m["abc"], true
-		held := codemapBusy.m["abc"]
 		codemapBusy.mu.Unlock()
 		if held {
 			break

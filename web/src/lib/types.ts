@@ -26,10 +26,12 @@ export type GitDiffResponse = {
 }
 
 export type AIConfigStatus = { baseURL: string; model: string; configured: boolean }
-export type CodemapRef = { path: string; startLine: number; endLine: number; snippet: string }
+export type CodemapRef = { path: string; startLine: number; endLine: number; snippet: string; function?: string }
 export type CodemapSection = { title: string; summary: string; refs: CodemapRef[] }
-export type CodemapToolCall = { tool: string; args: string }
+export type CodemapToolCall = { tool: string; args: string; output?: string; error?: string }
 export type CodemapTurn = { turnId: string; sha: string; prompt: string; sections: CodemapSection[] | null; tools?: CodemapToolCall[] | null; time?: string }
+export type CodemapThreadSummary = { id: string; title: string; createdAt: string; updatedAt: string; turnCount: number; preview: string }
+export type CodemapThread = { id: string; project: string; title: string; createdAt: string; updatedAt: string; turns: CodemapTurn[] }
 export type CodemapFile = { path: string; content: string; binary: boolean; moved: boolean; sha: string }
 
 // isLaunchable reports whether a harness offers its own session type in

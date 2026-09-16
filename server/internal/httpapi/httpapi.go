@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"pcoder/internal/auth"
+	"pcoder/internal/codemapthreads"
 	"pcoder/internal/events"
 	"pcoder/internal/harness"
 	"pcoder/internal/preview"
@@ -42,6 +43,7 @@ type Deps struct {
 	Harnesses   *harness.Store
 	SSHKeys     *sshkeys.Store
 	State       *state.Store
+	Codemaps    *codemapthreads.Store
 }
 
 // New returns the HTTP handler for the whole server. Login/PIN routes are
@@ -101,7 +103,11 @@ func New(d Deps) http.Handler {
 		authed("POST", "/api/projects/{id}/git/unstage", func(d Deps) http.HandlerFunc { return handleGitStage(d, true) })
 		authed("POST", "/api/projects/{id}/git/stage-hunk", handleGitStageHunk)
 		authed("POST", "/api/projects/{id}/codemap", handleCodemap)
-		authed("GET", "/api/projects/{id}/codemap/history", handleCodemapHistory)
+		authed("GET", "/api/projects/{id}/codemap/threads", handleCodemapThreads)
+		authed("POST", "/api/projects/{id}/codemap/threads", handleCodemapThreadCreate)
+		authed("GET", "/api/projects/{id}/codemap/threads/{tid}", handleCodemapThreadGet)
+		authed("PATCH", "/api/projects/{id}/codemap/threads/{tid}", handleCodemapThreadRename)
+		authed("DELETE", "/api/projects/{id}/codemap/threads/{tid}", handleCodemapThreadDelete)
 		authed("GET", "/api/projects/{id}/file", handleCodemapFile)
 	}
 

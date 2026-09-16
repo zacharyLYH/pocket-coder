@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"pcoder/internal/codemapthreads"
 	"pcoder/internal/docker"
 	"pcoder/internal/events"
 	"pcoder/internal/sshkeys"
@@ -69,6 +70,10 @@ type Service struct {
 	ev        Events
 	sshKeys   *sshkeys.Store
 	installer Installer
+	// codemaps is the codemap chat store. Chats are project-scoped
+	// artifacts: when the record goes, the chat files go with it. Wired
+	// via SetCodemaps (the SetSSHKeys pattern), so tests can leave it nil.
+	codemaps *codemapthreads.Store
 	// allowAnyRepo lifts the GitHub-only create requirement so test
 	// stacks can clone from a local git daemon. Set via SetAllowAnyRepo
 	// (wired from config in main, set directly by integration tests);
@@ -83,6 +88,9 @@ func NewService(store Store, dkr docker.Client, ev Events) *Service {
 
 // SetSSHKeys attaches an SSH key store for container key injection.
 func (s *Service) SetSSHKeys(sk *sshkeys.Store) { s.sshKeys = sk }
+
+// SetCodemaps attaches the codemap chat store for delete cascades.
+func (s *Service) SetCodemaps(cs *codemapthreads.Store) { s.codemaps = cs }
 
 // SetInstaller attaches a harness installer for eager recovery.
 func (s *Service) SetInstaller(ins Installer) { s.installer = ins }
@@ -499,6 +507,14 @@ func (s *Service) Delete(ctx context.Context, id string, scope Scope) error {
 	}
 	if scope == ScopeMetadata || scope == ScopeAll {
 		fail(s.store.Delete(id))
+		// Chats are project-scoped: once the record is gone no request can
+		// reach them, so they must not linger on disk. Best effort — a
+		// failed file cleanup never blocks the project deletion itself.
+		if s.codemaps != nil {
+			if cerr := s.codemaps.DeleteProjectDir(id); cerr != nil {
+				slog.Warn("codemap cleanup failed on project delete", "project", id, "err", cerr)
+			}
+		}
 	}
 	if firstErr != nil {
 		return firstErr

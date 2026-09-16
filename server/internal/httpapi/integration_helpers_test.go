@@ -35,6 +35,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"pcoder/internal/auth"
+	"pcoder/internal/codemapthreads"
 	"pcoder/internal/docker"
 	"pcoder/internal/events"
 	"pcoder/internal/harness"
@@ -82,7 +83,8 @@ func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docke
 	// Production (config.AllowAnyRepo false) requires GitHub.
 	svc.SetAllowAnyRepo(true)
 	h := New(Deps{Events: ev, Version: "itest", Auth: authSvc, Projects: svc,
-		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore, State: st})
+		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore, State: st,
+		Codemaps: codemapthreads.New(filepath.Join(dataDir, "codemaps"))})
 	return h, dkr, svc, &pinOut, ev, st
 }
 
