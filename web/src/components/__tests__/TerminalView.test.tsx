@@ -209,4 +209,39 @@ describe('TerminalView session management', () => {
       expect(fetchCalls.some(c => c.url.includes(`/${SESSION}/delete`) && c.method === 'DELETE')).toBe(true)
     })
   })
+
+  it('fixed views hide session actions but keep the terminal attached', async () => {
+    renderView(baseHandler((url) => {
+      if (url.includes('/git/status')) return { status: 200, body: { branch: 'main', files: [] } }
+      return undefined
+    }))
+
+    await waitFor(() => {
+      expect(fetchCalls.some(c => c.url.endsWith('/sessions') && c.method === 'GET')).toBe(true)
+    })
+
+    // Terminal mode shows session actions.
+    expect(screen.getByTestId('terminal-actions-trigger')).toBeTruthy()
+    expect(screen.getByTestId('current-session').textContent).toContain('helper-1')
+
+    const ensurePosts = () => fetchCalls.filter(c => c.url.endsWith('/sessions') && c.method === 'POST')
+    await waitFor(() => { expect(ensurePosts().length).toBeGreaterThanOrEqual(1) })
+    const ensureCount = ensurePosts().length
+
+    // Transport into Diff: no Actions menu, fixed title instead of session name.
+    await act(async () => { fireEvent.click(screen.getByTestId('tab-diff')) })
+    expect(screen.getByTestId('fixed-view-title').textContent).toContain('Diff')
+    expect(screen.queryByTestId('terminal-actions-trigger')).toBeNull()
+    expect(screen.queryByTestId('current-session')).toBeNull()
+
+    // The terminal pane stays mounted: no extra ensure POST while in Diff…
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)) })
+    expect(ensurePosts().length).toBe(ensureCount)
+
+    // …and returning does not redial either.
+    await act(async () => { fireEvent.click(screen.getByTestId('tab-session-helper-1')) })
+    expect(screen.getByTestId('terminal-actions-trigger')).toBeTruthy()
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)) })
+    expect(ensurePosts().length).toBe(ensureCount)
+  })
 })

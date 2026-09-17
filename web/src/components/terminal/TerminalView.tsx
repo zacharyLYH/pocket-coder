@@ -152,6 +152,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           projectId={projectId}
           current={current}
           status={status}
+          view={tab}
           onBack={onBack}
           onRestart={restart}
           onRename={rename}
@@ -175,33 +176,39 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
         </p>
       )}
 
-      {tab === 'preview' ? (
+      {/* The terminal stays mounted (and its websocket attached) while a
+          fixed view is open — the pane is only hidden. Unmounting here
+          would detach from the session and dispose xterm, so returning
+          would re-ensure, redial, and lose scrollback. */}
+      <div className={`min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl touch-manipulation ${tab === 'terminal' ? '' : 'hidden'}`}>
+        <div ref={hostRef} className="h-full w-full touch-manipulation" />
+        <TerminalPane
+          projectId={projectId}
+          session={current}
+          redial={redial}
+          hostRef={hostRef}
+          onStatus={setStatus}
+          onError={setError}
+        />
+      </div>
+      {tab === 'preview' && (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">
           <PreviewTab projectId={projectId} onOpenPreview={onOpenPreview} />
         </div>
-      ) : tab === 'codemap' ? (
+      )}
+      {tab === 'codemap' && (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">
           <CodemapTab projectId={projectId} />
         </div>
-      ) : tab === 'diff' ? (
+      )}
+      {tab === 'diff' && (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">
           <DiffTab projectId={projectId} />
         </div>
-      ) : tab === 'logs' ? (
+      )}
+      {tab === 'logs' && (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">
           <LogsTab projectId={projectId} />
-        </div>
-      ) : (
-        <div className="min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl touch-manipulation">
-          <div ref={hostRef} className="h-full w-full touch-manipulation" />
-          <TerminalPane
-            projectId={projectId}
-            session={current}
-            redial={redial}
-            hostRef={hostRef}
-            onStatus={setStatus}
-            onError={setError}
-          />
         </div>
       )}
 

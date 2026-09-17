@@ -27,21 +27,31 @@ import type { ConnStatus } from '@/components/terminal/TerminalPane'
 // session name, and the restart / rename / kill actions. Session
 // switching lives in the tab strip below (TerminalTabs), not here.
 // Permanent deletion is handled by the ✕ close button on each tab.
-export function TerminalHeader({ projectId, current, status, onBack, onRestart, onRename, onKill }: {
+//
+// When a pinned view (Codemap/Diff/Preview/Logs) is active the header
+// switches to fixed-view mode: no connection badge, no session name, and
+// no Actions menu — session actions act on the attached terminal session,
+// which is not visible while transported into a fixed view.
+const FIXED_LABELS: Record<string, string> = { codemap: 'Codemap', diff: 'Diff', preview: 'Preview', logs: 'Logs' }
+
+export function TerminalHeader({ projectId, current, status, view, onBack, onRestart, onRename, onKill }: {
   projectId: string
   current: string
   status: ConnStatus
+  view: 'terminal' | 'diff' | 'preview' | 'logs' | 'codemap'
   onBack: () => void
   onRestart: () => void
   onRename: (newName: string) => Promise<void> | void
   onKill: () => void
 }) {
+  const isFixedView = view !== 'terminal'
+  const fixedLabel = isFixedView ? (FIXED_LABELS[view] ?? view) : ''
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
   const [renameBusy, setRenameBusy] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
   const [qcOpen, setQcOpen] = useState(false)
-  const { commands: quickCommands, reload: reloadQuickCommands } = useQuickCommands(projectId)
+  const { commands: quickCommands, reload: reloadQuickCommands } = useQuickCommands(isFixedView ? null : projectId)
   const [injectError, setInjectError] = useState<string | null>(null)
 
   async function inject(command: string) {
@@ -87,71 +97,85 @@ export function TerminalHeader({ projectId, current, status, onBack, onRestart, 
           ← Projects
         </Button>
         <Separator orientation="vertical" className="data-[orientation=vertical]:h-5" />
-        <Badge variant="outline" className="gap-1.5 border-border/60 bg-background font-normal">
-          <span className={`size-1.5 rounded-full ${statusMeta.dot} ${status === 'live' ? 'animate-pulse' : ''}`} />
-          {statusMeta.label}
-        </Badge>
+        {!isFixedView && (
+          <Badge variant="outline" className="gap-1.5 border-border/60 bg-background font-normal">
+            <span className={`size-1.5 rounded-full ${statusMeta.dot} ${status === 'live' ? 'animate-pulse' : ''}`} />
+            {statusMeta.label}
+          </Badge>
+        )}
         <span className="font-mono text-xs text-muted-foreground">
           {projectId}
         </span>
-        <span className="truncate font-mono text-xs" data-testid="current-session" title={current}>
-          {current}
-        </span>
+        {isFixedView ? (
+          <span className="truncate text-xs font-medium" data-testid="fixed-view-title" title={fixedLabel}>
+            {fixedLabel}
+          </span>
+        ) : (
+          <span className="truncate font-mono text-xs" data-testid="current-session" title={current}>
+            {current}
+          </span>
+        )}
         <span className="flex-1" />
 
         <ThemeToggle />
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" data-testid="terminal-actions-trigger">Actions ▾</Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64">
-            <DropdownMenuItem onSelect={onRestart} data-testid="terminal-action-restart">Restart</DropdownMenuItem>
-            <DropdownMenuItem onSelect={openRename} data-testid="terminal-action-rename">Rename</DropdownMenuItem>
-            <DropdownMenuItem onSelect={onKill} data-testid="terminal-action-kill" className="text-destructive">Kill</DropdownMenuItem>
-            <div className="my-1 h-px bg-border" />
-            {Object.entries(quickCommands).length === 0 ? (
-              <div className="px-2 py-1 text-xs text-muted-foreground">No quick commands</div>
-            ) : (
-              Object.entries(quickCommands).map(([alias, cmd]) => (
-                <DropdownMenuItem key={alias} onSelect={() => inject(cmd)} data-testid={`qc-run-${alias}`}>
-                  {alias}: {cmd.slice(0, 30)}
-                </DropdownMenuItem>
-              ))
-            )}
-            <DropdownMenuItem onSelect={() => setQcOpen(true)} data-testid="qc-manage">Update quick commands…</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {!isFixedView && (
+          <>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" data-testid="terminal-actions-trigger">Actions ▾</Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuItem onSelect={onRestart} data-testid="terminal-action-restart">Restart</DropdownMenuItem>
+                <DropdownMenuItem onSelect={openRename} data-testid="terminal-action-rename">Rename</DropdownMenuItem>
+                <DropdownMenuItem onSelect={onKill} data-testid="terminal-action-kill" className="text-destructive">Kill</DropdownMenuItem>
+                <div className="my-1 h-px bg-border" />
+                {Object.entries(quickCommands).length === 0 ? (
+                  <div className="px-2 py-1 text-xs text-muted-foreground">No quick commands</div>
+                ) : (
+                  Object.entries(quickCommands).map(([alias, cmd]) => (
+                    <DropdownMenuItem key={alias} onSelect={() => inject(cmd)} data-testid={`qc-run-${alias}`}>
+                      {alias}: {cmd.slice(0, 30)}
+                    </DropdownMenuItem>
+                  ))
+                )}
+                <DropdownMenuItem onSelect={() => setQcOpen(true)} data-testid="qc-manage">Update quick commands…</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-        <QuickCommandsModal projectId={projectId} open={qcOpen} onOpenChange={setQcOpen} onSaved={reloadQuickCommands} />
+            <QuickCommandsModal projectId={projectId} open={qcOpen} onOpenChange={setQcOpen} onSaved={reloadQuickCommands} />
+          </>
+        )}
       </header>
-      {injectError && <p className="text-xs text-destructive" data-testid="qc-inject-error">{injectError}</p>}
+      {!isFixedView && injectError && <p className="text-xs text-destructive" data-testid="qc-inject-error">{injectError}</p>}
 
 
 
-      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Rename session</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <Input
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              placeholder="New session name"
-              autoFocus
-              disabled={renameBusy}
-            />
-            {renameError && <p className="text-destructive text-xs break-all">{renameError}</p>}
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" disabled={renameBusy} onClick={() => setRenameOpen(false)}>Cancel</Button>
-            <Button disabled={renameBusy || !renameValue.trim() || renameValue.trim() === current} onClick={submitRename}>
-              {renameBusy ? 'Renaming…' : 'Rename'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {!isFixedView && (
+        <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Rename session</DialogTitle>
+            </DialogHeader>
+            <div className="flex flex-col gap-3">
+              <Input
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                placeholder="New session name"
+                autoFocus
+                disabled={renameBusy}
+              />
+              {renameError && <p className="text-destructive text-xs break-all">{renameError}</p>}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" disabled={renameBusy} onClick={() => setRenameOpen(false)}>Cancel</Button>
+              <Button disabled={renameBusy || !renameValue.trim() || renameValue.trim() === current} onClick={submitRename}>
+                {renameBusy ? 'Renaming…' : 'Rename'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   )
 }
