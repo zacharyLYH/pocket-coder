@@ -104,10 +104,9 @@ func New(d Deps) http.Handler {
 		authed("POST", "/api/projects/{id}/git/stage-hunk", handleGitStageHunk)
 		authed("POST", "/api/projects/{id}/codemap", handleCodemap)
 		authed("GET", "/api/projects/{id}/codemap/threads", handleCodemapThreads)
-		authed("POST", "/api/projects/{id}/codemap/threads", handleCodemapThreadCreate)
 		authed("GET", "/api/projects/{id}/codemap/threads/{tid}", handleCodemapThreadGet)
-		authed("PATCH", "/api/projects/{id}/codemap/threads/{tid}", handleCodemapThreadRename)
 		authed("DELETE", "/api/projects/{id}/codemap/threads/{tid}", handleCodemapThreadDelete)
+		authed("POST", "/api/projects/{id}/codemap/threads/{tid}/retry", handleCodemapRetry)
 		authed("GET", "/api/projects/{id}/file", handleCodemapFile)
 	}
 

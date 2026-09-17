@@ -1,26 +1,20 @@
-// Package codemapthreads persists codemap chats as one thread per file.
+// Package codemapthreads persists codemap chats as one folder per thread.
 //
-// A thread is one chat: an id, a title, and an ordered turn list. Each
-// thread lives in its own JSON file:
+//	$DATA_DIR/codemaps/<escaped-project>/<threadID>/
+//	  manifest.json
+//	  1.json
+//	  1.lineage.json
+//	  2.json
+//	  2.lineage.json
 //
-//	$DATA_DIR/codemaps/<escaped-project>/<title>.json
+// The folder name IS the thread ID (opaque stable MintID hex). No prompt
+// text or slug appears in any filename. The manifest holds thread-level
+// fields only ({id, title, createdAt}); each N.json holds a pure user-side
+// Turn (prompt + sections + tools + time/sha/error); each N.lineage.json
+// holds the debug-side agent.Lineage for that turn.
 //
-// The thread ID remains the stable API identity; the filename is cosmetic
-// and follows the title, with " (1)" etc. for duplicate titles.
-//
-// The debug-only lineage graph sits beside its thread under the same
-// name with a .lineage.json suffix:
-//
-//	$DATA_DIR/codemaps/<escaped-project>/<title>.lineage.json
-//
-// Lineage lookup is by threadId inside the JSON (titles can be renamed),
-// and the file tracks the thread's current title across renames. Each
-// save overwrites the previous lineage for that thread — it is a debug
-// artifact for the latest turn, while the thread file keeps every turn.
-//
-// That is the whole abstraction: users have many chats per project, each
-// independently loadable and deletable. The global events.log carries only
-// a lightweight audit line per turn (no sections), never the chat itself.
+// Lineage files are write-only debug output: written on Complete/Fail,
+// read only by diagnostics, never for follow-up context or history.
 package codemapthreads
 
 import (
@@ -32,25 +26,26 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Turn is one prompt/answer pair inside a thread. Sections and Tools are
-// stored as raw JSON so the store never needs to import the codemap
-// package (no import cycle with httpapi helpers).
+// Turn is one prompt/answer pair. N.json is the user-facing side: prompt
+// + sections + tools + time/sha/error only. No ExtractorOutput, no
+// threadId/project header.
 type Turn struct {
-	TurnID          string          `json:"turnId"`
-	SHA             string          `json:"sha,omitempty"`
-	Prompt          string          `json:"prompt"`
-	Sections        json.RawMessage `json:"sections,omitempty"`
-	Tools           json.RawMessage `json:"tools,omitempty"`
-	ExtractorOutput json.RawMessage `json:"extractorOutput,omitempty"`
-	Time            time.Time       `json:"time"`
+	TurnID   string          `json:"turnId"`
+	SHA      string          `json:"sha,omitempty"`
+	Prompt   string          `json:"prompt"`
+	Sections json.RawMessage `json:"sections"`
+	Tools    json.RawMessage `json:"tools"`
+	Time     time.Time       `json:"time"`
+	Error    *string         `json:"error"`
 }
 
-// Thread is one chat.
+// Thread is one chat, reassembled from manifest.json + sorted N.json.
 type Thread struct {
 	ID        string    `json:"id"`
 	Project   string    `json:"project"`
@@ -60,7 +55,18 @@ type Thread struct {
 	Turns     []Turn    `json:"turns"`
 }
 
+// Manifest is the thread-level record: exactly {id, title, createdAt}.
+// No project (parent dir is the scope), no updatedAt/nextTurnIndex/
+// turnCount/preview. Set once at create; never bumped on turns.
+type Manifest struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 // Summary is the list-view row: metadata without the turn bodies.
+// UpdatedAt is derived from the last turn file's time (== createdAt when
+// empty); CreatedAt == manifest.createdAt.
 type Summary struct {
 	ID        string    `json:"id"`
 	Title     string    `json:"title"`
@@ -70,15 +76,14 @@ type Summary struct {
 	Preview   string    `json:"preview"`
 }
 
-// Store owns the thread files. Safe for concurrent use.
+// Store owns the thread folders. Safe for concurrent use. One global
+// mutex (process-wide serialization; single-user app, harmless).
 type Store struct {
 	mu  sync.Mutex
 	dir string
 }
 
 // New returns a store rooted at dir (e.g. $DATA_DIR/codemaps).
-// A nil store is usable: all methods no-op with an error, so handlers can
-// keep a nil guard in one place.
 func New(dir string) *Store {
 	return &Store{dir: dir}
 }
@@ -86,7 +91,8 @@ func New(dir string) *Store {
 func MintID() string {
 	var b [12]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+		// Hex fallback so the result still passes validID (hex-only).
+		return fmt.Sprintf("%x", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b[:])
 }
@@ -95,72 +101,41 @@ func (s *Store) projectDir(project string) string {
 	return filepath.Join(s.dir, url.PathEscape(project))
 }
 
-func (s *Store) findThreadPath(project, id string) string {
-	entries, err := os.ReadDir(s.projectDir(project))
-	if err != nil {
-		return ""
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || strings.HasSuffix(e.Name(), ".lineage.json") {
-			continue
-		}
-		candidate := filepath.Join(s.projectDir(project), e.Name())
-		raw, rerr := os.ReadFile(candidate)
-		if rerr != nil {
-			continue
-		}
-		var th Thread
-		if json.Unmarshal(raw, &th) == nil && th.ID == id && th.Project == project {
-			return candidate
-		}
-	}
-	return ""
+func (s *Store) threadDir(project, id string) string {
+	return filepath.Join(s.projectDir(project), id)
 }
 
-// titleFilename turns the user-visible title into the on-disk thread name.
-// Keep the title readable, while preventing it from escaping the project
-// directory or becoming a special path. Duplicate titles are disambiguated
-// by save with the same " (1)" convention used by desktop operating
-// systems.
-func titleFilename(title string) string {
-	title = strings.TrimSpace(title)
-	if title == "" {
-		title = "New chat"
+// check rejects a missing store or blank project scope before any
+// thread I/O, so empty projects never resolve to the store root.
+func (s *Store) check(project string) error {
+	if s == nil || s.dir == "" {
+		return fmt.Errorf("codemap store not configured")
 	}
-	var b strings.Builder
-	for _, r := range title {
-		switch {
-		case r == '/' || r == '\\':
-			b.WriteRune('-')
-		case r < 0x20 || r == 0x7f:
-			b.WriteRune('-')
-		default:
-			b.WriteRune(r)
-		}
+	if strings.TrimSpace(project) == "" {
+		return fmt.Errorf("project is required")
 	}
-	name := strings.TrimSpace(strings.Trim(b.String(), "."))
-	if name == "" {
-		name = "New chat"
-	}
-	return truncate(name, 120)
+	return nil
 }
 
+// validID is hex-only: MintID output passes, traversal blocked.
 func validID(id string) bool {
 	if id == "" || len(id) > 128 {
 		return false
 	}
 	for _, c := range id {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
 			return false
 		}
 	}
 	return true
 }
 
-// truncate caps s at max bytes, marking the cut with an ellipsis.
+// truncate caps s at max runes, marking the cut with an ellipsis.
+// Rune-aware: byte slicing could split a multi-byte rune.
 func truncate(s string, max int) string {
-	if len(s) > max {
-		return s[:max] + "…"
+	r := []rune(s)
+	if len(r) > max {
+		return string(r[:max]) + "…"
 	}
 	return s
 }
@@ -179,47 +154,349 @@ func TitleFromPrompt(prompt string) string {
 	return truncate(t, 60)
 }
 
-// Create starts an empty thread. Title defaults to "New chat" and is
-// replaced by the first prompt on the first appended turn.
-func (s *Store) Create(project, title string) (Thread, error) {
-	if s == nil || s.dir == "" {
-		return Thread{}, fmt.Errorf("codemap store not configured")
+// turnFileN parses "N.json" (not lineage, not manifest). ok=false otherwise.
+// Canonical form only: no leading zeros ("01.json" would collide with
+// "1.json" via Atoi and let maxTurnN+1 overwrite an existing turn).
+func turnFileN(name string) (int, bool) {
+	if !strings.HasSuffix(name, ".json") {
+		return 0, false
 	}
-	if strings.TrimSpace(project) == "" {
-		return Thread{}, fmt.Errorf("project is required")
+	if strings.HasSuffix(name, ".lineage.json") {
+		return 0, false
 	}
-	title = strings.TrimSpace(title)
-	if title == "" {
-		title = "New chat"
+	if name == "manifest.json" {
+		return 0, false
 	}
-	title = truncate(title, 120)
+	base := strings.TrimSuffix(name, ".json")
+	if len(base) > 1 && strings.HasPrefix(base, "0") {
+		return 0, false
+	}
+	n, err := strconv.Atoi(base)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
+}
+
+// sweepLegacyFlatFilesLocked deletes legacy flat files (*.json /
+// *.lineage.json directly under the project dir): one-time reset, no
+// back-compat. Callers hold s.mu.
+func (s *Store) sweepLegacyFlatFilesLocked(project string) {
+	dir := s.projectDir(project)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasSuffix(name, ".json") {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+	}
+}
+
+// maxTurnNLocked returns the highest N present. Callers hold s.mu.
+func maxTurnNLocked(threadDir string) int {
+	entries, err := os.ReadDir(threadDir)
+	if err != nil {
+		return 0
+	}
+	max := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if n, ok := turnFileN(e.Name()); ok && n > max {
+			max = n
+		}
+	}
+	return max
+}
+
+// sortedTurnNsLocked lists N values in numeric file-N order. Gaps kept
+// as-is. Callers hold s.mu.
+func sortedTurnNsLocked(threadDir string) []int {
+	entries, err := os.ReadDir(threadDir)
+	if err != nil {
+		return nil
+	}
+	var out []int
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if n, ok := turnFileN(e.Name()); ok {
+			out = append(out, n)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+// readTurnLocked loads one N.json. A half-written file (JSON parse
+// failure) reads as skipped, never fatal. Callers hold s.mu.
+func readTurnLocked(path string) (Turn, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Turn{}, false
+	}
+	var t Turn
+	if err := json.Unmarshal(raw, &t); err != nil {
+		return Turn{}, false
+	}
+	return t, true
+}
+
+// readManifestLocked loads manifest.json. Callers hold s.mu.
+func readManifestLocked(threadDir string) (Manifest, bool) {
+	raw, err := os.ReadFile(filepath.Join(threadDir, "manifest.json"))
+	if err != nil {
+		return Manifest{}, false
+	}
+	var m Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return Manifest{}, false
+	}
+	if m.ID == "" || m.CreatedAt.IsZero() {
+		return Manifest{}, false
+	}
+	return m, true
+}
+
+// ReserveNewThread creates folder + manifest + 1.json placeholder
+// atomically under one store lock. On failure the folder is removed and
+// no threadId is returned. Title derives from the prompt.
+func (s *Store) ReserveNewThread(project, prompt, sha string) (threadID, turnID string, err error) {
+	if err := s.check(project); err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return "", "", fmt.Errorf("prompt is required")
+	}
+	threadID = MintID()
+	turnID = MintID()
 	now := time.Now().UTC()
-	th := Thread{ID: MintID(), Project: project, Title: title, CreatedAt: now, UpdatedAt: now}
+	title := TitleFromPrompt(prompt)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.save(th); err != nil {
+	s.sweepLegacyFlatFilesLocked(project)
+	dir := s.threadDir(project, threadID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", "", err
+	}
+	failed := true
+	defer func() {
+		if failed {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	man := Manifest{ID: threadID, Title: title, CreatedAt: now}
+	raw, err := json.MarshalIndent(man, "", "  ")
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), append(raw, '\n'), 0o600); err != nil {
+		return "", "", err
+	}
+	ph := Turn{TurnID: turnID, SHA: sha, Prompt: prompt, Time: now}
+	praw, err := json.MarshalIndent(ph, "", "  ")
+	if err != nil {
+		return "", "", err
+	}
+	// Direct WriteFile, no tmp+rename (torn reads accepted as negligible).
+	if err := os.WriteFile(filepath.Join(dir, "1.json"), append(praw, '\n'), 0o600); err != nil {
+		return "", "", err
+	}
+	// No lineage placeholder: lineage is written once at Complete/Fail.
+	failed = false
+	return threadID, turnID, nil
+}
+
+// ReserveFollowup reserves max(existing N)+1 for an existing thread.
+// Returns the turn index N and the new turnId.
+func (s *Store) ReserveFollowup(project, threadID, prompt, sha string) (int, string, error) {
+	if err := s.check(project); err != nil {
+		return 0, "", err
+	}
+	if !validID(threadID) {
+		return 0, "", fmt.Errorf("unknown thread")
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return 0, "", fmt.Errorf("prompt is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sweepLegacyFlatFilesLocked(project)
+	dir := s.threadDir(project, threadID)
+	man, ok := readManifestLocked(dir)
+	if !ok || man.ID != threadID {
+		return 0, "", fmt.Errorf("unknown thread")
+	}
+	n := maxTurnNLocked(dir) + 1
+	turnID := MintID()
+	ph := Turn{TurnID: turnID, SHA: sha, Prompt: prompt, Time: time.Now().UTC()}
+	raw, err := json.MarshalIndent(ph, "", "  ")
+	if err != nil {
+		return 0, "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, strconv.Itoa(n)+".json"), append(raw, '\n'), 0o600); err != nil {
+		return 0, "", err
+	}
+	return n, turnID, nil
+}
+
+// persistTurnLocked overwrites N.json and writes N.lineage.json beside
+// it. Callers hold s.mu and verified the manifest.
+func persistTurnLocked(dir string, n int, turn Turn, lineage []byte) error {
+	if turn.Time.IsZero() {
+		turn.Time = time.Now().UTC()
+	}
+	raw, err := json.MarshalIndent(turn, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, strconv.Itoa(n)+".json"), append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	if lineage != nil {
+		if err := os.WriteFile(filepath.Join(dir, strconv.Itoa(n)+".lineage.json"), append(lineage, '\n'), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CompleteTurn overwrites N.json with the full turn and writes
+// N.lineage.json beside it, in place. Manifest untouched.
+func (s *Store) CompleteTurn(project, threadID string, n int, turn Turn, lineage []byte) error {
+	if err := s.check(project); err != nil {
+		return err
+	}
+	if !validID(threadID) || n < 1 {
+		return fmt.Errorf("unknown thread")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir := s.threadDir(project, threadID)
+	if man, ok := readManifestLocked(dir); !ok || man.ID != threadID {
+		return fmt.Errorf("unknown thread")
+	}
+	return persistTurnLocked(dir, n, turn, lineage)
+}
+
+// FailTurn fills error in N.json and writes N.lineage.json with the
+// failure graph. The placeholder stays visible.
+func (s *Store) FailTurn(project, threadID string, n int, turn Turn, errMsg string, lineage []byte) error {
+	if err := s.check(project); err != nil {
+		return err
+	}
+	if !validID(threadID) || n < 1 {
+		return fmt.Errorf("unknown thread")
+	}
+	e := errMsg
+	turn.Error = &e
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir := s.threadDir(project, threadID)
+	if man, ok := readManifestLocked(dir); !ok || man.ID != threadID {
+		return fmt.Errorf("unknown thread")
+	}
+	return persistTurnLocked(dir, n, turn, lineage)
+}
+
+// BeginRetry rewrites the LAST (highest-N) turn from scratch (same
+// turnId/path/prompt, fresh time+sha, empty lineage) and returns its
+// turnId, prompt, and N. Context for the rerun is turns 1..N-1 only.
+// Only a failed/crashed last turn is retryable; callers enforce the
+// guard via Get (last turn must be answer-less or errored).
+func (s *Store) BeginRetry(project, threadID, newSHA string) (n int, turnID, prompt string, err error) {
+	if err := s.check(project); err != nil {
+		return 0, "", "", err
+	}
+	if !validID(threadID) {
+		return 0, "", "", fmt.Errorf("unknown thread")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir := s.threadDir(project, threadID)
+	if man, ok := readManifestLocked(dir); !ok || man.ID != threadID {
+		return 0, "", "", fmt.Errorf("unknown thread")
+	}
+	n = maxTurnNLocked(dir)
+	if n < 1 {
+		return 0, "", "", fmt.Errorf("unknown thread")
+	}
+	cur, ok := readTurnLocked(filepath.Join(dir, strconv.Itoa(n)+".json"))
+	if !ok {
+		return 0, "", "", fmt.Errorf("unknown thread")
+	}
+	ph := Turn{TurnID: cur.TurnID, SHA: newSHA, Prompt: cur.Prompt, Time: time.Now().UTC()}
+	raw, err := json.MarshalIndent(ph, "", "  ")
+	if err != nil {
+		return 0, "", "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, strconv.Itoa(n)+".json"), append(raw, '\n'), 0o600); err != nil {
+		return 0, "", "", err
+	}
+	_ = os.Remove(filepath.Join(dir, strconv.Itoa(n)+".lineage.json"))
+	return n, cur.TurnID, cur.Prompt, nil
+}
+
+// Get reassembles a Thread from manifest.json + sorted N.json (numeric
+// sort by file-N; skips manifest + *.lineage.json; gaps as-is in file-N
+// order). Folders without a valid manifest: unknown-thread (404).
+// Manifest-only folders (no 1.json yet): not visible (404).
+func (s *Store) Get(project, id string) (Thread, error) {
+	if err := s.check(project); err != nil {
 		return Thread{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sweepLegacyFlatFilesLocked(project)
+	if !validID(id) {
+		return Thread{}, fmt.Errorf("unknown thread")
+	}
+	dir := s.threadDir(project, id)
+	man, ok := readManifestLocked(dir)
+	if !ok || man.ID != id {
+		return Thread{}, fmt.Errorf("unknown thread")
+	}
+	ns := sortedTurnNsLocked(dir)
+	if len(ns) == 0 {
+		return Thread{}, fmt.Errorf("unknown thread")
+	}
+	th := Thread{ID: man.ID, Project: project, Title: man.Title, CreatedAt: man.CreatedAt, UpdatedAt: man.CreatedAt}
+	for _, n := range ns {
+		t, ok := readTurnLocked(filepath.Join(dir, strconv.Itoa(n)+".json"))
+		if !ok {
+			continue
+		}
+		th.Turns = append(th.Turns, t)
+	}
+	if len(th.Turns) == 0 {
+		return Thread{}, fmt.Errorf("unknown thread")
+	}
+	th.UpdatedAt = th.Turns[len(th.Turns)-1].Time
+	if th.UpdatedAt.IsZero() {
+		th.UpdatedAt = th.CreatedAt
 	}
 	return th, nil
 }
 
-// Get loads one thread.
-func (s *Store) Get(project, id string) (Thread, error) {
-	if s == nil || s.dir == "" {
-		return Thread{}, fmt.Errorf("codemap store not configured")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.read(project, id)
-}
-
-// List returns summaries for a project, newest first.
+// List returns summaries sorted strictly by createdAt, newest first.
+// Per thread: manifest (id/title/createdAt) + 1.json for preview (first
+// prompt, truncate 120) + count of N.json for turnCount. Skips folders
+// without valid manifest or 1.json.
 func (s *Store) List(project string) ([]Summary, error) {
-	if s == nil || s.dir == "" {
-		return nil, fmt.Errorf("codemap store not configured")
+	if err := s.check(project); err != nil {
+		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.sweepLegacyFlatFilesLocked(project)
 	entries, err := os.ReadDir(s.projectDir(project))
 	if os.IsNotExist(err) {
 		return []Summary{}, nil
@@ -229,39 +506,64 @@ func (s *Store) List(project string) ([]Summary, error) {
 	}
 	out := []Summary{}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if !e.IsDir() {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(s.projectDir(project), e.Name()))
-		if err != nil {
+		id := e.Name()
+		if !validID(id) {
 			continue
 		}
-		var th Thread
-		if err := json.Unmarshal(raw, &th); err != nil {
+		dir := filepath.Join(s.projectDir(project), id)
+		man, ok := readManifestLocked(dir)
+		if !ok || man.ID != id {
 			continue
 		}
-		if th.Project != project {
+		first, ok := readTurnLocked(filepath.Join(dir, "1.json"))
+		if !ok {
 			continue
 		}
-		preview := ""
-		if n := len(th.Turns); n > 0 {
-			preview = truncate(th.Turns[n-1].Prompt, 120)
+		ns := sortedTurnNsLocked(dir)
+		updated := man.CreatedAt
+		if len(ns) > 0 {
+			if last, ok := readTurnLocked(filepath.Join(dir, strconv.Itoa(ns[len(ns)-1])+".json")); ok && !last.Time.IsZero() {
+				updated = last.Time
+			}
 		}
 		out = append(out, Summary{
-			ID: th.ID, Title: th.Title, CreatedAt: th.CreatedAt,
-			UpdatedAt: th.UpdatedAt, TurnCount: len(th.Turns), Preview: preview,
+			ID: man.ID, Title: man.Title, CreatedAt: man.CreatedAt,
+			UpdatedAt: updated, TurnCount: len(ns), Preview: truncate(first.Prompt, 120),
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
 	return out, nil
 }
 
-// DeleteProjectDir removes every thread and lineage file of one project.
-// Project deletion calls it: chats are project-scoped artifacts and must
-// not outlive the project. A missing directory is success.
+// Delete removes one thread folder. Idempotent. validID stays.
+func (s *Store) Delete(project, id string) error {
+	if err := s.check(project); err != nil {
+		return err
+	}
+	if !validID(id) {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.RemoveAll(s.threadDir(project, id)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// DeleteProjectDir removes every thread of one project. A missing
+// directory is success.
 func (s *Store) DeleteProjectDir(project string) error {
-	if s == nil || s.dir == "" {
-		return fmt.Errorf("codemap store not configured")
+	if err := s.check(project); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -271,310 +573,20 @@ func (s *Store) DeleteProjectDir(project string) error {
 	return nil
 }
 
-// AppendTurn adds one turn to a thread, stamping time and refreshing the
-// title when the thread still has the default. Caps history at 200 turns
-// (oldest dropped) so files stay small.
-func (s *Store) AppendTurn(project, id string, turn Turn) (Thread, error) {
-	if s == nil || s.dir == "" {
-		return Thread{}, fmt.Errorf("codemap store not configured")
+// ReadTurnLineage loads one N.lineage.json for diagnostics (no HTTP
+// exposure). Not used by thread endpoints or follow-up context.
+func (s *Store) ReadTurnLineage(project, threadID string, n int) ([]byte, error) {
+	if err := s.check(project); err != nil {
+		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	th, err := s.read(project, id)
-	if err != nil {
-		return Thread{}, err
-	}
-	if strings.TrimSpace(turn.Prompt) == "" {
-		return Thread{}, fmt.Errorf("prompt is required")
-	}
-	if turn.Time.IsZero() {
-		turn.Time = time.Now().UTC()
-	}
-	th.Turns = append(th.Turns, turn)
-	if len(th.Turns) > 200 {
-		th.Turns = th.Turns[len(th.Turns)-200:]
-	}
-	oldTitle := th.Title
-	if th.Title == "" || th.Title == "New chat" {
-		th.Title = TitleFromPrompt(turn.Prompt)
-	}
-	th.UpdatedAt = time.Now().UTC()
-	if err := s.save(th); err != nil {
-		return Thread{}, err
-	}
-	// The lineage file follows the title: the first prompt renames both.
-	if th.Title != oldTitle {
-		s.syncLineageNamesLocked(project, id, th.Title)
-	}
-	return th, nil
-}
-
-// Rename sets a thread's title.
-func (s *Store) Rename(project, id, title string) (Thread, error) {
-	if s == nil || s.dir == "" {
-		return Thread{}, fmt.Errorf("codemap store not configured")
-	}
-	title = strings.TrimSpace(title)
-	if title == "" {
-		return Thread{}, fmt.Errorf("title is required")
-	}
-	title = truncate(title, 120)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	th, err := s.read(project, id)
-	if err != nil {
-		return Thread{}, err
-	}
-	oldTitle := th.Title
-	th.Title = title
-	th.UpdatedAt = time.Now().UTC()
-	if err := s.save(th); err != nil {
-		return Thread{}, err
-	}
-	// Keep the debug artifact beside the thread it belongs to.
-	if title != oldTitle {
-		s.syncLineageNamesLocked(project, id, title)
-	}
-	return th, nil
-}
-
-// Delete removes one thread. Missing threads are a success (idempotent).
-func (s *Store) Delete(project, id string) error {
-	if s == nil || s.dir == "" {
-		return fmt.Errorf("codemap store not configured")
-	}
-	if !validID(id) {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if threadPath := s.findThreadPath(project, id); threadPath != "" {
-		if err := os.Remove(threadPath); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	// Lineage files are keyed by thread ID. Remove every artifact belonging to
-	// this thread as well; old files without metadata are left untouched.
-	entries, readErr := os.ReadDir(s.projectDir(project))
-	if readErr == nil {
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".lineage.json") {
-				continue
-			}
-			raw, rerr := os.ReadFile(filepath.Join(s.projectDir(project), e.Name()))
-			if rerr != nil {
-				continue
-			}
-			var meta struct {
-				ThreadID string `json:"threadId"`
-			}
-			if json.Unmarshal(raw, &meta) == nil && meta.ThreadID == id {
-				if err := os.Remove(filepath.Join(s.projectDir(project), e.Name())); err != nil && !os.IsNotExist(err) {
-					return err
-				}
-			}
-		}
-	} else if !os.IsNotExist(readErr) {
-		return readErr
-	}
-	return nil
-}
-
-// lineagePath is the on-disk name for a thread's lineage file: the
-// thread title plus a .lineage.json suffix, mirroring the thread file.
-func (s *Store) lineagePath(project, title string) string {
-	return filepath.Join(s.projectDir(project), titleFilename(title)+".lineage.json")
-}
-
-// findLineagePaths returns every lineage file in the project dir whose
-// threadId matches. Titles can be renamed, so lookup is a scan of the
-// JSON, not a name computation.
-func (s *Store) findLineagePaths(project, threadID string) []string {
-	dir := s.projectDir(project)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".lineage.json") {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		raw, rerr := os.ReadFile(path)
-		if rerr != nil {
-			continue
-		}
-		var meta struct {
-			ThreadID string `json:"threadId"`
-		}
-		if json.Unmarshal(raw, &meta) == nil && meta.ThreadID == threadID {
-			out = append(out, path)
-		}
-	}
-	return out
-}
-
-// syncLineageNamesLocked points every lineage file of threadID at the
-// thread's current title, so renames move the debug artifact together
-// with the thread file. Stale duplicates are removed. Callers hold s.mu.
-func (s *Store) syncLineageNamesLocked(project, threadID, title string) {
-	target := s.lineagePath(project, title)
-	for _, path := range s.findLineagePaths(project, threadID) {
-		if path == target {
-			continue
-		}
-		if _, statErr := os.Stat(target); statErr == nil {
-			_ = os.Remove(path)
-			continue
-		}
-		_ = os.Rename(path, target)
-	}
-}
-
-// SaveLineage writes the debug-only lineage beside its FE thread file,
-// under the same title-derived name with a .lineage.json suffix, and
-// prunes old lineage artifacts without touching the conversation record.
-func (s *Store) SaveLineage(project, threadID, title string, raw []byte) error {
-	if s == nil || s.dir == "" {
-		return fmt.Errorf("codemap store not configured")
-	}
-	if !validID(threadID) {
-		return fmt.Errorf("invalid thread id")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := os.MkdirAll(s.projectDir(project), 0o700); err != nil {
-		return err
-	}
-	path := s.lineagePath(project, title)
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return err
-	}
-	// Stale lineage under an old title (rename between turns) must not
-	// linger beside the fresh file.
-	s.syncLineageNamesLocked(project, threadID, title)
-	return s.pruneLineageLocked(project, 200)
-}
-
-// ReadLineage loads one debug artifact. It is intentionally not used by the
-// frontend thread endpoints, but is useful to diagnostics and tests.
-func (s *Store) ReadLineage(project, threadID string) ([]byte, error) {
-	if s == nil || s.dir == "" {
-		return nil, fmt.Errorf("codemap store not configured")
-	}
-	if !validID(threadID) {
+	if !validID(threadID) || n < 1 {
 		return nil, fmt.Errorf("unknown lineage")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, path := range s.findLineagePaths(project, threadID) {
-		raw, err := os.ReadFile(path)
-		if err == nil {
-			return raw, nil
-		}
-	}
-	return nil, fmt.Errorf("unknown lineage")
-}
-
-func (s *Store) pruneLineageLocked(project string, keep int) error {
-	entries, err := os.ReadDir(s.projectDir(project))
-	if os.IsNotExist(err) {
-		return nil
-	}
+	raw, err := os.ReadFile(filepath.Join(s.threadDir(project, threadID), strconv.Itoa(n)+".lineage.json"))
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("unknown lineage")
 	}
-	type item struct {
-		name string
-		mod  time.Time
-	}
-	var files []item
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".lineage.json") {
-			continue
-		}
-		info, ierr := e.Info()
-		if ierr == nil {
-			files = append(files, item{e.Name(), info.ModTime()})
-		}
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i].mod.After(files[j].mod) })
-	if len(files) <= keep {
-		return nil
-	}
-	for _, f := range files[keep:] {
-		if err := os.Remove(filepath.Join(s.projectDir(project), f.name)); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
-}
-
-// read loads one thread file. Callers hold s.mu.
-func (s *Store) read(project, id string) (Thread, error) {
-	if !validID(id) {
-		return Thread{}, fmt.Errorf("unknown thread")
-	}
-	dir := s.projectDir(project)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return Thread{}, fmt.Errorf("unknown thread")
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || strings.HasSuffix(e.Name(), ".lineage.json") {
-			continue
-		}
-		raw, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
-		if rerr != nil {
-			continue
-		}
-		var th Thread
-		if json.Unmarshal(raw, &th) == nil && th.ID == id && th.Project == project {
-			return th, nil
-		}
-	}
-	return Thread{}, fmt.Errorf("unknown thread")
-}
-
-func (s *Store) save(th Thread) error {
-	if err := os.MkdirAll(s.projectDir(th.Project), 0o700); err != nil {
-		return err
-	}
-	raw, err := json.MarshalIndent(th, "", "  ")
-	if err != nil {
-		return err
-	}
-	dir := s.projectDir(th.Project)
-	oldPath := s.findThreadPath(th.Project, th.ID)
-	base := titleFilename(th.Title)
-	filename := base + ".json"
-	for n := 1; ; n++ {
-		candidate := filepath.Join(dir, filename)
-		if candidate == oldPath {
-			break
-		}
-		if _, statErr := os.Stat(candidate); os.IsNotExist(statErr) {
-			break
-		}
-		filename = fmt.Sprintf("%s (%d).json", base, n)
-	}
-	path := filepath.Join(dir, filename)
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return err
-	}
-	if oldPath != "" && oldPath != path {
-		if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
+	return raw, nil
 }

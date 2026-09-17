@@ -232,7 +232,7 @@ func TestRunFormatsWithSchema(t *testing.T) {
 	if tools, _ := bodies[1]["tools"].([]any); len(tools) != 0 {
 		t.Fatalf("format call must not carry tools")
 	}
-	if lineage.InitialRequest == nil || lineage.ExtractorInput == nil {
+	if lineage.InitialRequest == nil || lineage.PrunedTier1Data == nil {
 		t.Fatalf("lineage missing tier boundaries: %+v", lineage)
 	}
 	if len(lineage.Events) < 4 {

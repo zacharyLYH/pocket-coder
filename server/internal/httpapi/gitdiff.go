@@ -33,13 +33,15 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
-// validGitPath rejects empty, absolute, and parent-escaping paths.
+// validGitPath rejects empty, absolute, parent-escaping, and empty-segment
+// paths. The empty-segment check matches codemap's validRepoPath so the
+// file overlay and the read_file tool accept the same path shapes.
 func validGitPath(p string) bool {
 	if p == "" || len(p) > 1024 || strings.HasPrefix(p, "/") {
 		return false
 	}
 	for _, seg := range strings.Split(p, "/") {
-		if seg == ".." {
+		if seg == ".." || seg == "" {
 			return false
 		}
 	}

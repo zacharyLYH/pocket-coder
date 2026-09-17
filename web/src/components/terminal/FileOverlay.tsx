@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, ChevronLeft, Copy, FileWarning } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api, errMsg, projectPath } from '@/lib/api'
 import type { CodemapFile } from '@/lib/types'
+import { highlight } from '@/lib/highlight'
 
 // FileOverlay is the readonly snippet viewer: a full screen layer over the
 // mounted CodemapTab (no route change, so scroll and prompt survive).
@@ -32,7 +33,21 @@ export function FileOverlay({ projectId, path, start, end, sha, onBack }: {
     return () => { cancelled = true }
   }, [projectId, path, start, end, sha])
 
-  const lines = (file?.content ?? '').split('\n')
+  useEffect(() => {
+    if (!copied) return
+    const t = setTimeout(() => setCopied(false), 1500)
+    return () => clearTimeout(t)
+  }, [copied])
+
+  // Highlight once over the whole excerpt, then split per line so line
+  // numbers survive. Multi-line tokens may bleed color across one
+  // boundary — cosmetic only, text stays exact. A trailing newline must
+  // not produce a phantom extra line past `end`.
+  const htmlLines = useMemo(() => {
+    const content = file?.content ?? ''
+    const trimmed = content.endsWith('\n') ? content.slice(0, -1) : content
+    return highlight(trimmed).split('\n')
+  }, [file?.content])
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background" data-testid="file-overlay" data-path={path}>
@@ -51,7 +66,6 @@ export function FileOverlay({ projectId, path, start, end, sha, onBack }: {
             onClick={() => {
               void navigator.clipboard.writeText(file.content).catch(() => {})
               setCopied(true)
-              setTimeout(() => setCopied(false), 1500)
             }}
           >
             {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
@@ -79,10 +93,10 @@ export function FileOverlay({ projectId, path, start, end, sha, onBack }: {
           <p className="text-xs text-muted-foreground">File moved or range is empty since generation.</p>
         ) : (
           <pre className="overflow-x-auto rounded-xl border bg-muted/40 p-3 font-mono text-xs leading-5" data-testid="file-content">
-            {lines.map((line, i) => (
+            {htmlLines.map((h, i) => (
               <div key={i} className="flex">
                 <span className="w-8 shrink-0 pr-3 text-right text-muted-foreground select-none">{start + i}</span>
-                <span className="flex-1 rounded bg-amber-500/20 px-1">{line || ' '}</span>
+                <span className="hljs flex-1 rounded bg-amber-500/20 px-1" dangerouslySetInnerHTML={{ __html: h || ' ' }} />
               </div>
             ))}
           </pre>

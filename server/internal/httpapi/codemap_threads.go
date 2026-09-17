@@ -1,15 +1,14 @@
-// Codemap thread endpoints: one chat per file (see codemapthreads), many
-// chats per project, listed and reopened from the Codemap pane.
+// Codemap thread endpoints: one folder per thread (see codemapthreads),
+// many chats per project, listed and reopened from the Codemap pane.
 //
 // events.log carries only a lightweight codemap.turn audit line per turn —
-// never the sections themselves. The thread file is the record.
+// never the sections themselves. The thread folder is the record.
 package httpapi
 
 import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"pcoder/internal/codemapthreads"
@@ -32,7 +31,8 @@ func writeUnknownThread(w http.ResponseWriter) {
 	writeErr(w, http.StatusNotFound, "unknown thread")
 }
 
-// handleCodemapThreads lists a project's chats, newest first.
+// handleCodemapThreads lists a project's chats, newest first (strictly by
+// createdAt), plus the in-flight thread id for remount-into-run.
 func handleCodemapThreads(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -48,29 +48,13 @@ func handleCodemapThreads(d Deps) http.HandlerFunc {
 		if summaries == nil {
 			summaries = []codemapthreads.Summary{}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"threads": summaries})
-	}
-}
-
-// handleCodemapThreadCreate starts an empty chat.
-func handleCodemapThreadCreate(d Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		st, ok := threadsOr500(w, d)
-		if !ok {
-			return
+		var running any
+		if tid, busy := codemapRunning(id); busy && tid != "" {
+			running = tid
+		} else {
+			running = nil
 		}
-		var body struct {
-			Title string `json:"title"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		th, err := st.Create(id, body.Title)
-		if err != nil {
-			writeInternalErr(w, "create thread", err)
-			return
-		}
-		plog(d, id, "codemap.thread_created", "new chat "+th.ID, map[string]any{"threadId": th.ID})
-		writeJSON(w, http.StatusCreated, map[string]any{"thread": threadJSON(th)})
+		writeJSON(w, http.StatusOK, map[string]any{"threads": summaries, "runningThreadId": running})
 	}
 }
 
@@ -92,42 +76,10 @@ func handleCodemapThreadGet(d Deps) http.HandlerFunc {
 	}
 }
 
-// handleCodemapThreadRename sets a chat's title.
-func handleCodemapThreadRename(d Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		tid := r.PathValue("tid")
-		st, ok := threadsOr500(w, d)
-		if !ok {
-			return
-		}
-		var body struct {
-			Title string `json:"title"`
-		}
-		if !decodeBody(w, r, &body, false) {
-			return
-		}
-		if strings.TrimSpace(body.Title) == "" {
-			writeErr(w, http.StatusBadRequest, "title is required")
-			return
-		}
-		th, err := st.Rename(id, tid, body.Title)
-		if err != nil {
-			if err.Error() == "unknown thread" {
-				writeUnknownThread(w)
-				return
-			}
-			writeInternalErr(w, "rename thread", err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"thread": threadJSON(th)})
-	}
-}
-
-// handleCodemapThreadDelete drops one chat (its per-thread log file).
-// Idempotent when idle; 409 while that thread's generation is in flight
-// so a run never loses the file it is about to append to. Deleting an
-// unrelated thread during a run stays allowed.
+// handleCodemapThreadDelete drops one chat folder. Idempotent when idle;
+// 409 while that thread's generation is in flight so a run never loses
+// the folder it is about to write to. Deleting an unrelated thread
+// during a run stays allowed.
 func handleCodemapThreadDelete(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -150,22 +102,27 @@ func handleCodemapThreadDelete(d Deps) http.HandlerFunc {
 }
 
 // threadJSON renders a thread with turns shaped as CodemapTurn
-// (turnId/sha/prompt/sections/tools/time) so the frontend reuses the
-// type verbatim.
+// (turnId/sha/prompt/sections/tools/time/error) so the frontend reuses
+// the type verbatim. No extractorOutput: N.json is the user-facing side.
+// Sections default to [] (never null) so the client sees one shape.
 func threadJSON(th codemapthreads.Thread) any {
 	turns := make([]any, 0, len(th.Turns))
 	for _, t := range th.Turns {
-		var sections, extractorOutput any
+		var sections any = []any{}
 		if len(t.Sections) > 0 {
-			_ = json.Unmarshal(t.Sections, &sections)
+			var decoded any
+			if err := json.Unmarshal(t.Sections, &decoded); err == nil && decoded != nil {
+				sections = decoded
+			}
 		}
 		tools := flattenRounds(parseRounds(t.Tools))
-		if len(t.ExtractorOutput) > 0 {
-			_ = json.Unmarshal(t.ExtractorOutput, &extractorOutput)
+		var turnErr any
+		if t.Error != nil {
+			turnErr = *t.Error
 		}
 		turns = append(turns, map[string]any{
 			"turnId": t.TurnID, "sha": t.SHA, "prompt": t.Prompt,
-			"sections": sections, "tools": tools, "extractorOutput": extractorOutput,
+			"sections": sections, "tools": tools, "error": turnErr,
 			"time": t.Time.Format(time.RFC3339),
 		})
 	}

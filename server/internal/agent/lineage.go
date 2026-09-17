@@ -31,14 +31,14 @@ type LineageEvent struct {
 }
 
 type Lineage struct {
-	InitialRequest any            `json:"initialRequest,omitempty"`
-	TurnID         string         `json:"turnId,omitempty"`
-	ThreadID       string         `json:"threadId,omitempty"`
-	Prompt         string         `json:"prompt,omitempty"`
-	Time           time.Time      `json:"time,omitempty"`
-	Events         []LineageEvent `json:"events"`
-	ExtractorInput any            `json:"extractorInput,omitempty"`
-	Error          string         `json:"error,omitempty"`
+	InitialRequest  any            `json:"initialRequest,omitempty"`
+	TurnID          string         `json:"turnId,omitempty"`
+	ThreadID        string         `json:"threadId,omitempty"`
+	Prompt          string         `json:"prompt,omitempty"`
+	Time            time.Time      `json:"time,omitempty"`
+	Events          []LineageEvent `json:"events"`
+	PrunedTier1Data any            `json:"prunedTier1Data,omitempty"`
+	Error           string         `json:"error,omitempty"`
 }
 
 func (l *Lineage) record(kind string, fill func(*LineageEvent)) {

@@ -1,7 +1,7 @@
 // Codemap lifecycle across project deletion: chats are project-scoped
 // artifacts, so scope=all (and scope=metadata) deletes must remove every
-// thread and lineage file from the data dir. This pins both the cascade
-// and the prompt-title naming of thread + lineage files end to end.
+// thread folder from the data dir. This pins both the cascade and the
+// folder-per-thread naming end to end.
 package httpapi
 
 import (
@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -24,7 +25,7 @@ import (
 )
 
 // codemapDeleteDeps is newSessionDeps with the data dir exposed (to assert
-// on the store's files) and the codemap store wired into the project
+// on the store's folders) and the codemap store wired into the project
 // service, mirroring main.go's SetCodemaps cascade.
 func codemapDeleteDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer, *state.Store, string) {
 	t.Helper()
@@ -68,8 +69,8 @@ func TestCodemapDeletedWithProject(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	// One real turn through the loop: creates the thread file (named
-	// after the prompt) and the lineage file beside it.
+	// One real turn through the loop: creates the thread folder with
+	// manifest.json + 1.json + 1.lineage.json inside.
 	const prompt = "Map the auth flow"
 	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"`+prompt+`"}`)
 	if rec.Code != http.StatusOK {
@@ -86,28 +87,55 @@ func TestCodemapDeletedWithProject(t *testing.T) {
 		t.Fatalf("thread identity = %+v, want id and prompt title %q", body, prompt)
 	}
 
-	// Naming contract: thread file is the prompt title; lineage is the
-	// same name with a .lineage.json suffix.
+	// Naming contract: thread dir is the thread ID; it holds
+	// manifest.json + 1.json + 1.lineage.json. No prompt text in any
+	// filename, no flat files directly under the project dir.
 	dir := filepath.Join(dataDir, "codemaps", "abc")
-	threadPath := filepath.Join(dir, prompt+".json")
-	lineagePath := filepath.Join(dir, prompt+".lineage.json")
-	for _, p := range []string{threadPath, lineagePath} {
+	threadDir := filepath.Join(dir, body.ThreadID)
+	for _, p := range []string{
+		filepath.Join(threadDir, "manifest.json"),
+		filepath.Join(threadDir, "1.json"),
+		filepath.Join(threadDir, "1.lineage.json"),
+	} {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("expected %s: %v", p, err)
 		}
 	}
-	lineageRaw, err := os.ReadFile(lineagePath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			t.Fatalf("flat file under project dir: %s", e.Name())
+		}
+		if strings.Contains(e.Name(), "Map") {
+			t.Fatalf("prompt text in filename: %s", e.Name())
+		}
+	}
+	lineageRaw, err := os.ReadFile(filepath.Join(threadDir, "1.lineage.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var lineageMeta struct {
-		ThreadID string `json:"threadId"`
+		ThreadID        string `json:"threadId"`
+		PrunedTier1Data any    `json:"prunedTier1Data"`
 	}
 	if err := json.Unmarshal(lineageRaw, &lineageMeta); err != nil || lineageMeta.ThreadID != body.ThreadID {
 		t.Fatalf("lineage threadId = %q (%v), want %q", lineageMeta.ThreadID, err, body.ThreadID)
 	}
+	if lineageMeta.PrunedTier1Data == nil {
+		t.Fatalf("lineage missing prunedTier1Data: %s", lineageRaw)
+	}
+	turnRaw, err := os.ReadFile(filepath.Join(threadDir, "1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(turnRaw), "extractorOutput") {
+		t.Fatalf("N.json must not carry extractorOutput: %s", turnRaw)
+	}
 
-	// Delete the whole project: codemap files must go with it.
+	// Delete the whole project: codemap folders must go with it.
 	cname := project.ContainerName("abc")
 	md.EXPECT().Stop(mock.Anything, cname, mock.Anything).Return(nil)
 	md.EXPECT().Remove(mock.Anything, cname, true).Return(nil)
@@ -138,19 +166,19 @@ func TestCodemapDeletedWithMetadataScope(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	// A thread file without a model call: the create endpoint suffices.
-	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap/threads", `{}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create thread: got %d %q, want 201", rec.Code, rec.Body)
+	// A thread folder without a model call: reserve directly.
+	tid, _, err := d.Codemaps.ReserveNewThread("abc", "hi?", "s")
+	if err != nil {
+		t.Fatal(err)
 	}
 	dir := filepath.Join(dataDir, "codemaps", "abc")
-	if names, err := os.ReadDir(dir); err != nil || len(names) == 0 {
-		t.Fatalf("thread file missing before delete: %v %v", names, err)
+	if _, err := os.Stat(filepath.Join(dir, tid, "manifest.json")); err != nil {
+		t.Fatalf("thread folder missing before delete: %v", err)
 	}
 
 	// scope=metadata drops the record and, with it, the chats on disk.
 	// No docker expectations: metadata leaves the container alone.
-	rec = authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc?scope=metadata")
+	rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc?scope=metadata")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delete metadata: got %d %q, want 200", rec.Code, rec.Body)
 	}
@@ -158,5 +186,3 @@ func TestCodemapDeletedWithMetadataScope(t *testing.T) {
 		t.Fatalf("codemap dir after metadata delete: %v", err)
 	}
 }
-
-

@@ -49,6 +49,10 @@ These are your rules:
 2. Not enforcing best grammar will help cut out bridge words that users can infer easily
 3. Use tools heavily, but use tools extremely judiciously. Use them often to get all the context you need, but not more than you really need. 
 4. Loop as many rounds as you need to get sufficient context, don't be shy.
+5. All tool paths are relative to the repo root (e.g. "src/main.jsx"), never absolute paths starting with "/".
+6. Think aloud: every message that calls tools also states in one short sentence what you are checking and why, so each round steers the next.
+7. Work efficiently: batch independent tool calls in one block, never re-read a file you already read this turn, and stop calling tools as soon as you can answer.
+8. Close with findings, not actions: your final answer names what the code does and the exact files involved, never the steps you took to find it.
 
 `
 
@@ -63,12 +67,12 @@ func schemaJSON() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"sections": map[string]any{
-				"type": "array",
+				"type": "array", "minItems": 1,
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"title":   map[string]any{"type": "string", "description": "Short step label, e.g. the flow or area name"},
-						"summary": map[string]any{"type": "string", "description": "One or two sentences: name the exact functions involved and the handoff between them (calls, emits, writes to)"},
+						"title":   map[string]any{"type": "string", "maxLength": 80, "description": "Short finding label naming the flow or area, e.g. the auth flow. Never an action like 'Read X': sections report findings, not the exploration"},
+						"summary": map[string]any{"type": "string", "maxLength": 600, "description": "One or two sentences of findings: name the exact functions involved and the handoff between them (calls, emits, writes to). Never describe tool calls, reads, or searches. Markdown lite is fine (inline code, bold)"},
 						"refs": map[string]any{
 							"type":        "array",
 							"description": "Code refs in flow order: entrypoint first, downstream next",
@@ -116,12 +120,17 @@ func decodeArgs(raw string, dst any) error {
 	return nil
 }
 
-func capToolOutput(s string, max int) string {
-	if len(s) > max {
-		return s[:max]
+// cutRunes bounds s at max runes (rune-aware: byte slicing could split a
+// multi-byte rune). capToolOutput is the bare cut for tool results;
+// capOutput marks the cut with an ellipsis for traces.
+func cutRunes(s string, max int) string {
+	if r := []rune(s); len(r) > max {
+		return string(r[:max])
 	}
 	return s
 }
+
+func capToolOutput(s string, max int) string { return cutRunes(s, max) }
 
 // Tools builds the read-only tools bound to one container and repo dir.
 func Tools(exec Executor, container, repoDir string) []agent.Tool {
@@ -149,8 +158,11 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 				if strings.ContainsAny(pattern, "\n\r\x00") {
 					return "", fmt.Errorf("pattern must be one line")
 				}
-				cmd := fmt.Sprintf("grep -rn --exclude-dir=.git --exclude-dir=node_modules --exclude='*.lock' --exclude-dir=dist -I -m 50 -- %s %s | head -50",
-					shQuote(pattern), shQuote(repoDir))
+				// Run from inside the repo so matches come back
+				// repo-relative: absolute matches teach the model to call
+				// read_file with absolute paths, which it must never use.
+				cmd := fmt.Sprintf("cd %s && grep -rn --exclude-dir=.git --exclude-dir=node_modules --exclude='*.lock' --exclude-dir=dist -I -m 50 -- %s . | sed -e \"s|^\\./||\" | head -50",
+					shQuote(repoDir), shQuote(pattern))
 				out, err := exec.ExecCommand(ctx, container, cmd)
 				if err != nil {
 					if out == "" || strings.Contains(err.Error(), "exit 1") {
@@ -166,30 +178,61 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 		},
 		{
 			Name:        "read_file",
-			Description: "Read exact lines of one repo file. Paths stay inside the repo; ranges cap at 120 lines.",
+			Description: "Read exact lines of one repo file. Paths stay inside the repo; ranges cap at 120 lines. Omit start/end to read lines 1-50. Only read paths you have actually seen from list_dir, search_code, or the repo listing — never invent paths.",
 			Schema: objectSchema(map[string]any{
 				"path":  map[string]any{"type": "string", "description": "Repo-relative path"},
-				"start": map[string]any{"type": "integer", "description": "First line, 1-based"},
-				"end":   map[string]any{"type": "integer", "description": "Last line inclusive"},
-			}, "path", "start", "end"),
+				"start": map[string]any{"type": "integer", "description": "First line, 1-based (default 1)"},
+				"end":   map[string]any{"type": "integer", "description": "Last line inclusive (default start+49)"},
+			}, "path"),
 			Run: func(ctx context.Context, argsJSON string) (string, error) {
 				var args struct {
 					Path  string `json:"path"`
-					Start int    `json:"start"`
-					End   int    `json:"end"`
+					Start *int   `json:"start"`
+					End   *int   `json:"end"`
 				}
 				if err := decodeArgs(argsJSON, &args); err != nil {
 					return "", err
 				}
-				if !validRepoPath(args.Path) {
+				// list_dir marks directories with a trailing slash; accept
+				// the same shape back instead of rejecting our own output.
+				path := cleanPath(args.Path)
+				if !validRepoPath(path) {
 					return "", fmt.Errorf("invalid path")
 				}
-				if args.Start < 1 || args.End < args.Start || args.End-args.Start > 119 {
+				// Weak models often call with a bare path. Default the
+				// range instead of failing the step: explicit values are
+				// still validated below.
+				start := 1
+				if args.Start != nil {
+					start = *args.Start
+				}
+				end := start + 49
+				if args.End != nil {
+					end = *args.End
+				}
+				if start < 1 || end < start || end-start > 119 {
 					return "", fmt.Errorf("range must span 1-120 lines with start >= 1")
 				}
-				cmd := fmt.Sprintf("sed -n '%d,%dp' %s", args.Start, args.End, shQuote(repoDir+"/"+args.Path))
+				// Same repo-relative rule as search_code: the path the
+				// model sees in errors must be usable verbatim next call.
+				cmd := fmt.Sprintf("cd %s && sed -n '%d,%dp' %s", shQuote(repoDir), start, end, shQuote(path))
 				out, err := exec.ExecCommand(ctx, container, cmd)
 				if err != nil {
+					// The model reaches for read_file when it wants a
+					// listing: serve a directory read as its listing
+					// instead of an error round-trip.
+					if strings.Contains(out, "Is a directory") || strings.Contains(err.Error(), "Is a directory") {
+						if listing, lerr := listPath(exec, ctx, container, repoDir, path); lerr == nil {
+							return listing, nil
+						}
+						return "", fmt.Errorf("%s is a directory — use list_dir to list it", path)
+					}
+					// Ground the next guess: a miss names its parent's
+					// real contents best-effort, so one failure teaches
+					// the correct path instead of starting a guess loop.
+					if hint := parentListing(exec, ctx, container, repoDir, path); hint != "" {
+						return "", fmt.Errorf("no such file %s — %s contains: %s", path, parentDir(path), hint)
+					}
 					return "", err
 				}
 				if strings.IndexByte(out, 0) >= 0 {
@@ -200,6 +243,36 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 					return "(empty range)", nil
 				}
 				return out, nil
+			},
+		},
+		{
+			Name:        "list_dir",
+			Description: "List files in one repo directory, non-recursive; directories end with /. Paths stay inside the repo; omit path for the repo root. Use this to discover structure before reading.",
+			Schema: objectSchema(map[string]any{
+				"path": map[string]any{"type": "string", "description": "Repo-relative directory (default .)"},
+			}),
+			Run: func(ctx context.Context, argsJSON string) (string, error) {
+				var args struct {
+					Path string `json:"path"`
+				}
+				if err := decodeArgs(argsJSON, &args); err != nil {
+					return "", err
+				}
+				p := cleanPath(args.Path)
+				if p == "" {
+					p = "."
+				}
+				if !validRepoPath(p) {
+					return "", fmt.Errorf("invalid path")
+				}
+				out, err := listPath(exec, ctx, container, repoDir, p)
+				if err != nil {
+					return "", err
+				}
+				if strings.TrimSpace(out) == "" {
+					return "(empty)", nil
+				}
+				return capToolOutput(out, 12*1024), nil
 			},
 		},
 		{
@@ -234,11 +307,11 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 					}
 				}
 				target := ""
-				if strings.TrimSpace(args.Path) != "" {
-					if !validRepoPath(strings.TrimSpace(args.Path)) {
+				if p := cleanPath(args.Path); p != "" {
+					if !validRepoPath(p) {
 						return "", fmt.Errorf("invalid path")
 					}
-					target = " -- " + shQuote(strings.TrimSpace(args.Path))
+					target = " -- " + shQuote(p)
 				}
 				cmd := fmt.Sprintf("git -C %s diff HEAD --stat 2>&1 | head -30; echo '---'; git -C %s diff HEAD%s 2>&1 | head -400", shQuote(repoDir), shQuote(repoDir), target)
 				out, err := exec.ExecCommand(ctx, container, cmd)
@@ -254,6 +327,14 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 	}
 }
 
+// cleanPath normalizes model-supplied paths before validation: slashes
+// trimmed both ends, so leading-slash absolutes (which the model emits
+// despite rule 5) map into the repo and succeed instead of erroring.
+// ".." escapes still fail validRepoPath below.
+func cleanPath(raw string) string {
+	return strings.Trim(strings.TrimSpace(raw), "/")
+}
+
 func validRepoPath(p string) bool {
 	if p == "" || len(p) > 1024 || strings.HasPrefix(p, "/") {
 		return false
@@ -264,6 +345,48 @@ func validRepoPath(p string) bool {
 		}
 	}
 	return true
+}
+
+// parentDir is the containing directory of a repo-relative path, "." for
+// top-level names.
+func parentDir(p string) string {
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[:i]
+	}
+	return "."
+}
+
+// listPath runs one directory listing from inside the repo. ls errors
+// stay silent (stderr dropped): callers decide what empty means.
+func listPath(exec Executor, ctx context.Context, container, repoDir, dir string) (string, error) {
+	return exec.ExecCommand(ctx, container,
+		fmt.Sprintf("cd %s && ls -1 -p -- %s 2>/dev/null | head -100", shQuote(repoDir), shQuote(dir)))
+}
+
+// parentListing names a failed path's siblings best-effort ("" on any
+// failure): strictly a hint for the model's next guess, never an error.
+// Missing parents walk up toward the root: a guess under a nonexistent
+// dir still learns the nearest real listing.
+func parentListing(exec Executor, ctx context.Context, container, repoDir, path string) string {
+	dir := parentDir(path)
+	for {
+		if !validRepoPath(dir) {
+			return ""
+		}
+		if out, err := listPath(exec, ctx, container, repoDir, dir); err == nil {
+			if names := strings.Fields(out); len(names) > 0 {
+				if len(names) > 20 {
+					names = names[:20]
+				}
+				return strings.Join(names, " ")
+			}
+		}
+		if parent := parentDir(dir); parent == dir {
+			return ""
+		} else {
+			dir = parent
+		}
+	}
 }
 
 type ToolStep struct {
@@ -278,26 +401,19 @@ type ToolRound struct {
 	Steps   []ToolStep `json:"steps"`
 }
 
-func repoOrientation(exec Executor, ctx context.Context, container, repoDir string) string {
-	out, err := exec.ExecCommand(ctx, container, "ls -1 "+shQuote(repoDir)+" 2>/dev/null | head -60")
-	if err != nil {
-		return ""
-	}
-	out = strings.TrimSpace(out)
-	if out == "" {
-		return ""
-	}
-	if len(out) > 2*1024 {
-		out = out[:2*1024] + "…"
-	}
-	return out
-}
-
 func capOutput(s string, max int) string {
-	if len(s) > max {
-		return s[:max] + "…"
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
 	}
 	return s
+}
+
+func repoOrientation(exec Executor, ctx context.Context, container, repoDir string) string {
+	out, err := exec.ExecCommand(ctx, container, "ls -1 "+shQuote(repoDir)+" 2>/dev/null | head -60")
+	if err != nil || strings.TrimSpace(out) == "" {
+		return ""
+	}
+	return capOutput(strings.TrimSpace(out), 2*1024)
 }
 
 func Ask(ctx context.Context, cfg agent.Config, exec Executor, container, repoDir, prompt string, history []map[string]any, onTrace func(agent.TraceEvent)) (Result, []ToolRound, *agent.Lineage, error) {
@@ -386,7 +502,32 @@ func Ask(ctx context.Context, cfg agent.Config, exec Executor, container, repoDi
 		}
 		res.Sections[i].Refs = kept
 	}
-	return res, rounds, lin, nil
+	return shapeResult(res), rounds, lin, nil
+}
+
+// shapeResult deterministically enforces the house rules the schema can
+// only suggest: one section per title, no untitled sections, summaries
+// capped. The model owns content; the backend owns shape.
+func shapeResult(res Result) Result {
+	seen := map[string]bool{}
+	out := make([]Section, 0, len(res.Sections))
+	for _, s := range res.Sections {
+		title := strings.TrimSpace(s.Title)
+		if title == "" {
+			continue
+		}
+		key := strings.ToLower(title)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if r := []rune(s.Summary); len(r) > 600 {
+			s.Summary = string(r[:600]) + "…"
+		}
+		out = append(out, s)
+	}
+	res.Sections = out
+	return res
 }
 
 func shQuote(s string) string {
@@ -443,7 +584,7 @@ func hydrateRefs(ctx context.Context, exec Executor, container, repoDir string, 
 			r.EndLine = r.StartLine + 9
 		}
 		if len(r.Function) > 200 {
-			r.Function = r.Function[:200]
+			r.Function = string([]rune(r.Function)[:200])
 		}
 		byPath[r.Path] = append(byPath[r.Path], r)
 	}
@@ -521,8 +662,8 @@ func hydrateRefs(ctx context.Context, exec Executor, container, repoDir string, 
 				continue
 			}
 			snip := strings.Join(lines[off:end], "\n") + "\n"
-			if len(snip) > 4*1024 {
-				snip = snip[:4*1024]
+			if r := []rune(snip); len(r) > 4*1024 {
+				snip = string(r[:4*1024])
 			}
 			r.Snippet = snip
 		}
@@ -532,8 +673,8 @@ func hydrateRefs(ctx context.Context, exec Executor, container, repoDir string, 
 func excerpt(s string) string {
 	s = strings.TrimSpace(s)
 	const max = 500
-	if len(s) > max {
-		return s[:max] + "…"
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
 	}
 	if s == "" {
 		return "(empty)"

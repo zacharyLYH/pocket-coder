@@ -90,15 +90,30 @@ test.describe('codemap desktop', () => {
   test('mocked one-turn reply and file overlay', async ({ page }) => {
     await mockSessions(page)
     await mockConfigured(page)
+    // v2 implicit flow (all 200s, no POST-threads create): the list is
+    // empty, POST /codemap returns the turn, then the tab reloads +
+    // opens the thread from the server.
+    const THREAD = {
+      thread: {
+        id: 'c1', project: FAKE_ID, title: 'Where does login happen?',
+        createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T12:00:00Z',
+        turns: [
+          {
+            turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
+            sections: TURN.sections, tools: [{ tool: 'search_code', args: '{"pattern":"login"}' }],
+            error: null, time: '2026-09-02T12:00:00Z',
+          },
+        ],
+      },
+    }
     await page.route('**/api/projects/*/codemap/threads', async (route) => {
-      if (route.request().method() === 'POST') {
-        await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ thread: { id: 'c1', title: 'New chat', turns: [] } }) })
-      } else {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threads: [] }) })
-      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threads: [], runningThreadId: null }) })
+    })
+    await page.route(/\/api\/projects\/.*\/codemap\/threads\/.+$/, async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(THREAD) })
     })
     await page.route('**/api/projects/*/codemap', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...TURN, threadId: 'c1', threadTitle: 'Where does login happen?' }) })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...TURN, threadId: 'c1', threadTitle: 'Where does login happen?', time: '2026-09-02T12:00:00Z' }) })
     })
     await page.route('**/api/projects/*/file*', async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(FILE_BODY) })
@@ -173,15 +188,15 @@ test.describe('codemap desktop', () => {
   }
 
   async function mockThreads(page: Page, deleted = new Set<string>()) {
-    // Regex: one handler for list, create, detail, and delete — a
-    // trailing glob `threads*` would not cross the `/` before a thread id.
+    // Regex: one handler for list, detail, and delete — a trailing glob
+    // `threads*` would not cross the `/` before a thread id. No create
+    // route in v2 (implicit flow, all 200s); the list carries
+    // runningThreadId (null when idle).
     await page.route(/\/api\/projects\/.*\/codemap\/threads(\/.*)?$/, async (route) => {
       const url = route.request().url()
       const method = route.request().method()
       const detail = url.match(/\/codemap\/threads\/([^/?]+)/)?.[1]
-      if (method === 'POST') {
-        await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ thread: { id: 'c3', title: 'New chat', turns: [] } }) })
-      } else if (method === 'DELETE' && detail) {
+      if (method === 'DELETE' && detail) {
         deleted.add(detail)
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ deleted: true }) })
       } else if (detail && THREAD_BODIES[detail] && !deleted.has(detail)) {
@@ -189,7 +204,7 @@ test.describe('codemap desktop', () => {
       } else if (detail) {
         await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'unknown thread' }) })
       } else {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threads: THREADS.filter((t) => !deleted.has(t.id)) }) })
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threads: THREADS.filter((t) => !deleted.has(t.id)), runningThreadId: null }) })
       }
     })
   }
@@ -245,6 +260,183 @@ test.describe('codemap desktop', () => {
     await page.getByTestId('codemap-history-toggle').click()
     await expect(page.getByTestId('codemap-thread-item')).toHaveCount(1)
     await expect(page.getByTestId('codemap-thread-list')).toContainText('Map this repo')
+  })
+
+  // REQUIRED: remount-into-run (route-mocked, no engine/model). Pins the
+  // §8 contract: busy restore via runningThreadId, block scope
+  // (composer + delete + retry), crash-vs-in-flight, mount-poll only.
+  test('remount into running thread shows spinner and blocks', async ({ page }) => {
+    await mockSessions(page)
+    await mockConfigured(page)
+    const TID = 'ab12cd34ef56ab78cd90ef12'
+    const SUMMARY = {
+      id: TID, title: 'Where does login happen?',
+      createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z',
+      turnCount: 1, preview: 'Where does login happen?',
+    }
+    const placeholder = {
+      turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
+      sections: null, tools: null, error: null, time: '2026-09-02T10:00:00Z',
+    }
+    const filled = {
+      turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
+      sections: TURN.sections, tools: [{ tool: 'search_code', args: '{"pattern":"login"}' }],
+      error: null, time: '2026-09-02T12:00:00Z',
+    }
+    let running: string | null = TID
+    let turn: unknown = placeholder
+    await page.route(/\/api\/projects\/.*\/codemap\/threads(\/.*)?$/, async (route) => {
+      const url = route.request().url()
+      const detail = url.match(/\/codemap\/threads\/([^/?]+)/)?.[1]
+      if (detail) {
+        await route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({
+            thread: {
+              id: TID, project: FAKE_ID, title: 'Where does login happen?',
+              createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T12:00:00Z', turns: [turn],
+            },
+          }),
+        })
+      } else {
+        await route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({ threads: [SUMMARY], runningThreadId: running }),
+        })
+      }
+    })
+    await page.goto(terminalUrl(FAKE_ID, 'main'))
+    await page.getByTestId('tab-codemap').click()
+    // Mount opened the running thread: spinner on the answer-less
+    // placeholder, composer + delete + retry disabled.
+    await expect(page.getByTestId('codemap-turn')).toBeVisible()
+    await expect(page.getByTestId('codemap-spinner')).toBeVisible()
+    await expect(page.getByTestId('codemap-prompt')).toBeDisabled()
+    await expect(page.getByTestId('codemap-generate')).toBeDisabled()
+    await expect(page.getByTestId('codemap-retry')).toBeDisabled()
+    await page.getByTestId('codemap-history-toggle').click()
+    await expect(page.getByTestId('codemap-thread-delete')).toBeDisabled()
+    await page.keyboard.press('Escape')
+    // Completion lands: re-mock with filled sections, revisit via
+    // remount — spinner gone, sections render, controls re-enable.
+    turn = filled
+    running = null
+    await page.reload()
+    await page.getByTestId('tab-codemap').click()
+    await expect(page.getByTestId('codemap-spinner')).toHaveCount(0)
+    await expect(page.getByText('PIN login lives in the auth package')).toBeVisible()
+    await expect(page.getByTestId('codemap-prompt')).toBeEnabled()
+    await expect(page.getByTestId('codemap-retry')).toHaveCount(0)
+  })
+
+  // Remounted runs resolve without a refresh: the tab polls the open
+  // thread while busy-without-own-request and adopts the finished turn.
+  test('remounted run completes without reload', async ({ page }) => {
+    await mockSessions(page)
+    await mockConfigured(page)
+    const TID = 'ab12cd34ef56ab78cd90ef14'
+    const SUMMARY = {
+      id: TID, title: 'Where does login happen?',
+      createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z',
+      turnCount: 1, preview: 'Where does login happen?',
+    }
+    const placeholder = {
+      turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
+      sections: null, tools: null, error: null, time: '2026-09-02T10:00:00Z',
+    }
+    const filled = {
+      turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
+      sections: TURN.sections, tools: [{ tool: 'search_code', args: '{"pattern":"login"}' }],
+      error: null, time: '2026-09-02T12:00:00Z',
+    }
+    let running: string | null = TID
+    let turn: unknown = placeholder
+    await page.route(/\/api\/projects\/.*\/codemap\/threads(\/.*)?$/, async (route) => {
+      const url = route.request().url()
+      const detail = url.match(/\/codemap\/threads\/([^/?]+)/)?.[1]
+      if (detail) {
+        await route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({
+            thread: {
+              id: TID, project: FAKE_ID, title: 'Where does login happen?',
+              createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T12:00:00Z', turns: [turn],
+            },
+          }),
+        })
+      } else {
+        await route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({ threads: [SUMMARY], runningThreadId: running }),
+        })
+      }
+    })
+    await page.goto(terminalUrl(FAKE_ID, 'main'))
+    await page.getByTestId('tab-codemap').click()
+    await expect(page.getByTestId('codemap-spinner')).toBeVisible()
+    // The run finishes elsewhere: no reload, the tab picks it up.
+    turn = filled
+    running = null
+    await expect(page.getByTestId('codemap-spinner')).toHaveCount(0, { timeout: 20000 })
+    await expect(page.getByText('PIN login lives in the auth package')).toBeVisible({ timeout: 20000 })
+    await expect(page.getByTestId('codemap-prompt')).toBeEnabled({ timeout: 20000 })
+  })
+
+  test('crashed placeholder renders failed with enabled retry', async ({ page }) => {    await mockSessions(page)
+    await mockConfigured(page)
+    const TID = 'ab12cd34ef56ab78cd90ef13'
+    const SUMMARY = {
+      id: TID, title: 'Where does login happen?',
+      createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z',
+      turnCount: 1, preview: 'Where does login happen?',
+    }
+    // Retry reruns the crashed turn: handled inside the same threads
+    // route (one handler avoids route-precedence fragility).
+    let retried = false
+    await page.route(/\/api\/projects\/.*\/codemap\/threads(\/.*)?$/, async (route) => {
+      const url = route.request().url()
+      if (/\/retry$/.test(url)) {
+        retried = true
+        await route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({ turnId: 't1', threadId: TID, threadTitle: 'Where does login happen?', time: '2026-09-02T12:00:00Z' }),
+        })
+        return
+      }
+      const detail = url.match(/\/codemap\/threads\/([^/?]+)/)?.[1]
+      if (detail) {
+        await route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({
+            thread: {
+              id: TID, project: FAKE_ID, title: 'Where does login happen?',
+              createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z',
+              turns: [{
+                turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
+                sections: null, tools: null, error: null, time: '2026-09-02T10:00:00Z',
+              }],
+            },
+          }),
+        })
+      } else {
+        // Crash variant: runningThreadId null with an answer-less
+        // placeholder left behind (e.g. across a server restart).
+        await route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({ threads: [SUMMARY], runningThreadId: null }),
+        })
+      }
+    })
+    await page.goto(terminalUrl(FAKE_ID, 'main'))
+    await page.getByTestId('tab-codemap').click()
+    // Failed/crashed with retry hint — NOT a spinner — retry enabled.
+    await expect(page.getByTestId('codemap-turn')).toBeVisible()
+    await expect(page.getByTestId('codemap-spinner')).toHaveCount(0)
+    await expect(page.getByTestId('codemap-failed-hint')).toBeVisible()
+    await expect(page.getByTestId('codemap-retry')).toBeEnabled()
+    await expect(page.getByTestId('codemap-prompt')).toBeEnabled()
+    await page.getByTestId('codemap-retry').click()
+    await expect.poll(() => retried).toBe(true)
   })
 })
 

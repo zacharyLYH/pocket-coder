@@ -277,12 +277,12 @@ func TestCodemapDeleteBusy(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	// Seed two threads directly in the store.
-	thA, err := d.Codemaps.Create("abc", "a")
+	// Seed two threads directly in the store (folder per thread).
+	thA, _, err := d.Codemaps.ReserveNewThread("abc", "a?", "s")
 	if err != nil {
 		t.Fatal(err)
 	}
-	thB, err := d.Codemaps.Create("abc", "b")
+	thB, _, err := d.Codemaps.ReserveNewThread("abc", "b?", "s")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,11 +296,11 @@ func TestCodemapDeleteBusy(t *testing.T) {
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		done <- authedPost(t, h, cookie, "/api/projects/abc/codemap",
-			`{"prompt":"where is main?","threadId":"`+thA.ID+`"}`)
+			`{"prompt":"where is main?","threadId":"`+thA+`"}`)
 	}()
 	// Wait until the run holds the slot for thA.
 	for i := 0; i < 200; i++ {
-		if running, busy := codemapRunning("abc"); busy && running == thA.ID {
+		if running, busy := codemapRunning("abc"); busy && running == thA {
 			break
 		}
 		select {
@@ -310,12 +310,12 @@ func TestCodemapDeleteBusy(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc/codemap/threads/"+thA.ID)
+	rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc/codemap/threads/"+thA)
 	if rec.Code != http.StatusConflict {
 		once.Do(func() { close(release) })
 		t.Fatalf("delete in-flight thread: got %d %q, want 409", rec.Code, rec.Body)
 	}
-	rec = authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc/codemap/threads/"+thB.ID)
+	rec = authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc/codemap/threads/"+thB)
 	if rec.Code != http.StatusOK {
 		once.Do(func() { close(release) })
 		t.Fatalf("delete unrelated thread during run: got %d %q, want 200", rec.Code, rec.Body)
@@ -371,27 +371,6 @@ func TestThreadHistoryRoundsAndTranscript(t *testing.T) {
 	}
 }
 
-// Legacy flat tool lists replay as a single round.
-func TestThreadHistoryLegacyFlatTools(t *testing.T) {
-	tools, _ := json.Marshal([]map[string]any{
-		{"tool": "search_code", "args": `{"pattern":"x"}`, "output": "hit"},
-	})
-	th := codemapthreads.Thread{ID: "t", Project: "abc", Turns: []codemapthreads.Turn{
-		{TurnID: "r1", Prompt: "hi?", Sections: json.RawMessage(`[{"title":"A","summary":"s","refs":[]}]`), Tools: tools},
-	}}
-	h := threadHistory(th)
-	rounds := 0
-	for _, e := range h {
-		if e["role"] == "assistant" && e["toolSteps"] != nil {
-			rounds++
-		}
-	}
-	if rounds != 1 {
-		raw, _ := json.Marshal(h)
-		t.Fatalf("legacy rounds = %d, want 1: %s", rounds, string(raw))
-	}
-}
-
 // The POST response carries the server timestamp so the optimistic turn
 // renders its time without a reload.
 func TestCodemapResponseHasTime(t *testing.T) {
@@ -433,8 +412,8 @@ func TestCodemapResponseHasTime(t *testing.T) {
 }
 
 // A provider 200 with choices:null (free-tier gateways do this) fails the
-// turn but keeps the thread: new chats still get a threadId and an
-// on-disk file with zero turns; the error names the cause.
+// turn but keeps the thread: new chats still get a threadId and a 1.json
+// failed placeholder (error set, no sections); the error names the cause.
 func TestCodemapNullChoicesKeepsNewThread(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
@@ -470,10 +449,21 @@ func TestCodemapNullChoicesKeepsNewThread(t *testing.T) {
 	}
 	th, err := d.Codemaps.Get("abc", body.ThreadID)
 	if err != nil {
-		t.Fatalf("thread file missing after failure: %v", err)
+		t.Fatalf("thread folder missing after failure: %v", err)
 	}
-	if len(th.Turns) != 0 {
-		t.Fatalf("failed new chat turns = %d, want 0", len(th.Turns))
+	if len(th.Turns) != 1 {
+		t.Fatalf("failed new chat turns = %d, want 1 failed placeholder", len(th.Turns))
+	}
+	if th.Turns[0].Error == nil || !strings.Contains(*th.Turns[0].Error, "no choices") {
+		t.Fatalf("placeholder error missing cause: %+v", th.Turns[0])
+	}
+	if len(th.Turns[0].Sections) > 0 && string(th.Turns[0].Sections) != "null" {
+		t.Fatalf("failed placeholder must have no sections: %s", th.Turns[0].Sections)
+	}
+	// The failure graph lands beside the turn, never in N.json.
+	lin, err := d.Codemaps.ReadTurnLineage("abc", body.ThreadID, 1)
+	if err != nil || !strings.Contains(string(lin), "no choices") {
+		t.Fatalf("lineage = %q, %v", lin, err)
 	}
 }
 
@@ -492,17 +482,18 @@ func TestCodemapNullChoicesKeepsExistingThread(t *testing.T) {
 	f := newFakeModel(t, nullChoices, nullChoices, nullChoices)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
-	seeded, err := d.Codemaps.Create("abc", "prior")
+	seeded, _, err := d.Codemaps.ReserveNewThread("abc", "first?", "s")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Codemaps.AppendTurn("abc", seeded.ID, codemapthreads.Turn{Prompt: "first?"}); err != nil {
+	sec, _ := json.Marshal([]map[string]any{{"title": "A"}})
+	if err := d.Codemaps.CompleteTurn("abc", seeded, 1, codemapthreads.Turn{TurnID: "t1", Prompt: "first?", Sections: sec, Time: time.Now()}, nil); err != nil {
 		t.Fatal(err)
 	}
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap",
-		`{"prompt":"follow up","threadId":"`+seeded.ID+`"}`)
+		`{"prompt":"follow up","threadId":"`+seeded+`"}`)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("null choices: got %d %q, want 502", rec.Code, rec.Body)
 	}
@@ -513,14 +504,17 @@ func TestCodemapNullChoicesKeepsExistingThread(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.ThreadID != seeded.ID {
-		t.Fatalf("threadId = %q, want %q", body.ThreadID, seeded.ID)
+	if body.ThreadID != seeded {
+		t.Fatalf("threadId = %q, want %q", body.ThreadID, seeded)
 	}
-	th, err := d.Codemaps.Get("abc", seeded.ID)
+	th, err := d.Codemaps.Get("abc", seeded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(th.Turns) != 1 || th.Turns[0].Prompt != "first?" {
+	if len(th.Turns) != 2 || th.Turns[0].Prompt != "first?" {
 		t.Fatalf("prior turns lost: %+v", th.Turns)
+	}
+	if th.Turns[1].Error == nil || th.Turns[1].Prompt != "follow up" {
+		t.Fatalf("failed follow-up not a failed placeholder: %+v", th.Turns[1])
 	}
 }

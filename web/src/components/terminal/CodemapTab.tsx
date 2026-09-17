@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, Bot, Check, ChevronDown, Copy, FileText, History, LoaderCircle, Plus, Sparkles, Trash2, Wrench } from 'lucide-react'
+import { ArrowUp, Bot, Check, ChevronDown, Copy, FileText, History, LoaderCircle, Plus, RotateCcw, Sparkles, Trash2, Wrench } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -18,6 +18,8 @@ import { ApiError, api, errMsg, projectPath } from '@/lib/api'
 import type { CodemapSection, CodemapThread, CodemapThreadSummary, CodemapToolCall, CodemapTurn } from '@/lib/types'
 import { useAiConfig } from '@/hooks/useAiConfig'
 import { FileOverlay } from '@/components/terminal/FileOverlay'
+import { CodeBlock } from '@/components/CodeBlock'
+import { Markdown } from '@/components/Markdown'
 
 // Suggestion chips double as the empty-state welcome (the assistant-ui
 // ThreadWelcome + Suggestions shape): they show what good input looks
@@ -69,6 +71,10 @@ function Steps({ tools }: { tools: CodemapToolCall[] }) {
 
 function CopySnippet({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current)
+  }, [])
   return (
     <button
       className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -77,7 +83,8 @@ function CopySnippet({ text }: { text: string }) {
         e.stopPropagation()
         void navigator.clipboard.writeText(text).catch(() => {})
         setCopied(true)
-        setTimeout(() => setCopied(false), 1500)
+        if (timer.current) clearTimeout(timer.current)
+        timer.current = setTimeout(() => setCopied(false), 1500)
       }}
     >
       {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
@@ -85,38 +92,61 @@ function CopySnippet({ text }: { text: string }) {
   )
 }
 
+// optimisticTitle mirrors the server's TitleFromPrompt (first line,
+// 60 chars) until the server truncation wins on response.
+function optimisticTitle(q: string): string {
+  const first = q.split('\n')[0] ?? ''
+  const flat = first.replace(/\s+/g, ' ').trim()
+  if (!flat) return 'New chat'
+  return flat.length > 60 ? flat.slice(0, 60) + '…' : flat
+}
+
 // Codemap tab: ask-about-the-code over the agent loop, laid out like an
-// assistant-ui thread. One chat per thread, many threads per project —
-// each thread is its own server-side file, listed in the history menu.
-// The active thread's turns render here; the server rebuilds context
-// from the persisted thread file on every send.
+// assistant-ui thread. One folder per thread server-side, many threads
+// per project — listed in the history menu. New chats stay local-only
+// until the first send; the server rebuilds context from the persisted
+// turns on every send.
 export function CodemapTab({ projectId }: { projectId: string }) {
   const { status: ai } = useAiConfig()
   const [threads, setThreads] = useState<CodemapThreadSummary[]>([])
   // No localStorage: the server is the source of truth. Mount opens the
-  // newest thread; the composer starts empty every time.
+  // newest thread (or the running one when remounting into a run); the
+  // composer starts empty every time.
   const [activeId, setActiveId] = useState<string | null>(null)
   const [turns, setTurns] = useState<CodemapTurn[]>([])
   const [title, setTitle] = useState<string>('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
+  // Own request in flight (generate/retry below). Remount-into-run sets
+  // busy without it — that is the only state the watch effect polls for.
+  const [ownFlight, setOwnFlight] = useState(false)
+  const [runningThreadId, setRunningThreadId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [overlay, setOverlay] = useState<OverlaySel | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   // Mirror of activeId for the in-flight guard: generate() captures the
-  // thread it sent for, and only appends when the user is still viewing
-  // that same thread at completion.
+  // thread it sent for, and only adopts the result when the user is still
+  // viewing that same thread at completion.
   const activeIdRef = useRef<string | null>(null)
   useEffect(() => {
     activeIdRef.current = activeId
   }, [activeId])
 
+  // Mid-generation UI block (codemap tab only; other tabs free): while
+  // busy (own POST in flight) OR the open thread is someone else's run
+  // (remounted into it via runningThreadId), the composer +
+  // history-delete + retry buttons disable.
+  const blocked = busy || (activeId !== null && runningThreadId !== null && activeId === runningThreadId)
+
   const loadThreads = useCallback(async () => {
     try {
-      const d = await api<{ threads: CodemapThreadSummary[] }>(projectPath(projectId, '/codemap/threads'))
+      const d = await api<{ threads: CodemapThreadSummary[]; runningThreadId?: string | null }>(
+        projectPath(projectId, '/codemap/threads'),
+      )
       setThreads(d.threads ?? [])
-      return d.threads ?? []
+      setRunningThreadId(d.runningThreadId ?? null)
+      return { threads: d.threads ?? [], runningThreadId: d.runningThreadId ?? null }
     } catch {
       return null
     }
@@ -130,6 +160,13 @@ export function CodemapTab({ projectId }: { projectId: string }) {
       setTurns(d.thread.turns ?? [])
       setError(null)
     } catch (e) {
+      // Unknown after delete-elsewhere: drop the stale transcript instead
+      // of leaving the old turns visible under an error banner.
+      if (e instanceof ApiError && e.status === 404) {
+        setActiveId(null)
+        setTitle('')
+        setTurns([])
+      }
       setError(errMsg(e))
     }
   }, [projectId])
@@ -137,10 +174,19 @@ export function CodemapTab({ projectId }: { projectId: string }) {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const list = await loadThreads()
-      if (cancelled || !list) return
-      if (list.length > 0) {
-        void openThread(list[0].id)
+      const loaded = await loadThreads()
+      if (cancelled || !loaded) return
+      // Remount-into-run: the list carries runningThreadId (no new
+      // endpoint, mount-poll only). When set, open that thread and flag
+      // busy so the answer-less placeholder shows its spinner and the
+      // composer/delete/retry block until the next revisit.
+      if (loaded.runningThreadId) {
+        setBusy(true)
+        void openThread(loaded.runningThreadId)
+        return
+      }
+      if (loaded.threads.length > 0) {
+        void openThread(loaded.threads[0].id)
       }
       // else: no chats yet — pending state until the first send
     })()
@@ -158,60 +204,116 @@ export function CodemapTab({ projectId }: { projectId: string }) {
     if (pinned || turns.length <= 1) el.scrollTop = el.scrollHeight
   }, [turns, busy])
 
+  // Watch a remounted run: busy without an own request means this tab did
+  // not start the run, so no response will ever clear it. Poll the open
+  // thread until its last turn resolves (sections or error), then adopt
+  // it like a response. Own flights skip this — their POST resolves them.
+  useEffect(() => {
+    if (!busy || ownFlight || !activeId) return
+    const id = setInterval(() => {
+      void (async () => {
+        try {
+          const d = await api<{ thread: CodemapThread }>(
+            projectPath(projectId, `/codemap/threads/${encodeURIComponent(activeId)}`),
+          )
+          const last = (d.thread.turns ?? []).at(-1)
+          const resolved = last != null && ((last.sections != null && last.sections.length > 0) || (last.error !== undefined && last.error !== null && last.error !== ''))
+          if (!resolved) return
+          clearInterval(id)
+          setTitle(d.thread.title)
+          setTurns(d.thread.turns ?? [])
+          setError(null)
+          setBusy(false)
+          void loadThreads()
+        } catch (e) {
+          // Thread vanished mid-run (deleted elsewhere): drop the block
+          // and fall back to the list rather than spinning forever.
+          // Any other error (500, network blip) keeps polling: one
+          // transient failure must not unblock a still-running turn.
+          if (e instanceof ApiError && e.status === 404) {
+            clearInterval(id)
+            setBusy(false)
+            void loadThreads()
+          }
+        }
+      })()
+    }, 2000)
+    return () => clearInterval(id)
+  }, [busy, ownFlight, activeId, projectId, loadThreads])
+
+  // Shared response handling for generate() and retry(): success adopts
+  // threadId + threadTitle (server truncation wins), then reloads + opens.
+  // Failure with a threadId opens the failed placeholder the same way.
+  // The composer stays cleared throughout — retry is a button, not a
+  // composer resend.
+  async function adoptResult(
+    sendThreadId: string | null,
+    d: { threadId?: string; threadTitle?: string },
+  ) {
+    if (d.threadTitle) setTitle(d.threadTitle)
+    if (d.threadId) {
+      if (sendThreadId == null) {
+        if (activeIdRef.current == null) setActiveId(d.threadId)
+      } else if (activeIdRef.current !== sendThreadId) {
+        // Switched threads mid-run: the turn persisted server-side under
+        // its own thread; leave the visible transcript alone.
+        void loadThreads()
+        return
+      }
+      await loadThreads()
+      await openThread(d.threadId)
+    } else {
+      void loadThreads()
+    }
+  }
+
+  // One flight for generate() and retry(): busy/ownFlight guard the
+  // composer, a 409 refreshes the running marker so the UI blocks
+  // instead of letting the user hammer 409 in a loop, and a failure
+  // carrying a threadId opens the failed placeholder the same way.
+  async function runTurn(sendThreadId: string | null, path: string, body: string) {
+    setBusy(true)
+    setOwnFlight(true)
+    setError(null)
+    try {
+      const d = await api<{ threadId?: string; threadTitle?: string }>(
+        projectPath(projectId, path),
+        { method: 'POST', body },
+      )
+      await adoptResult(sendThreadId, d)
+    } catch (e) {
+      if (e instanceof ApiError && e.body?.threadId) {
+        await adoptResult(sendThreadId, { threadId: e.body.threadId, threadTitle: e.body.threadTitle })
+      }
+      if (e instanceof ApiError && e.status === 409) {
+        void loadThreads()
+      }
+      setError(errMsg(e))
+    } finally {
+      setBusy(false)
+      setOwnFlight(false)
+    }
+  }
+
   async function generate() {
     const q = prompt.trim()
-    if (!q || busy) return
+    if (!q || blocked) return
+    if ([...q].length > 4000) {
+      setError('Prompt over 4000 chars')
+      return
+    }
     // Capture the thread this prompt belongs to: if the user switches
     // threads mid-run, the finished answer must not land in the wrong
     // transcript (it is already persisted server-side under sendThreadId).
     const sendThreadId = activeIdRef.current
-    // Clear the composer on send so the thread feels instant; restore the
-    // text only if the request fails.
+    if (sendThreadId == null) setTitle(optimisticTitle(q))
     setPrompt('')
-    setBusy(true)
-    setError(null)
-    try {
-      // Server-authoritative context: the thread file is both the record
-      // and the context source. The client sends only the prompt; the
-      // server rebuilds history from the persisted thread.
-      const d = await api<{ turnId: string; sha: string; sections: CodemapSection[]; tools: CodemapToolCall[]; threadId?: string; threadTitle?: string; time?: string }>(
-        projectPath(projectId, '/codemap'),
-        { method: 'POST', body: JSON.stringify({ prompt: q, threadId: sendThreadId ?? undefined }) },
-      )
-      // Still viewing the thread this prompt was sent for? Append with
-      // the server timestamp so the turn shows its time immediately.
-      // Otherwise leave the visible transcript alone — the turn is
-      // already persisted under its own thread file.
-      const nowIso = d.time ?? new Date().toISOString()
-      const turn = { turnId: d.turnId, sha: d.sha, prompt: q, sections: d.sections, tools: d.tools ?? [], time: nowIso }
-      if (sendThreadId != null) {
-        if (activeIdRef.current === sendThreadId) {
-          setTurns((prev) => [...prev, turn])
-          if (d.threadTitle) setTitle(d.threadTitle)
-        }
-      } else {
-        if (activeIdRef.current == null && d.threadId) {
-          setActiveId(d.threadId)
-          setTurns([turn])
-          if (d.threadTitle) setTitle(d.threadTitle)
-        }
-      }
-      void loadThreads()
-    } catch (e) {
-      // The server keeps the thread file even on failure (created before
-      // the run) and returns its id: adopt it so the empty chat is
-      // selected and retryable instead of lost.
-      if (e instanceof ApiError && sendThreadId == null && e.body?.threadId && activeIdRef.current == null) {
-        setActiveId(e.body.threadId)
-        if (e.body?.threadTitle) setTitle(e.body.threadTitle)
-        setTurns([])
-        void loadThreads()
-      }
-      setError(errMsg(e))
-      setPrompt(q)
-    } finally {
-      setBusy(false)
-    }
+    await runTurn(sendThreadId, '/codemap', JSON.stringify({ prompt: q, threadId: sendThreadId ?? undefined }))
+  }
+
+  async function retry() {
+    if (!activeId || busy) return
+    await runTurn(activeId, `/codemap/threads/${encodeURIComponent(activeId)}/retry`, JSON.stringify({}))
   }
 
   function newChat() {
@@ -223,6 +325,7 @@ export function CodemapTab({ projectId }: { projectId: string }) {
   }
 
   async function deleteThread(id: string) {
+    if (blocked) return
     try {
       await api(projectPath(projectId, `/codemap/threads/${encodeURIComponent(id)}`), { method: 'DELETE' })
     } catch (e) {
@@ -236,7 +339,7 @@ export function CodemapTab({ projectId }: { projectId: string }) {
   function formatTime(iso?: string): string {
     if (!iso) return ''
     const t = new Date(iso)
-    return Number.isNaN(t.getTime()) ? '' : t.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    return Number.isNaN(t.getTime()) ? '' : t.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
 
   // SectionBlock renders one Devin-style flow step: a numbered, succinct
@@ -264,7 +367,9 @@ export function CodemapTab({ projectId }: { projectId: string }) {
         </button>
         {open && (
           <div className="border-t px-3 py-2">
-            <p className="text-sm whitespace-pre-wrap">{s.summary}</p>
+            <div className="text-sm whitespace-pre-wrap">
+              <Markdown text={s.summary} />
+            </div>
             {refs.length > 0 && (
               <div className="mt-2 flex flex-col gap-2">
                 {s.refs.map((r, j) => (
@@ -295,9 +400,10 @@ export function CodemapTab({ projectId }: { projectId: string }) {
                       <span className="flex-1" />
                       <CopySnippet text={r.snippet} />
                     </span>
-                    <pre className="mt-1.5 overflow-x-auto rounded-lg bg-muted/60 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
-                      {r.snippet}
-                    </pre>
+                    <CodeBlock
+                      code={r.snippet}
+                      className="mt-1.5 overflow-x-auto rounded-lg bg-muted/60 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap"
+                    />
                   </div>
                 ))}
               </div>
@@ -320,6 +426,75 @@ export function CodemapTab({ projectId }: { projectId: string }) {
           <SectionBlock key={i} s={s} index={i} sha={sha} defaultOpen={openFirstOnly ? i === 0 : true} />
         ))}
       </div>
+    )
+  }
+
+  // FailCard is the shared failed/crashed bubble: title + optional error
+  // + hint + retry on the last turn only + tool trace. testids stay so
+  // e2e keeps finding the hint and the retry button in every branch.
+  function FailCard({ title, error, hint, isLast, tools }: { title: string; error?: string | null; hint: string; isLast: boolean; tools?: CodemapToolCall[] | null }) {
+    return (
+      <div className="flex flex-col gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3">
+        <p className="text-sm font-medium text-destructive">{title}</p>
+        {error && <p className="text-xs break-words text-muted-foreground">{error}</p>}
+        <p className="text-xs text-muted-foreground" data-testid="codemap-failed-hint">
+          {hint}
+        </p>
+        {isLast && (
+          <div>
+            <Button size="sm" variant="outline" onClick={() => void retry()} disabled={blocked} data-testid="codemap-retry">
+              <RotateCcw className="size-3.5" />
+              Retry turn
+            </Button>
+          </div>
+        )}
+        <Steps tools={tools ?? []} />
+      </div>
+    )
+  }
+
+  // renderTurnBody pins the §8 contract: failed turns (error string) get a
+  // failed bubble + hint + retry button on the last turn only;
+  // answer-less + error:null turns are in-flight (spinner) when their
+  // thread is the running one, else crashed/failed with a retry hint.
+  function renderTurnBody(t: CodemapTurn, isLast: boolean) {
+    const hasError = t.error !== undefined && t.error !== null && t.error !== ''
+    const answerless = (t.sections == null || t.sections.length === 0) && !hasError
+    if (hasError) {
+      return <FailCard title="This turn failed." error={t.error} hint="The failed turn is saved. Retry it with the button below." isLast={isLast} tools={t.tools} />
+    }
+    if (answerless) {
+      // Crash-vs-in-flight rides on runningThreadId alone: the
+      // project-wide busy flag cannot disambiguate cross-thread. The
+      // owner's own run never shows a placeholder pre-completion (no
+      // optimistic append), so a visible answer-less turn is in-flight
+      // only when its thread is the running one.
+      const inFlight = activeId !== null && runningThreadId !== null && activeId === runningThreadId
+      if (inFlight) {
+        return (
+          <div className="flex flex-col gap-2 py-1" data-testid="codemap-spinner">
+            <div className="flex items-center gap-2.5">
+              <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
+              <p className="text-xs text-muted-foreground">Searching the repo… progress lands in Logs.</p>
+            </div>
+            {isLast && (
+              <div>
+                <Button size="sm" variant="outline" disabled data-testid="codemap-retry">
+                  <RotateCcw className="size-3.5" />
+                  Retry turn
+                </Button>
+              </div>
+            )}
+          </div>
+        )
+      }
+      return <FailCard title="This turn didn't finish." hint="The run crashed or the server restarted before it answered. Retry it with the button below." isLast={isLast} tools={t.tools} />
+    }
+    return (
+      <>
+        {renderSections(t.sections, t.sha)}
+        <Steps tools={t.tools ?? []} />
+      </>
     )
   }
 
@@ -370,6 +545,7 @@ export function CodemapTab({ projectId }: { projectId: string }) {
                       className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
                       aria-label={`Delete ${t.title}`}
                       data-testid="codemap-thread-delete"
+                      disabled={blocked}
                       onClick={() => void deleteThread(t.id)}
                     >
                       <Trash2 className="size-3.5" />
@@ -408,7 +584,7 @@ export function CodemapTab({ projectId }: { projectId: string }) {
               </div>
             </div>
           )}
-          {turns.map((t) => (
+          {turns.map((t, i) => (
             <div key={t.turnId} className="flex flex-col gap-3" data-testid="codemap-turn">
               <div className="flex justify-end">
                 <div className="max-w-[85%] rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
@@ -421,8 +597,7 @@ export function CodemapTab({ projectId }: { projectId: string }) {
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   {t.time && <p className="mb-1 text-[11px] text-muted-foreground">{formatTime(t.time)}</p>}
-                  {renderSections(t.sections, t.sha)}
-                  <Steps tools={t.tools ?? []} />
+                  {renderTurnBody(t, i === turns.length - 1)}
                 </div>
               </div>
             </div>
@@ -451,6 +626,7 @@ export function CodemapTab({ projectId }: { projectId: string }) {
             <textarea
               placeholder="Ask anything..."
               value={prompt}
+              disabled={blocked}
               onChange={(e) => setPrompt(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -466,7 +642,7 @@ export function CodemapTab({ projectId }: { projectId: string }) {
               <Button
                 size="icon"
                 onClick={() => void generate()}
-                disabled={busy || !prompt.trim() || ai?.configured === false}
+                disabled={blocked || !prompt.trim() || ai?.configured === false}
                 data-testid="codemap-generate"
                 aria-label="Send"
                 className="size-8 shrink-0 rounded-full"

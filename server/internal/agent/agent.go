@@ -143,12 +143,8 @@ func isSchemaError(err error) bool {
 	return strings.Contains(s, "response_format") || strings.Contains(s, "json_schema")
 }
 
-// Run executes the turn cycle: send messages, run tool calls, append
-// results, repeat until the model answers without tools or maxSteps hits.
-// onTrace receives every tool start/done plus model failures; it may be
-// nil when the caller does not care. lin records the full debug lineage
-// (nil disables). The json_schema is enforced exactly once, post-loop,
-// in a tools-free format call — never inside the tool loop.
+// toolReply wraps model-visible tool text. Empty results still need a
+// message (providers reject tool calls with no reply).
 func toolReply(id, content string) openai.ChatCompletionMessageParamUnion {
 	if content == "" {
 		content = "(empty)"
@@ -171,8 +167,7 @@ type replayStep struct {
 }
 
 // parseToolSteps decodes the internal toolSteps array on rebuilt assistant
-// history entries. Old shapes ({tool,args} without output) parse with
-// empty results; callers decide whether to replay them.
+// history entries.
 func parseToolSteps(v any) []replayStep {
 	raw, err := json.Marshal(v)
 	if err != nil || len(raw) == 0 {

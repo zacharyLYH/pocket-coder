@@ -1,7 +1,7 @@
 // Codemap endpoints: ask-about-the-code over the agent loop, plus the
 // read only file reader the snippet overlay consumes.
 //
-// Chats live in per-thread files (see codemapthreads), not events.log.
+// Chats live in per-thread folders (see codemapthreads), not events.log.
 // Tools are read only. No write path exists in this file.
 package httpapi
 
@@ -22,9 +22,10 @@ import (
 
 // codemapBusy serializes one run per project: a second POST while one is
 // in flight gets 409 codemap busy instead of burning a second loop.
-// The value is the in-flight thread ID ("" for a new chat whose thread
-// does not exist yet), so DELETE can refuse to drop a thread mid-run
-// while still allowing unrelated threads through.
+// The value is the in-flight thread ID ("" only transiently before a new
+// chat reserves its folder), so DELETE can refuse to drop a thread
+// mid-run while still allowing unrelated threads through, and GET
+// threads can surface it as runningThreadId for remount-into-run.
 var codemapBusy = struct {
 	mu sync.Mutex
 	m  map[string]string
@@ -47,8 +48,8 @@ func codemapRunning(id string) (string, bool) {
 	return tid, ok
 }
 
-// codemapSet updates the in-flight thread for a project that already
-// holds the slot (e.g. a new chat whose thread is created upfront).
+// codemapSet points the busy slot at a fresh folder id so same-thread
+// DELETE 409s and GET threads reports it while the first turn runs.
 func codemapSet(id, threadID string) {
 	codemapBusy.mu.Lock()
 	defer codemapBusy.mu.Unlock()
@@ -58,8 +59,8 @@ func codemapSet(id, threadID string) {
 }
 
 // writeCodemapErr answers a failed turn with the thread identity intact,
-// so the client can open the (possibly empty) thread file and retry
-// instead of losing it.
+// so the client can open the failed placeholder turn and retry instead
+// of losing it.
 func writeCodemapErr(w http.ResponseWriter, status int, msg, threadID, threadTitle string) {
 	body := map[string]any{"error": msg}
 	if threadID != "" {
@@ -108,7 +109,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "prompt is required")
 			return
 		}
-		if len(prompt) > 4000 {
+		if len([]rune(prompt)) > 4000 {
 			writeErr(w, http.StatusBadRequest, "prompt over 4000 chars")
 			return
 		}
@@ -129,13 +130,11 @@ func handleCodemap(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "codemap store", errStoreUnconfigured)
 			return
 		}
-		// Server-authoritative context: the thread file is both the
-		// record and the context source. Client-supplied history is
-		// gone; rebuild from the persisted thread before the loop.
-		// The thread file exists before the model runs: new chats are
-		// created upfront so the log is on disk immediately, even if
-		// generation fails.
+		// The placeholder exists before the model runs so a failed turn is
+		// still retryable instead of lost.
 		var history []map[string]any
+		var turnN int
+		var turnID string
 		threadTitle := ""
 		if threadID != "" {
 			th, gerr := st.Get(id, threadID)
@@ -144,206 +143,261 @@ func handleCodemap(d Deps) http.HandlerFunc {
 				return
 			}
 			threadTitle = th.Title
+			// History from prior N.json turn files ONLY (lineage never
+			// read), excluding the new placeholder reserved below.
 			history = threadHistory(th)
-		} else {
-			th, cerr := st.Create(id, "")
-			if cerr != nil {
-				plog(d, id, "codemap.persistence_error", "thread initialization failed: "+cerr.Error(), map[string]any{"stage": "create_thread", "error": cerr.Error()})
-				writeInternalErr(w, "create thread", cerr)
+			sha := repoSHA(d, r, container, dir)
+			n, tid, rerr := st.ReserveFollowup(id, threadID, prompt, sha)
+			if rerr != nil {
+				if rerr.Error() == "unknown thread" {
+					writeUnknownThread(w)
+					return
+				}
+				plog(d, id, "codemap.persistence_error", "turn reserve failed: "+rerr.Error(), map[string]any{"stage": "reserve_turn", "error": rerr.Error()})
+				writeCodemapErr(w, http.StatusInternalServerError, "reserve turn: "+rerr.Error(), threadID, threadTitle)
 				return
 			}
-			threadID = th.ID
-			threadTitle = th.Title
+			turnN, turnID = n, tid
+			plog(d, id, "codemap.turn_reserved", fmt.Sprintf("[%s] turn %d reserved before generation", tid, n), map[string]any{"turnId": tid, "threadId": threadID, "turn": n, "stage": "reserve_turn"})
+		} else {
+			sha := repoSHA(d, r, container, dir)
+			tid, turn, rerr := st.ReserveNewThread(id, prompt, sha)
+			if rerr != nil {
+				plog(d, id, "codemap.persistence_error", "thread initialization failed: "+rerr.Error(), map[string]any{"stage": "reserve_thread", "error": rerr.Error()})
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "create thread: " + rerr.Error(), "stage": "reserve_thread"})
+				return
+			}
+			threadID = tid
+			turnID = turn
+			turnN = 1
+			threadTitle = codemapthreads.TitleFromPrompt(prompt)
 			codemapSet(id, threadID)
-			plog(d, id, "codemap.thread_initialized", fmt.Sprintf("[%s] empty thread initialized before generation; waiting for turn append", threadID), map[string]any{"threadId": threadID, "title": threadTitle, "stage": "create_thread"})
+			plog(d, id, "codemap.thread_initialized", fmt.Sprintf("[%s] thread + turn 1 reserved before generation; waiting for turn", threadID), map[string]any{"threadId": threadID, "title": threadTitle, "stage": "reserve_thread"})
 		}
 
-		sha := repoSHA(d, r, container, dir)
-		turnID := codemapthreads.MintID()
-		runStart := time.Now()
-		toolStarts := map[string]time.Time{}
-		plog(d, id, "codemap.start", fmt.Sprintf("ask %s | model=%s sha=%s history=%d chars=%d: %s", turnID, cfg.Model, sha, len(history), len(prompt), excerpt2000(prompt)),
-			map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "sha": sha, "history": len(history), "prompt": capData(prompt, 500)})
-		// Codemap turns are batch jobs over slow reasoning tiers: many
-		// tool rounds plus retries can run several minutes.
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
-		defer cancel()
-		step := 0
-		res, rounds, lineage, err := codemap.Ask(ctx, cfg, d.Sessions, container, dir, prompt, history,
-			func(ev agent.TraceEvent) {
-				switch ev.Kind {
-				case "round":
-					// Message already carries the excerpted thought; the
-					// ring does not need a second copy of the text.
-					plog(d, id, "codemap.round", fmt.Sprintf("[%s round %d] %s", turnID, ev.Round+1, excerpt2000(ev.Text)),
-						map[string]any{"turnId": turnID, "round": ev.Round + 1})
-				case "tool_start":
-					step++
-					toolStarts[ev.Tool+ev.Args] = time.Now()
-					plog(d, id, "codemap.tool", fmt.Sprintf("[%s step %d] %s %s", turnID, step, ev.Tool, excerpt2000(ev.Args)),
-						map[string]any{"turnId": turnID, "step": step, "tool": ev.Tool})
-				case "tool_done":
-					started := toolStarts[ev.Tool+ev.Args]
-					ms := int64(0)
-					if !started.IsZero() {
-						ms = time.Since(started).Milliseconds()
-					}
-					if ev.Err != "" {
-						plog(d, id, "codemap.tool_error", fmt.Sprintf("[%s] %s failed in %dms: %s", turnID, ev.Tool, ms, excerpt2000(ev.Err)),
-							map[string]any{"turnId": turnID, "step": step, "tool": ev.Tool, "error": capData(ev.Err, 4000), "durationMs": ms})
-					} else {
-						// Tool output is persisted in the thread file; the
-						// message carries a 2000-char excerpt. Storing the
-						// full output here doubled ring memory per step.
-						plog(d, id, "codemap.tool_result", fmt.Sprintf("[%s] %s done in %dms (%d chars): %s", turnID, ev.Tool, ms, len(ev.Result), excerpt2000(ev.Result)),
-							map[string]any{"turnId": turnID, "step": step, "tool": ev.Tool, "chars": len(ev.Result), "durationMs": ms})
-					}
-				case "model_error":
-					plog(d, id, "codemap.model_error", fmt.Sprintf("[%s] model=%s failed after %dms: %s", turnID, cfg.Model, time.Since(runStart).Milliseconds(), excerpt2000(ev.Err)),
-						map[string]any{"turnId": turnID, "model": cfg.Model, "error": capData(ev.Err, 4000)})
-				case "ref_drop":
-					plog(d, id, "codemap.ref_dropped", fmt.Sprintf("[%s] ref dropped %s %s: %s", turnID, ev.Tool, excerpt2000(ev.Args), excerpt2000(ev.Result)),
-						map[string]any{"turnId": turnID, "path": ev.Tool, "range": ev.Args, "reason": ev.Result})
-				}
-			})
-		// Keep the complete debug graph separate from the FE thread record.
-		// It is written on both success and failure so failed provider calls
-		// remain diagnosable.
-		if lineage != nil {
-			lineage.TurnID = turnID
-			lineage.ThreadID = threadID
-			lineage.Prompt = prompt
-			lineage.Time = time.Now().UTC()
-			if err != nil {
-				lineage.Error = err.Error()
-			}
-			if raw, merr := json.Marshal(lineage); merr == nil {
-				// Lineage is named after the thread (prompt title) like the
-				// thread file, with a .lineage.json suffix; the store keeps
-				// it beside the thread and moves it on renames.
-				if lerr := st.SaveLineage(id, threadID, threadTitle, raw); lerr != nil {
-					plog(d, id, "codemap.lineage_error", fmt.Sprintf("[%s] lineage save failed: %s", turnID, lerr), map[string]any{"turnId": turnID, "error": lerr.Error()})
-				} else {
-					plog(d, id, "codemap.lineage_saved", fmt.Sprintf("[%s] lineage saved (%d bytes)", turnID, len(raw)), map[string]any{"turnId": turnID, "bytes": len(raw), "stage": "save_lineage"})
-				}
-			} else {
-				plog(d, id, "codemap.lineage_error", fmt.Sprintf("[%s] lineage marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "error": merr.Error(), "stage": "marshal_lineage"})
-			}
-		}
-		if err != nil {
-			plog(d, id, "codemap.error", fmt.Sprintf("[%s] failed after %dms: %s", turnID, time.Since(runStart).Milliseconds(), excerpt2000(err.Error())),
-				map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "error": capData(err.Error(), 4000), "durationMs": time.Since(runStart).Milliseconds()})
-			if ctx.Err() != nil {
-				writeCodemapErr(w, http.StatusGatewayTimeout, "codemap timed out", threadID, threadTitle)
-			} else {
-				writeCodemapErr(w, http.StatusBadGateway, err.Error(), threadID, threadTitle)
-			}
+		executeReservedTurn(d, w, r, id, container, dir, cfg, st, threadID, threadTitle, turnN, turnID, prompt, history)
+	}
+}
+
+// handleCodemapRetry reruns the LAST (highest-N) turn, which must be
+// failed/crashed. The turn's N.json + N.lineage.json are rewritten from
+// scratch (same turnId/path/prompt, fresh time+sha) and the full
+// pipeline reruns with context turns 1..N-1 only. Response mirrors
+// POST /codemap.
+func handleCodemapRetry(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		tid := r.PathValue("tid")
+		cfg := aiConfig(d, aiBody{})
+		if !cfg.Valid() {
+			writeErr(w, http.StatusConflict, "ai not configured")
 			return
 		}
-		steps := flattenRounds(rounds)
-		sections := res.Sections
-		tools := steps
-		// The thread file is both the record and the context source: one
-		// chat per file, many chats per project. The file was created
-		// before the run, so it survives failures. Tools persist as
-		// rounds (laid out as the turn made them); the response flattens
-		// steps for the Steps panel. events.log keeps only a lightweight
-		// audit line — never the sections.
-		sectionsRaw, merr := json.Marshal(res.Sections)
-		if merr != nil {
-			plog(d, id, "codemap.persistence_error", fmt.Sprintf("[%s] sections marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_sections", "error": merr.Error()})
-			writeInternalErr(w, "marshal codemap sections", merr)
+		container, dir, ok := gitRepoDir(d, w, r)
+		if !ok {
 			return
 		}
-		toolsRaw, merr := json.Marshal(rounds)
-		if merr != nil {
-			plog(d, id, "codemap.persistence_error", fmt.Sprintf("[%s] tools marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_tools", "error": merr.Error()})
-			writeInternalErr(w, "marshal codemap tools", merr)
+		if !codemapTake(id, tid) {
+			plog(d, id, "codemap.busy", "retry rejected: previous run still in flight", map[string]any{"threadId": tid})
+			writeErr(w, http.StatusConflict, "codemap busy — wait for the current run")
 			return
 		}
-		extractorOutputRaw, merr := json.Marshal(map[string]any{"result": res})
-		if merr != nil {
-			plog(d, id, "codemap.persistence_error", fmt.Sprintf("[%s] extractor output marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_extractor_output", "error": merr.Error()})
-			writeInternalErr(w, "marshal codemap output", merr)
+		defer codemapDone(id)
+
+		st := d.Codemaps
+		if st == nil {
+			writeInternalErr(w, "codemap store", errStoreUnconfigured)
 			return
 		}
-		now := time.Now().UTC()
-		th, err := st.AppendTurn(id, threadID, codemapthreads.Turn{
-			TurnID: turnID, SHA: sha, Prompt: prompt,
-			Sections: json.RawMessage(sectionsRaw), Tools: json.RawMessage(toolsRaw),
-			ExtractorOutput: json.RawMessage(extractorOutputRaw),
-			Time:            now,
+		th, gerr := st.Get(id, tid)
+		if gerr != nil {
+			writeUnknownThread(w)
+			return
+		}
+		if len(th.Turns) == 0 {
+			writeUnknownThread(w)
+			return
+		}
+		last := th.Turns[len(th.Turns)-1]
+		if last.Error == nil && len(last.Sections) > 0 && string(last.Sections) != "null" {
+			writeErr(w, http.StatusConflict, "retry only failed turns")
+			return
+		}
+		// History is turns 1..N-1 only: the failed attempt never feeds
+		// its own rerun.
+		history := threadHistory(codemapthreads.Thread{
+			ID: th.ID, Project: th.Project, Title: th.Title,
+			CreatedAt: th.CreatedAt, UpdatedAt: th.UpdatedAt,
+			Turns: th.Turns[:len(th.Turns)-1],
 		})
-		if err != nil {
-			plog(d, id, "codemap.persistence_error", fmt.Sprintf("[%s] turn append failed; thread remains without this turn: %s", turnID, err), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "append_turn", "error": err.Error()})
-			if err.Error() == "unknown thread" {
+		sha := repoSHA(d, r, container, dir)
+		n, turnID, prompt, rerr := st.BeginRetry(id, tid, sha)
+		if rerr != nil {
+			if rerr.Error() == "unknown thread" {
 				writeUnknownThread(w)
 				return
 			}
-			writeInternalErr(w, "append turn", err)
+			plog(d, id, "codemap.persistence_error", "retry reserve failed: "+rerr.Error(), map[string]any{"stage": "retry_reserve", "error": rerr.Error()})
+			writeCodemapErr(w, http.StatusInternalServerError, "retry reserve: "+rerr.Error(), tid, th.Title)
 			return
 		}
-		plog(d, id, "codemap.turn_saved", fmt.Sprintf("[%s] thread turn persisted: title=%q sections=%d rounds=%d", turnID, th.Title, len(res.Sections), len(rounds)), map[string]any{"turnId": turnID, "threadId": threadID, "title": th.Title, "sections": len(res.Sections), "rounds": len(rounds), "stage": "append_turn"})
-		_, _ = d.Events.Append("codemap.turn", map[string]any{
-			"project": id, "threadId": threadID, "turnId": turnID,
-			"prompt": capData(prompt, 500), "sections": len(res.Sections), "tools": len(steps),
-		})
-		plog(d, id, "codemap.done", fmt.Sprintf("[%s] done in %dms: %d section(s) [%s], %d tool call(s) [%s]",
-			turnID, time.Since(runStart).Milliseconds(), len(res.Sections), sectionTitles(res.Sections), len(steps), toolNames(rounds)),
-			// Sections and tools are persisted in the thread file and
-			// returned in the response; duplicating them in the ring
-			// ballooned log memory per turn.
-			map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "sha": sha,
-				"sections": len(res.Sections), "tools": len(steps), "durationMs": time.Since(runStart).Milliseconds()})
-		writeJSON(w, http.StatusOK, map[string]any{
-			"turnId": turnID, "sha": sha, "sections": sections, "tools": tools,
-			"extractorOutput": map[string]any{"result": res},
-			"threadId":        threadID, "threadTitle": th.Title,
-			"time": now.Format(time.RFC3339),
-		})
+		plog(d, id, "codemap.retry_reserved", fmt.Sprintf("[%s] turn %d rewritten for retry", turnID, n), map[string]any{"turnId": turnID, "threadId": tid, "turn": n, "stage": "retry_reserve"})
+		executeReservedTurn(d, w, r, id, container, dir, cfg, st, tid, th.Title, n, turnID, prompt, history)
 	}
 }
 
-// excerpt2000 is the roomier preview for codemap run messages: prompts,
-// tool args/outputs, and errors stay readable without flooding the ring.
-// Full text still lands in the entry data via capData.
+// executeReservedTurn runs the model for an already-reserved placeholder
+// turn and persists via Complete/Fail. Manifest untouched after create.
+// Post-manifest errors keep threadId+title so FE can open the failed
+// placeholder. Callers hold the codemapBusy slot.
+func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, container, dir string, cfg agent.Config, st *codemapthreads.Store, threadID, threadTitle string, turnN int, turnID, prompt string, history []map[string]any) {
+	sha := repoSHA(d, r, container, dir)
+	runStart := time.Now()
+	toolStarts := map[string]time.Time{}
+	plog(d, id, "codemap.start", fmt.Sprintf("ask %s | model=%s sha=%s history=%d chars=%d: %s", turnID, cfg.Model, sha, len(history), len(prompt), excerpt2000(prompt)),
+		map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "sha": sha, "history": len(history), "prompt": capData(prompt, 500)})
+	// Codemap turns are batch jobs over slow reasoning tiers: many
+	// tool rounds plus retries can run several minutes.
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+	step := 0
+	res, rounds, lineage, err := codemap.Ask(ctx, cfg, d.Sessions, container, dir, prompt, history,
+		func(ev agent.TraceEvent) {
+			switch ev.Kind {
+			case "round":
+				plog(d, id, "codemap.round", fmt.Sprintf("[%s round %d] %s", turnID, ev.Round+1, excerpt2000(ev.Text)),
+					map[string]any{"turnId": turnID, "round": ev.Round + 1})
+			case "tool_start":
+				step++
+				toolStarts[ev.Tool+"\x00"+ev.Args] = time.Now()
+				plog(d, id, "codemap.tool", fmt.Sprintf("[%s step %d] %s %s", turnID, step, ev.Tool, excerpt2000(ev.Args)),
+					map[string]any{"turnId": turnID, "step": step, "tool": ev.Tool})
+			case "tool_done":
+				started := toolStarts[ev.Tool+"\x00"+ev.Args]
+				ms := int64(0)
+				if !started.IsZero() {
+					ms = time.Since(started).Milliseconds()
+				}
+				if ev.Err != "" {
+					plog(d, id, "codemap.tool_error", fmt.Sprintf("[%s] %s failed in %dms: %s", turnID, ev.Tool, ms, excerpt2000(ev.Err)),
+						map[string]any{"turnId": turnID, "step": step, "tool": ev.Tool, "error": capData(ev.Err, 4000), "durationMs": ms})
+				} else {
+					plog(d, id, "codemap.tool_result", fmt.Sprintf("[%s] %s done in %dms (%d chars): %s", turnID, ev.Tool, ms, len(ev.Result), excerpt2000(ev.Result)),
+						map[string]any{"turnId": turnID, "step": step, "tool": ev.Tool, "chars": len(ev.Result), "durationMs": ms})
+				}
+			case "model_error":
+				plog(d, id, "codemap.model_error", fmt.Sprintf("[%s] model=%s failed after %dms: %s", turnID, cfg.Model, time.Since(runStart).Milliseconds(), excerpt2000(ev.Err)),
+					map[string]any{"turnId": turnID, "model": cfg.Model, "error": capData(ev.Err, 4000)})
+			case "ref_drop":
+				plog(d, id, "codemap.ref_dropped", fmt.Sprintf("[%s] ref dropped %s %s: %s", turnID, ev.Tool, excerpt2000(ev.Args), excerpt2000(ev.Result)),
+					map[string]any{"turnId": turnID, "path": ev.Tool, "range": ev.Args, "reason": ev.Result})
+			}
+		})
+	// Keep the complete debug graph separate from the FE turn record.
+	// It is written on both success and failure so failed provider calls
+	// remain diagnosable.
+	var lineageRaw []byte
+	if lineage != nil {
+		lineage.TurnID = turnID
+		lineage.ThreadID = threadID
+		lineage.Prompt = prompt
+		lineage.Time = time.Now().UTC()
+		if err != nil {
+			lineage.Error = err.Error()
+		}
+		if raw, merr := json.Marshal(lineage); merr == nil {
+			lineageRaw = raw
+		} else {
+			plog(d, id, "codemap.lineage_error", fmt.Sprintf("[%s] lineage marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "error": merr.Error(), "stage": "marshal_lineage"})
+		}
+	}
+	if err != nil {
+		plog(d, id, "codemap.error", fmt.Sprintf("[%s] failed after %dms: %s", turnID, time.Since(runStart).Milliseconds(), excerpt2000(err.Error())),
+			map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "error": capData(err.Error(), 4000), "durationMs": time.Since(runStart).Milliseconds()})
+		// The placeholder stays visible with its error so the turn is
+		// retryable; the failure graph lands beside it in lineage.
+		now := time.Now().UTC()
+		if ferr := st.FailTurn(id, threadID, turnN, codemapthreads.Turn{
+			TurnID: turnID, SHA: sha, Prompt: prompt, Time: now,
+		}, err.Error(), lineageRaw); ferr != nil {
+			plog(d, id, "codemap.persistence_error", fmt.Sprintf("[%s] fail persist failed: %s", turnID, ferr), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "fail_turn", "error": ferr.Error()})
+		} else {
+			plog(d, id, "codemap.turn_failed", fmt.Sprintf("[%s] failed turn persisted with error", turnID), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "fail_turn"})
+		}
+		if ctx.Err() != nil {
+			writeCodemapErr(w, http.StatusGatewayTimeout, "codemap timed out", threadID, threadTitle)
+		} else {
+			writeCodemapErr(w, http.StatusBadGateway, err.Error(), threadID, threadTitle)
+		}
+		return
+	}
+	steps := flattenRounds(rounds)
+	// events.log keeps only an audit line (never sections); raw tier-2
+	// text lives only in lineage format_response events, never in N.json.
+	sectionsRaw, merr := json.Marshal(res.Sections)
+	if merr != nil {
+		plog(d, id, "codemap.persistence_error", fmt.Sprintf("[%s] sections marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_sections", "error": merr.Error()})
+		writeCodemapErr(w, http.StatusInternalServerError, "marshal codemap sections: "+merr.Error(), threadID, threadTitle)
+		return
+	}
+	toolsRaw, merr := json.Marshal(rounds)
+	if merr != nil {
+		plog(d, id, "codemap.persistence_error", fmt.Sprintf("[%s] tools marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_tools", "error": merr.Error()})
+		writeCodemapErr(w, http.StatusInternalServerError, "marshal codemap tools: "+merr.Error(), threadID, threadTitle)
+		return
+	}
+	now := time.Now().UTC()
+	if cerr := st.CompleteTurn(id, threadID, turnN, codemapthreads.Turn{
+		TurnID: turnID, SHA: sha, Prompt: prompt,
+		Sections: json.RawMessage(sectionsRaw), Tools: json.RawMessage(toolsRaw),
+		Time: now,
+	}, lineageRaw); cerr != nil {
+		plog(d, id, "codemap.persistence_error", fmt.Sprintf("[%s] turn complete failed: %s", turnID, cerr), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "complete_turn", "error": cerr.Error()})
+		if cerr.Error() == "unknown thread" {
+			writeCodemapErr(w, http.StatusNotFound, "unknown thread", threadID, threadTitle)
+			return
+		}
+		writeCodemapErr(w, http.StatusInternalServerError, "complete turn: "+cerr.Error(), threadID, threadTitle)
+		return
+	}
+	plog(d, id, "codemap.turn_saved", fmt.Sprintf("[%s] thread turn persisted: title=%q sections=%d rounds=%d", turnID, threadTitle, len(res.Sections), len(rounds)), map[string]any{"turnId": turnID, "threadId": threadID, "title": threadTitle, "sections": len(res.Sections), "rounds": len(rounds), "stage": "complete_turn"})
+	if lineageRaw != nil {
+		plog(d, id, "codemap.lineage_saved", fmt.Sprintf("[%s] lineage saved (%d bytes)", turnID, len(lineageRaw)), map[string]any{"turnId": turnID, "bytes": len(lineageRaw), "stage": "save_lineage"})
+	}
+	_, _ = d.Events.Append("codemap.turn", map[string]any{
+		"project": id, "threadId": threadID, "turnId": turnID,
+		"prompt": capData(prompt, 500), "sections": len(res.Sections), "tools": len(steps),
+	})
+	plog(d, id, "codemap.done", fmt.Sprintf("[%s] done in %dms: %d section(s), %d tool call(s)",
+		turnID, time.Since(runStart).Milliseconds(), len(res.Sections), len(steps)),
+		map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "sha": sha,
+			"sections": len(res.Sections), "tools": len(steps), "durationMs": time.Since(runStart).Milliseconds()})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"turnId": turnID, "sha": sha, "sections": res.Sections, "tools": steps,
+		"threadId": threadID, "threadTitle": threadTitle,
+		"time": now.Format(time.RFC3339),
+	})
+}
+
+// cut bounds s at max runes (rune-aware: byte slicing could split a
+// multi-byte rune). excerpt2000 trims and names empties for log lines;
+// capData is the same cut for log entry data.
+func cut(s string, max int) string {
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
+}
+
 func excerpt2000(s string) string {
 	s = strings.TrimSpace(s)
-	const max = 2000
-	if len(s) > max {
-		return s[:max] + "…"
-	}
 	if s == "" {
 		return "(empty)"
 	}
-	return s
+	return cut(s, 2000)
 }
 
-// capData bounds a string stored in a log entry's data map.
-func capData(s string, max int) string {
-	if len(s) > max {
-		return s[:max] + "…"
-	}
-	return s
-}
-
-func sectionTitles(sections []codemap.Section) string {
-	titles := make([]string, 0, len(sections))
-	for _, s := range sections {
-		titles = append(titles, s.Title)
-	}
-	return strings.Join(titles, "; ")
-}
-
-func toolNames(rounds []codemap.ToolRound) string {
-	var names []string
-	for _, r := range rounds {
-		for _, c := range r.Steps {
-			names = append(names, c.Tool)
-		}
-	}
-	return strings.Join(names, ", ")
-}
+func capData(s string, max int) string { return cut(s, max) }
 
 // flattenRounds collapses persisted rounds into one step list for the
 // Steps panel response (order preserved). Never nil, so the response
@@ -356,33 +410,17 @@ func flattenRounds(rounds []codemap.ToolRound) []codemap.ToolStep {
 	return out
 }
 
-// parseRounds decodes Turn.Tools in both shapes: current []ToolRound and
-// legacy flat []ToolStep (treated as one round) or [{tool,args}].
+// parseRounds decodes Turn.Tools ([]ToolRound, laid out as the turn made
+// them). Unknown bytes replay as nothing rather than failing the turn.
 func parseRounds(raw json.RawMessage) []codemap.ToolRound {
 	if len(raw) == 0 {
 		return nil
 	}
 	var rounds []codemap.ToolRound
-	if err := json.Unmarshal(raw, &rounds); err == nil && len(rounds) > 0 {
-		// Distinguish real rounds from a legacy flat step list: flat
-		// steps unmarshal into rounds with empty Steps (unknown fields
-		// dropped), so fall through when nothing parsed.
-		hasSteps := false
-		for _, r := range rounds {
-			if len(r.Steps) > 0 || strings.TrimSpace(r.Thought) != "" {
-				hasSteps = true
-				break
-			}
-		}
-		if hasSteps {
-			return rounds
-		}
+	if err := json.Unmarshal(raw, &rounds); err != nil {
+		return nil
 	}
-	var steps []codemap.ToolStep
-	if err := json.Unmarshal(raw, &steps); err == nil && len(steps) > 0 {
-		return []codemap.ToolRound{{Steps: steps}}
-	}
-	return nil
+	return rounds
 }
 
 // sectionsTranscript renders a prior answer as a natural-language
@@ -407,8 +445,8 @@ func sectionsTranscript(sections []codemap.Section) string {
 		}
 		for _, r := range s.Refs {
 			snip := strings.TrimSpace(r.Snippet)
-			if len(snip) > 200 {
-				snip = snip[:200] + "…"
+			if rs := []rune(snip); len(rs) > 200 {
+				snip = string(rs[:200]) + "…"
 			}
 			snip = strings.ReplaceAll(snip, "\n", " / ")
 			loc := fmt.Sprintf("%s:%d-%d", r.Path, r.StartLine, r.EndLine)
@@ -425,14 +463,14 @@ func sectionsTranscript(sections []codemap.Section) string {
 	return sb.String()
 }
 
-// threadHistory rebuilds the LLM conversation from the persisted thread:
-// the thread file is both the history record and the context source.
-// Each turn becomes user(prompt) [+ one assistant(toolSteps) per tool
-// round, laid out as the turn made them + assistant(transcript)]. Old
-// turns without outputs skip the tool block (grounding unrecoverable).
-// Prior answers replay as a natural-language transcript, not raw JSON.
-// Call IDs are not persisted; agent.Run assigns fresh global call_N ids.
-// Context is bounded to the last 20 turns and ~16KB estimated chars.
+// threadHistory rebuilds the LLM conversation from persisted turns:
+// each turn becomes user(prompt) [+ one assistant(toolSteps) per tool
+// round, laid out as the turn made them + assistant(transcript)]. Lineage
+// files are NEVER read for context: history comes exclusively from N.json
+// turn files (prompt + sections + tools per turn). Failed/crashed turns
+// (error set or answer-less) contribute their prompt only: no sections
+// to replay, no tool block without outputs. Context is bounded to the
+// last 20 turns and ~16KB estimated chars.
 func threadHistory(th codemapthreads.Thread) []map[string]any {
 	turns := th.Turns
 	if len(turns) > 20 {
@@ -461,6 +499,11 @@ func threadHistory(th codemapthreads.Thread) []map[string]any {
 		}
 		if strings.TrimSpace(t.Prompt) != "" {
 			out = append(out, map[string]any{"role": "user", "content": t.Prompt})
+		}
+		// Answer-less placeholders (in-flight reserve, crash) and failed
+		// turns replay prompt-only: nothing grounded to replay.
+		if t.Error != nil {
+			continue
 		}
 		if len(t.Tools) > 0 {
 			for _, r := range parseRounds(t.Tools) {
@@ -543,7 +586,10 @@ func handleCodemapFile(d Deps) http.HandlerFunc {
 			return
 		}
 		if len(out) > 100*1024 {
-			out = out[:100*1024]
+			// Cap by runes to avoid splitting a multi-byte rune at the cut.
+			if r := []rune(out); len(r) > 100*1024 {
+				out = string(r[:100*1024])
+			}
 		}
 		sha := repoSHA(d, r, container, dir)
 		moved := false

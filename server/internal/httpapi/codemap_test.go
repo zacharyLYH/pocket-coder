@@ -216,6 +216,24 @@ func finalCodemapJSON() string {
 	return `{"sections":[{"title":"Auth","summary":"Login lives here.","refs":[{"path":"main.go","startLine":10,"endLine":12,"snippet":"func main() {"}]}]}`
 }
 
+// mustReadTurnFile renders the stored Nth turn as on-disk JSON: the
+// per-turn asserts verify the persisted shape carries no extractor keys.
+func mustReadTurnFile(t *testing.T, d Deps, project, threadID string, n int) []byte {
+	t.Helper()
+	th, err := d.Codemaps.Get(project, threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(th.Turns) < n {
+		t.Fatalf("thread %s has %d turns, want >= %d", threadID, len(th.Turns), n)
+	}
+	raw, err := json.Marshal(th.Turns[n-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
 func TestCodemapSuccess(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
@@ -295,6 +313,9 @@ func TestCodemapSuccess(t *testing.T) {
 	}
 	if body.TurnID == "" || body.SHA != "abc123" {
 		t.Fatalf("turn meta = %+v, want turnId set and sha abc123", body)
+	}
+	if strings.Contains(rec.Body.String(), "extractorOutput") {
+		t.Fatalf("POST response must not carry extractorOutput: %s", rec.Body)
 	}
 	if body.ThreadID == "" {
 		t.Fatalf("missing threadId in response %+v", body)
@@ -398,20 +419,12 @@ func TestCodemapSuccess(t *testing.T) {
 			t.Fatalf("stored tool %d missing output: %v", i, sm)
 		}
 	}
-	var extractor map[string]any
-	if err := json.Unmarshal(stored.ExtractorOutput, &extractor); err != nil {
-		t.Fatalf("extractor output invalid: %v", err)
+	// N.json is the user-facing side only: no extractor keys. The
+	// per-turn files live at <tid>/1.json + <tid>/1.lineage.json.
+	if strings.Contains(string(mustReadTurnFile(t, d, "abc", body.ThreadID, 1)), "extractorOutput") {
+		t.Fatalf("N.json must not carry extractorOutput")
 	}
-	result, _ := extractor["result"].(map[string]any)
-	sections, _ := result["sections"].([]any)
-	if len(sections) != 1 {
-		t.Fatalf("extractor result missing sections: %s", stored.ExtractorOutput)
-	}
-	refs, _ := sections[0].(map[string]any)["refs"].([]any)
-	if len(refs) != 1 || refs[0].(map[string]any)["path"] != "main.go" {
-		t.Fatalf("extractor refs = %v", refs)
-	}
-	lineageRaw, err := d.Codemaps.ReadLineage("abc", body.ThreadID)
+	lineageRaw, err := d.Codemaps.ReadTurnLineage("abc", body.ThreadID, 1)
 	if err != nil {
 		t.Fatalf("read lineage: %v", err)
 	}
@@ -419,11 +432,24 @@ func TestCodemapSuccess(t *testing.T) {
 	if err := json.Unmarshal(lineageRaw, &lineage); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := lineage["extractorInput"]; !ok {
-		t.Fatalf("lineage missing extractorInput: %s", lineageRaw)
+	if _, ok := lineage["prunedTier1Data"]; !ok {
+		t.Fatalf("lineage missing prunedTier1Data: %s", lineageRaw)
+	}
+	if _, ok := lineage["extractorInput"]; ok {
+		t.Fatalf("lineage must not own extractorInput: %s", lineageRaw)
 	}
 	if _, ok := lineage["extractorOutput"]; ok {
 		t.Fatalf("lineage must not own extractorOutput: %s", lineageRaw)
+	}
+	// The pruned snapshot round-trips the tier-1 evidence with pinned
+	// caps (answer 16k / output 6k / content 8k / args 2k / error 2k /
+	// payloads 12k).
+	snap, _ := lineage["prunedTier1Data"].(map[string]any)
+	if _, ok := snap["answer"]; !ok {
+		t.Fatalf("prunedTier1Data missing answer: %s", lineageRaw)
+	}
+	if _, ok := snap["events"]; !ok {
+		t.Fatalf("prunedTier1Data missing events: %s", lineageRaw)
 	}
 	events, _ := lineage["events"].([]any)
 	if len(events) < 20 {
@@ -475,16 +501,33 @@ func TestCodemapModelBadJSON(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "not json") {
 		t.Fatalf("bad json error hides model output: %q", rec.Body)
 	}
+	var failBody struct {
+		ThreadID    string `json:"threadId"`
+		ThreadTitle string `json:"threadTitle"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &failBody); err != nil {
+		t.Fatal(err)
+	}
+	if failBody.ThreadID == "" {
+		t.Fatalf("failure dropped threadId: %s", rec.Body)
+	}
 	gotTypes := map[string]int{}
 	for _, e := range d.ProjectLogs.Read("abc", 0, 0) {
 		gotTypes[e.Type]++
 	}
-	if gotTypes["codemap.thread_initialized"] != 1 || gotTypes["codemap.lineage_saved"] != 1 || gotTypes["codemap.error"] != 1 {
-		t.Fatalf("failed turn boundary logs = %v, want initialization, lineage save, and run error", gotTypes)
+	if gotTypes["codemap.thread_initialized"] != 1 || gotTypes["codemap.turn_failed"] != 1 || gotTypes["codemap.error"] != 1 {
+		t.Fatalf("failed turn boundary logs = %v, want initialization, fail persist, and run error", gotTypes)
 	}
 	threads, err := d.Codemaps.List("abc")
-	if err != nil || len(threads) != 1 || threads[0].TurnCount != 0 {
-		t.Fatalf("failed turn thread record = %+v, %v; expected an explicit empty thread", threads, err)
+	if err != nil || len(threads) != 1 || threads[0].TurnCount != 1 {
+		t.Fatalf("failed turn thread record = %+v, %v; expected one failed placeholder turn", threads, err)
+	}
+	th, err := d.Codemaps.Get("abc", failBody.ThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(th.Turns) != 1 || th.Turns[0].Error == nil {
+		t.Fatalf("failed placeholder missing error: %+v", th.Turns)
 	}
 }
 

@@ -10,6 +10,21 @@ import (
 	"github.com/openai/openai-go/v2/shared"
 )
 
+// extractorPrompt describes the tier's job and its success state: a flow
+// map in execution order, shaped like the example. The evidence fields
+// are named because only their semantics are ours to define; everything
+// enforceable lives in the response schema, not here.
+const extractorPrompt = "You are the structuredExtractor tier. Produce only JSON matching the response schema. " +
+	"The evidence has two fields: answer holds the findings — section titles and summaries come from THIS; " +
+	"events is the tool log — use it only to preserve valid refs, never turn tool calls, reads, or searches into sections. " +
+	"Write the answer as a flow map: 2-8 sections in execution order, entrypoint first and downstream next, each shaped like the example. " +
+	"Title names the step's finding, never an action or a bare filename. Summary is one or two sentences naming the exact functions " +
+	"involved and the handoff between them (calls, emits, writes to). Every section carries the exact lines backing it as refs; " +
+	"omit a section no lines back. Prune chatter and do not invent refs, paths, or line numbers. " +
+	"Ref paths must be repo-relative, such as server/cmd/server/main.go, never /server/... or another absolute path. " +
+	"Preserve valid refs from tool evidence. " +
+	`Example shape: {"sections":[{"title":"Login submits credentials","summary":"handleLogin() validates input and calls SessionService.create().","refs":[{"path":"src/auth.js","startLine":10,"endLine":14,"function":"handleLogin"}]},{"title":"Session is created","summary":"SessionService.create() writes the row and emits session.created.","refs":[{"path":"src/session.js","startLine":40,"endLine":52,"function":"create"}]}]}`
+
 // formatResult enforces the json_schema exactly once, on a tools-free
 // follow-up call. The tool loop must stay schema-free (providers null out
 // choices or skip tool calls when schema rides with tools); this call
@@ -22,14 +37,13 @@ func formatResult(ctx context.Context, client openai.Client, cfg Config, schemaN
 	}
 	snapshot := extractorSnapshot(lin, out)
 	if lin != nil {
-		lin.ExtractorInput = snapshot
+		lin.PrunedTier1Data = snapshot
 	}
 	fparams := openai.ChatCompletionNewParams{
 		Model: cfg.Model,
 		Messages: []openai.ChatCompletionMessageParamUnion{{
 			OfDeveloper: &openai.ChatCompletionDeveloperMessageParam{
-				Content: openai.ChatCompletionDeveloperMessageParamContentUnion{OfString: openai.String(
-					"You are the structuredExtractor tier. Produce only JSON matching the response schema. Use the sanitized tier-1 evidence below; prune chatter and do not invent refs, paths, or line numbers. Ref paths must be repo-relative, such as server/cmd/server/main.go, never /server/... or another absolute path. Preserve valid refs from tool evidence.")},
+				Content: openai.ChatCompletionDeveloperMessageParamContentUnion{OfString: openai.String(extractorPrompt)},
 			},
 		}, {
 			OfUser: &openai.ChatCompletionUserMessageParam{
