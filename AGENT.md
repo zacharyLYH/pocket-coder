@@ -1,3 +1,13 @@
+# How to talk to me
+- High level first, always. Core flow + core decisions before
+  any detail. I connect dots myself once I have the frame.
+- One concrete example per idea (real values, end to end),
+  then stop. Don't enumerate; I'll ask for the next piece.
+- Short responses. If it needs length, give me the picture
+  first and offer the deep dive as a choice.
+- Tell me what you're leaving out in one line, so I know
+  where to poke.
+
 # Coding standards
 1. MINIMAL DEPENDENCIES. Fewer dependencies and the more mainstream and battle tested the dependencies, the better. 
 2. MINIMAL LINES OF CODE. More lines of code === more complexity. That is evil.
