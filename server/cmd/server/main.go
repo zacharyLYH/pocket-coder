@@ -100,6 +100,7 @@ func main() {
 	sessions := session.New(dkr)
 	svc.SetInstaller(&harnessInstaller{harnesses: harnesses, sessions: sessions})
 	previewManager := preview.NewManager(&preview.DockerFactory{Docker: dkr})
+	previewManager.StartSweeper(previewSweepInterval(), previewTokenSilence())
 
 	// Bootstrap before serving: make live Docker match state.json for every
 	// project — containers running, recorded harnesses installed. Blocking on
@@ -164,6 +165,25 @@ func main() {
 		}
 		logger.Info("shutdown complete")
 	}
+}
+
+// previewSweepInterval bounds how stale a token's presence can look;
+// previewTokenSilence bounds how long a holder may go quiet before rotation.
+func previewSweepInterval() time.Duration {
+	return durationEnv("PCODER_PREVIEW_SWEEP_INTERVAL", 30*time.Second)
+}
+
+func previewTokenSilence() time.Duration {
+	return durationEnv("PCODER_PREVIEW_TOKEN_SILENCE", 3*time.Minute)
+}
+
+func durationEnv(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return def
 }
 
 // harnessInstaller adapts session installation for project recovery without

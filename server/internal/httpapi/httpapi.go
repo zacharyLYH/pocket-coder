@@ -120,6 +120,7 @@ func New(d Deps) http.Handler {
 		authed("GET", "/api/projects/{id}/preview", handlePreviewStatus)
 		authed("POST", "/api/projects/{id}/preview/start", handlePreviewStart)
 		authed("DELETE", "/api/projects/{id}/preview", handlePreviewClose)
+		authed("POST", "/api/projects/{id}/preview/heartbeat", handlePreviewHeartbeat)
 		authed("GET", "/api/projects/{id}/preview/{path...}", handlePreviewSurface)
 	}
 	if d.Preview != nil && d.Sessions != nil {

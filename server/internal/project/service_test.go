@@ -368,8 +368,8 @@ func TestParseRepoID(t *testing.T) {
 		"ssh://git@github.com/x/hello.git": "x/hello",
 	}
 	for raw, want := range cases {
-		if got, err := ParseRepoID(raw); err != nil || got != want {
-			t.Errorf("ParseRepoID(%q) = %q, %v; want %q", raw, got, err, want)
+		if got, err := parseRepoID(raw, false); err != nil || got != want {
+			t.Errorf("parseRepoID(%q, false) = %q, %v; want %q", raw, got, err, want)
 		}
 	}
 	for _, bad := range []string{
@@ -383,8 +383,8 @@ func TestParseRepoID(t *testing.T) {
 		"just some words",
 		"--upload-pack=evil",
 	} {
-		if got, err := ParseRepoID(bad); err == nil || !errors.Is(err, ErrInvalidInput) {
-			t.Errorf("ParseRepoID(%q) = %q, %v; want ErrInvalidInput", bad, got, err)
+		if got, err := parseRepoID(bad, false); err == nil || !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("parseRepoID(%q, false) = %q, %v; want ErrInvalidInput", bad, got, err)
 		}
 	}
 }

@@ -13,18 +13,13 @@ var segmentRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 // scpRe matches scp-style git URLs: [user@]host:owner/repo(.git).
 var scpRe = regexp.MustCompile(`^[^@/:]+@[^:]+:(.+)$`)
 
-// ParseRepoID derives the canonical project id ("owner/repo", lowercased)
+// parseRepoID derives the canonical project id ("owner/repo", lowercased)
 // from a repository URL. Only GitHub URLs are accepted: https-style
 // (https://github.com/<owner>/<repo>[.git]) and scp-style
 // (git@github.com:<owner>/<repo>[.git]). The id asserts uniqueness —
-// creating the same repo twice is a conflict.
-func ParseRepoID(repoURL string) (string, error) {
-	return parseRepoID(repoURL, false)
-}
-
-// parseRepoID is ParseRepoID with the test hatch: when allowAny is set,
-// any host's last two path segments become the id, so live-engine stacks
-// can clone from a local git daemon instead of github.com.
+// creating the same repo twice is a conflict. When allowAny is set (test
+// stacks), any host's last two path segments become the id, so live-engine
+// stacks can clone from a local git daemon instead of github.com.
 func parseRepoID(repoURL string, allowAny bool) (string, error) {
 	repoURL = strings.TrimSpace(repoURL)
 	if repoURL == "" {

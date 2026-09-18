@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
-import { createReactProject, openPreviewFromTerminal } from './preview.helpers'
+import { createReactProject, openPreviewFromTerminal, statusToken, tokenHeaders } from './preview.helpers'
 
 // Auth + isolation for the preview endpoints. The "unauthenticated is
 // rejected" and "private CDP endpoint never leaks" guarantees are pinned
@@ -40,9 +40,10 @@ test.describe('preview auth and isolation', () => {
 
       await page.goto('/')
       const _previewPage2 = await openPreviewFromTerminal(page, idA)
+      const token = await statusToken(request, idA)
       await _previewPage2.close()
 
-      const resA = await request.get(`/api/projects/${projectURL(idA)}/preview/tools/screenshot`)
+      const resA = await request.get(`/api/projects/${projectURL(idA)}/preview/tools/screenshot`, tokenHeaders(token))
       expect(resA.ok()).toBeTruthy()
       expect(resA.headers()['content-type']).toContain('image/png')
     } finally {

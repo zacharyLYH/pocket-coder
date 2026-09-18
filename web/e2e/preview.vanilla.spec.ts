@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
-import { createVanillaProject, openPreviewFromTerminal } from './preview.helpers'
+import { createVanillaProject, openPreviewFromTerminal, statusToken, tokenHeaders } from './preview.helpers'
 
 test.describe('preview vanilla HTML', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -16,12 +16,13 @@ test.describe('preview vanilla HTML', () => {
       const projectID = await createVanillaProject(request)
       await page.goto('/')
       const previewPage = await openPreviewFromTerminal(page, projectID)
+      const token = await statusToken(request, projectID)
 
       // Verify vanilla HTML renders
       await expect(previewPage).toHaveScreenshot('preview-vanilla-initial.png', { fullPage: true })
 
       // Verify backend fetch worked via CDP
-      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       expect(inspectRes.ok()).toBeTruthy()
       const { html } = (await inspectRes.json()) as { html: string }
       expect(html).toContain('Vanilla HTML App')

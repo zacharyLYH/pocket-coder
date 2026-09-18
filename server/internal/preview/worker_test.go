@@ -134,3 +134,60 @@ func TestManagerRejectsInvalidConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestManagerTokenMintNoRotateTouchSweep(t *testing.T) {
+	m := NewManager(&fakeFactory{})
+	cfg := Config{ProjectID: "p1", ContainerID: "container-p1"}
+	if _, err := m.Ensure(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	t1, ok := m.TokenOrMint("p1")
+	if !ok || len(t1) != 32 {
+		t.Fatalf("token = %q ok=%v, want 32 hex chars", t1, ok)
+	}
+	if _, err := m.Ensure(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if t2, _ := m.TokenOrMint("p1"); t2 != t1 {
+		t.Fatalf("re-Ensure rotated %q -> %q", t1, t2)
+	}
+	if !m.CheckToken("p1", t1) || m.CheckToken("p1", "wrong") || m.CheckToken("p1", "") {
+		t.Fatal("CheckToken mismatch")
+	}
+	base := time.Now()
+	m.now = func() time.Time { return base.Add(time.Minute) }
+	m.Touch("p1") // invalid tokens never touch; Touch needs a live token
+	m.Sweep(base.Add(2*time.Minute), 90*time.Second)
+	if _, ok := m.TokenOrMint("p1"); !ok {
+		t.Fatal("touched token swept too early")
+	}
+	m.Sweep(base.Add(5*time.Minute), 90*time.Second)
+	if tok, ok := m.TokenOrMint("p1"); !ok || tok == t1 || len(tok) != 32 {
+		t.Fatalf("TokenOrMint = %q ok=%v, want fresh rotation", tok, ok)
+	}
+}
+
+func TestManagerStopDeletesTokenRestartForgets(t *testing.T) {
+	m := NewManager(&fakeFactory{})
+	cfg := Config{ProjectID: "p1", ContainerID: "container-p1"}
+	if _, err := m.Ensure(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	t1, _ := m.TokenOrMint("p1")
+	if err := m.Stop(context.Background(), "p1"); err != nil {
+		t.Fatal(err)
+	}
+	if m.CheckToken("p1", t1) {
+		t.Fatal("token survived Stop")
+	}
+	if _, err := m.Ensure(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if t2, _ := m.TokenOrMint("p1"); t2 == t1 {
+		t.Fatal("restart reused pre-close token")
+	}
+	fresh := NewManager(&fakeFactory{})
+	if fresh.CheckToken("p1", t1) {
+		t.Fatal("fresh manager remembers tokens")
+	}
+}

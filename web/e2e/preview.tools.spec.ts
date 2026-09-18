@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
-import { createReactProject, openPreviewFromTerminal } from './preview.helpers'
+import { createReactProject, openPreviewFromTerminal, statusToken, tokenHeaders } from './preview.helpers'
 
 test.describe('preview AI tools', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -17,8 +17,9 @@ test.describe('preview AI tools', () => {
       const projectID = await createReactProject(request)
       await page.goto('/')
       const previewPage = await openPreviewFromTerminal(page, projectID)
+      const token = await statusToken(request, projectID)
 
-      const res = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`)
+      const res = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`, tokenHeaders(token))
       expect(res.ok()).toBeTruthy()
       expect(res.headers()['content-type']).toContain('image/png')
       const body = Buffer.from(await res.body())
@@ -44,9 +45,10 @@ test.describe('preview AI tools', () => {
       const projectID = await createReactProject(request)
       await page.goto('/')
       const previewPage = await openPreviewFromTerminal(page, projectID)
+      const token = await statusToken(request, projectID)
       await previewPage.close()
 
-      const res = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+      const res = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       expect(res.ok()).toBeTruthy()
       const { html } = (await res.json()) as { html: string }
       expect(html).toContain('<html')
@@ -68,21 +70,24 @@ test.describe('preview AI tools', () => {
       const projectID = await createReactProject(request)
       await page.goto('/')
       const previewPage = await openPreviewFromTerminal(page, projectID)
+      const token = await statusToken(request, projectID)
       await previewPage.close()
 
       const typeRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/type`, {
+        ...tokenHeaders(token),
         data: { selector: '[data-testid="name-input"]', text: 'hello world' },
       })
       expect(typeRes.ok()).toBeTruthy()
 
       const clickRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/click`, {
+        ...tokenHeaders(token),
         data: { selector: '[data-testid="login-btn"]' },
       })
       expect(clickRes.ok()).toBeTruthy()
 
       await page.waitForTimeout(2000)
 
-      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       expect(inspectRes.ok()).toBeTruthy()
       const { html } = (await inspectRes.json()) as { html: string }
       expect(html).toContain('hello world')
@@ -103,19 +108,21 @@ test.describe('preview AI tools', () => {
       const projectID = await createReactProject(request)
       await page.goto('/')
       const previewPage = await openPreviewFromTerminal(page, projectID)
+      const token = await statusToken(request, projectID)
       await previewPage.close()
 
       const navRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/navigate`, {
+        ...tokenHeaders(token),
         data: { url: 'http://localhost:3000' },
       })
       expect(navRes.ok()).toBeTruthy()
       await page.waitForTimeout(2000)
 
-      const reloadRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/reload`)
+      const reloadRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/reload`, tokenHeaders(token))
       expect(reloadRes.ok()).toBeTruthy()
       await page.waitForTimeout(2000)
 
-      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       expect(inspectRes.ok()).toBeTruthy()
       const { html } = (await inspectRes.json()) as { html: string }
       expect(html).toContain('<html')
@@ -135,9 +142,10 @@ test.describe('preview AI tools', () => {
       const projectID = await createReactProject(request)
       await page.goto('/')
       const previewPage = await openPreviewFromTerminal(page, projectID)
+      const token = await statusToken(request, projectID)
       await previewPage.close()
 
-      const res = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/network`)
+      const res = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/network`, tokenHeaders(token))
       expect(res.ok()).toBeTruthy()
       const { requests } = (await res.json()) as { requests: { name: string; dur: number }[] }
       expect(Array.isArray(requests)).toBeTruthy()
@@ -158,9 +166,10 @@ test.describe('preview AI tools', () => {
       const projectID = await createReactProject(request)
       await page.goto('/')
       const previewPage = await openPreviewFromTerminal(page, projectID)
+      const token = await statusToken(request, projectID)
 
       const surfaceShot = await previewPage.screenshot({ fullPage: true })
-      const cdpRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`)
+      const cdpRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`, tokenHeaders(token))
       expect(cdpRes.ok()).toBeTruthy()
       const cdpBody = Buffer.from(await cdpRes.body())
       expect(surfaceShot.length).toBeGreaterThan(1_000)

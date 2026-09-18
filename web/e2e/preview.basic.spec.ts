@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
-import { createReactProject, openPreviewFromTerminal } from './preview.helpers'
+import { createReactProject, openPreviewFromTerminal, statusToken, tokenHeaders } from './preview.helpers'
 
 test.describe('preview basic', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -23,9 +23,10 @@ test.describe('preview basic', () => {
 
       // ── Step 3: Open preview via terminal → Preview tab → Open (new tab) ──
       const previewPage = await openPreviewFromTerminal(page, projectID)
+      const token = await statusToken(request, projectID)
 
       // ── Step 4: Verify frontend renders in noVNC ──
-      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       expect(inspectRes.ok()).toBeTruthy()
       const { html } = (await inspectRes.json()) as { html: string }
       expect(html).toContain('Full-Stack App')
@@ -36,30 +37,30 @@ test.describe('preview basic', () => {
       expect(html).toContain('source')
 
       // ── Step 6: Interact — type name and log in ──
-      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/type`, {
+      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/type`, { ...tokenHeaders(token), 
         data: { selector: '[data-testid="name-input"]', text: 'E2E User' },
       })
-      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/click`, {
+      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/click`, { ...tokenHeaders(token), 
         data: { selector: '[data-testid="login-btn"]' },
       })
       await page.waitForTimeout(2000)
 
-      const afterLogin = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+      const afterLogin = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       const { html: loginHtml } = (await afterLogin.json()) as { html: string }
       expect(loginHtml).toContain('E2E User')
       expect(loginHtml).toContain('counter-value')
 
       // ── Step 7: Click increment ──
-      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/click`, {
+      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/click`, { ...tokenHeaders(token), 
         data: { selector: '[data-testid="increment-btn"]' },
       })
       await page.waitForTimeout(1000)
-      const afterIncr = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+      const afterIncr = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       const { html: incrHtml } = (await afterIncr.json()) as { html: string }
       expect(incrHtml).toContain('Count: 1')
 
       // ── Step 8: Capture AI screenshot ──
-      const screenshotRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`)
+      const screenshotRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`, tokenHeaders(token))
       expect(screenshotRes.ok()).toBeTruthy()
       expect(screenshotRes.headers()['content-type']).toContain('image/png')
       const pngBytes = Buffer.from(await screenshotRes.body())

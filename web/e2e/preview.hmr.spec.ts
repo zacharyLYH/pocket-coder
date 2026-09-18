@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
-import { createReactProject, execInProject, openPreviewFromTerminal, waitForInspectContaining } from './preview.helpers'
+import { createReactProject, execInProject, openPreviewFromTerminal, waitForInspectContaining, statusToken, tokenHeaders } from './preview.helpers'
 
 test.describe('preview HMR', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -22,9 +22,10 @@ test.describe('preview HMR', () => {
 
       // ── Step 2: Open preview via terminal → Preview tab → Open (new tab) ──
       const previewPage = await openPreviewFromTerminal(page, projectID)
+      const token = await statusToken(request, projectID)
 
       // ── Step 3: Verify initial state via CDP ──
-      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       expect(inspectRes.ok()).toBeTruthy()
       const { html } = (await inspectRes.json()) as { html: string }
       expect(html).toContain('Full-Stack App')
@@ -32,7 +33,7 @@ test.describe('preview HMR', () => {
       expect(html).not.toContain('HMR is working')
 
       // ── Step 4: Capture BEFORE screenshot (CDP + display surface) ──
-      const beforeCDP = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`)
+      const beforeCDP = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`, tokenHeaders(token))
       expect(beforeCDP.ok()).toBeTruthy()
       const beforeCDPBytes = Buffer.from(await beforeCDP.body())
       const beforeDisplay = await previewPage.screenshot({ fullPage: true })
@@ -127,7 +128,7 @@ test.describe('preview HMR', () => {
       expect(navigations).toBe(0)
 
       // ── Step 9: Capture AFTER screenshot ──
-      const afterCDP = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`)
+      const afterCDP = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`, tokenHeaders(token))
       expect(afterCDP.ok()).toBeTruthy()
       const afterCDPBytes = Buffer.from(await afterCDP.body())
       const afterDisplay = await previewPage.screenshot({ fullPage: true })
@@ -155,24 +156,25 @@ test.describe('preview HMR', () => {
       const projectID = await createReactProject(request)
       await page.goto('/')
       const previewPage2 = await openPreviewFromTerminal(page, projectID)
+      const token = await statusToken(request, projectID)
 
       // ── CDP changes page → display surface shows it ──
-      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/type`, {
+      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/type`, { ...tokenHeaders(token), 
         data: { selector: '[data-testid="name-input"]', text: 'AI User' },
       })
-      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/click`, {
+      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/click`, { ...tokenHeaders(token), 
         data: { selector: '[data-testid="login-btn"]' },
       })
       await page.waitForTimeout(2000)
 
-      const cdpInspect = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+      const cdpInspect = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       const { html: cdpHtml } = (await cdpInspect.json()) as { html: string }
       expect(cdpHtml).toContain('AI User')
 
       const displayShot = await previewPage2.screenshot({ fullPage: true })
       expect(displayShot.length).toBeGreaterThan(1_000)
 
-      const cdpShot = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`)
+      const cdpShot = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/screenshot`, tokenHeaders(token))
       expect(cdpShot.ok()).toBeTruthy()
       const cdpPng = Buffer.from(await cdpShot.body())
       expect(cdpPng.length).toBeGreaterThan(1_000)

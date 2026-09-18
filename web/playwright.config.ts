@@ -108,7 +108,12 @@ export default defineConfig({
       stderr: 'pipe' as const,
     },
     {
-      command: `PCODER_SERVER_URL=http://127.0.0.1:${API_PORT} npm run dev -- --port ${WEB_PORT} --strictPort`,
+      // Fast preview heartbeat for the token rotation suite: the e2e
+      // stack runs PCODER_PREVIEW_TOKEN_SILENCE=20s, so the RFC invariant
+      // (silence > 2× heartbeat) needs beats well under 10s — the 30s
+      // production default would let open tabs go silent past the
+      // threshold and get swept.
+      command: `VITE_PREVIEW_HEARTBEAT_MS=5000 PCODER_SERVER_URL=http://127.0.0.1:${API_PORT} npm run dev -- --port ${WEB_PORT} --strictPort`,
       url: `http://localhost:${WEB_PORT}`,
       reuseExistingServer: false,
       timeout: 60_000,

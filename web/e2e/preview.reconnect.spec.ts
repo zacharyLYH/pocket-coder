@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
-import { createReactProject, execInProject, waitForInspectContaining } from './preview.helpers'
+import { createReactProject, execInProject, waitForInspectContaining, statusToken, tokenHeaders } from './preview.helpers'
 
 test.describe('preview reconnect', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -15,6 +15,7 @@ test.describe('preview reconnect', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
+      const token = await statusToken(request, projectID)
 
       // ── First connection: open preview, type something ──
       await page.goto(`/preview/${encodeURIComponent(projectID)}`)
@@ -44,13 +45,13 @@ test.describe('preview reconnect', () => {
       await waitForInspectContaining(request, projectID, 'persist-input', 30)
 
       // Type something via CDP tools
-      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/type`, {
+      await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/type`, { ...tokenHeaders(token), 
         data: { selector: '[data-testid="persist-input"]', text: 'typed-state' },
       })
       await page.waitForTimeout(1000)
 
       // Verify it's there
-      let inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+      let inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       let { html } = (await inspectRes.json()) as { html: string }
       expect(html).toContain('typed-state')
 
@@ -72,7 +73,7 @@ test.describe('preview reconnect', () => {
       await expect(newFrame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
 
       // The browser state (typed text) must persist through the disconnect
-      inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+      inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       expect(inspectRes.ok()).toBeTruthy()
       ;({ html } = (await inspectRes.json()) as { html: string })
       // The input value persists because it's in Chromium's DOM, not the phone's

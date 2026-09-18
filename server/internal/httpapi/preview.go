@@ -28,21 +28,26 @@ func handlePreviewStatus(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "get preview", err)
 			return
 		}
+		tok, ok := d.Preview.TokenOrMint(id)
+		if !ok {
+			writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "stopped"})
+			return
+		}
 		// "ready" means the browser actually answers: ping CDP, report
 		// degraded if dead.
 		ep := worker.Endpoint()
 		s, err := getCDP(id, ep.CDP)
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "degraded"})
+			writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "degraded", "token": tok})
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), statusPingTimeout)
 		defer cancel()
 		if _, err := s.call(ctx, "Runtime.evaluate", map[string]any{"expression": "1", "returnByValue": true}); err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "degraded"})
+			writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "degraded", "token": tok})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "ready"})
+		writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "ready", "token": tok})
 	}
 }
 
@@ -98,7 +103,8 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 			return
 		}
 		plog(d, r.PathValue("id"), "preview.start", "Preview started on :"+strconv.Itoa(body.Port), map[string]any{"port": body.Port})
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "port": body.Port, "status": "ready"})
+		tok, _ := d.Preview.TokenOrMint(r.PathValue("id"))
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "port": body.Port, "status": "ready", "token": tok})
 	}
 }
 
@@ -127,15 +133,17 @@ func handlePreviewClose(d Deps) http.HandlerFunc {
 // in a Location header or JSON response.
 func handlePreviewSurface(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		worker, err := ensurePreviewWorker(d, r)
-		if err != nil {
-			if errors.Is(err, project.ErrNotFound) || errors.Is(err, preview.ErrNotFound) {
-				writeErr(w, http.StatusNotFound, "preview is not running")
-				return
-			}
-			writeInternalErr(w, "get preview surface", err)
+		id := r.PathValue("id")
+		if !d.Preview.CheckToken(id, r.URL.Query().Get("token")) {
+			writeErr(w, http.StatusNotFound, "not found")
 			return
 		}
+		worker, err := ensurePreviewWorker(d, r)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		d.Preview.Touch(id)
 		ep := worker.Endpoint()
 		target, err := url.Parse(ep.Display)
 		if err != nil || target.Scheme != "http" || target.Host == "" {
@@ -180,8 +188,46 @@ func newPreviewProxy(target *url.URL, path string) *httputil.ReverseProxy {
 		req.URL.Path = pathpkg.Clean("/" + strings.TrimPrefix(path, "/"))
 		req.URL.RawPath = ""
 		req.Host = target.Host
+		// The preview token is a PCODER capability, never a sidecar
+		// credential: strip it before forwarding upstream.
+		q := req.URL.Query()
+		q.Del("token")
+		req.URL.RawQuery = q.Encode()
 	}
 	return proxy
+}
+
+// handlePreviewHeartbeat proves a live surface page for one project.
+func handlePreviewHeartbeat(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if previewTokenWorker(d, w, r) == nil {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}
+}
+
+// previewTokenWorker gates token-carrying preview endpoints. It validates
+// X-Preview-Token (falling back to ?token=), requires a running worker,
+// and Touches lastSeen on success. On failure it writes 404 and returns
+// nil; on success it returns the live worker.
+func previewTokenWorker(d Deps, w http.ResponseWriter, r *http.Request) preview.Worker {
+	id := r.PathValue("id")
+	sup := r.Header.Get("X-Preview-Token")
+	if sup == "" {
+		sup = r.URL.Query().Get("token")
+	}
+	if !d.Preview.CheckToken(id, sup) {
+		writeErr(w, http.StatusNotFound, "not found")
+		return nil
+	}
+	worker, err := d.Preview.Get(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not found")
+		return nil
+	}
+	d.Preview.Touch(id)
+	return worker
 }
 
 // hasDotDotSegment reports whether path contains a ".." segment, encoded

@@ -32,6 +32,11 @@ const (
 	// can exercise the pipeline without touching github.com.
 	EnvAllowAnyRepo = "PCODER_ALLOW_ANY_REPO"
 
+	// EnvPreviewSweepInterval bounds how stale token presence may look.
+	EnvPreviewSweepInterval = "PCODER_PREVIEW_SWEEP_INTERVAL"
+	// EnvPreviewTokenSilence bounds quiet time before token rotation.
+	EnvPreviewTokenSilence = "PCODER_PREVIEW_TOKEN_SILENCE"
+
 	EnvSMTPHost = "SMTP_HOST"     // Google SMTP by default
 	EnvSMTPPort = "SMTP_PORT"     // 587 by default
 	EnvSMTPUser = "SMTP_USER"     // Gmail address (required for email)
@@ -44,6 +49,7 @@ var envKeys = []string{
 	EnvDataDir, EnvBind, EnvLoginEmail, EnvJWTSecret, EnvDockerSock,
 	EnvSMTPHost, EnvSMTPPort, EnvSMTPUser, EnvSMTPPass, EnvSMTPFrom,
 	EnvAllowAnyRepo, EnvAIBaseURL, EnvAPIKey, EnvAIModel,
+	EnvPreviewSweepInterval, EnvPreviewTokenSilence,
 }
 
 // knownKeys backs the unknown-variable check so a typo fails startup

@@ -368,6 +368,9 @@ func decodeScreenshotPNG(raw json.RawMessage) ([]byte, error) {
 
 func handlePreviewScreenshot(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if previewTokenWorker(d, w, r) == nil {
+			return
+		}
 		s, err := cdpForRequest(d, r)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, err.Error())
@@ -390,6 +393,9 @@ func handlePreviewScreenshot(d Deps) http.HandlerFunc {
 
 func handlePreviewInspect(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if previewTokenWorker(d, w, r) == nil {
+			return
+		}
 		s, err := cdpForRequest(d, r)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, err.Error())
@@ -415,6 +421,9 @@ func handlePreviewInspect(d Deps) http.HandlerFunc {
 
 func handlePreviewConsole(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if previewTokenWorker(d, w, r) == nil {
+			return
+		}
 		s, err := cdpForRequest(d, r)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, err.Error())
@@ -444,6 +453,9 @@ func handlePreviewConsole(d Deps) http.HandlerFunc {
 
 func handlePreviewNetwork(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if previewTokenWorker(d, w, r) == nil {
+			return
+		}
 		s, err := cdpForRequest(d, r)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, err.Error())
@@ -473,6 +485,9 @@ func handlePreviewNetwork(d Deps) http.HandlerFunc {
 
 func handlePreviewNavigate(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if previewTokenWorker(d, w, r) == nil {
+			return
+		}
 		var body struct {
 			URL string `json:"url"`
 		}
@@ -551,6 +566,9 @@ func typeText(ctx context.Context, s cdpCaller, text string) error {
 
 func handlePreviewClick(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if previewTokenWorker(d, w, r) == nil {
+			return
+		}
 		var body struct {
 			Selector string `json:"selector"`
 			X        int    `json:"x"`
@@ -598,6 +616,9 @@ func handlePreviewClick(d Deps) http.HandlerFunc {
 
 func handlePreviewType(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if previewTokenWorker(d, w, r) == nil {
+			return
+		}
 		var body struct {
 			Selector string `json:"selector"`
 			Text     string `json:"text"`
@@ -641,6 +662,9 @@ func handlePreviewType(d Deps) http.HandlerFunc {
 
 func handlePreviewReload(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if previewTokenWorker(d, w, r) == nil {
+			return
+		}
 		s, err := cdpForRequest(d, r)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, err.Error())
@@ -658,6 +682,9 @@ func handlePreviewReload(d Deps) http.HandlerFunc {
 
 func handlePreviewScroll(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if previewTokenWorker(d, w, r) == nil {
+			return
+		}
 		var body struct {
 			DeltaX int `json:"deltaX"`
 			DeltaY int `json:"deltaY"`
@@ -683,6 +710,9 @@ func handlePreviewScroll(d Deps) http.HandlerFunc {
 
 func handlePreviewViewport(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if previewTokenWorker(d, w, r) == nil {
+			return
+		}
 		var body struct {
 			Width  int  `json:"width"`
 			Height int  `json:"height"`

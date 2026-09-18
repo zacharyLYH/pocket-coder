@@ -5,14 +5,17 @@ package preview
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 var (
 	ErrNotFound = errors.New("preview worker not found")
-	ErrExists   = errors.New("preview worker already exists")
 	ErrClosed   = errors.New("preview manager is closed")
 )
 
@@ -46,11 +49,16 @@ type WorkerFactory interface {
 // Manager owns at most one browser worker per project. It is safe for HTTP
 // handlers, reconnects, and project lifecycle events to call concurrently.
 type Manager struct {
-	mu       sync.RWMutex
-	factory  WorkerFactory
-	workers  map[string]Worker
-	inflight map[string]*startCall
-	closed   bool
+	mu        sync.RWMutex
+	factory   WorkerFactory
+	workers   map[string]Worker
+	inflight  map[string]*startCall
+	closed    bool
+	tokens    map[string]string
+	lastSeen  map[string]time.Time
+	sweepStop chan struct{}
+	sweepOnce sync.Once
+	now       func() time.Time
 }
 
 // startCall deduplicates concurrent Ensure starts for the same project:
@@ -65,7 +73,7 @@ func NewManager(factory WorkerFactory) *Manager {
 	if factory == nil {
 		panic("preview: nil worker factory")
 	}
-	return &Manager{factory: factory, workers: make(map[string]Worker), inflight: make(map[string]*startCall)}
+	return &Manager{factory: factory, workers: make(map[string]Worker), inflight: make(map[string]*startCall), tokens: make(map[string]string), lastSeen: make(map[string]time.Time), now: time.Now}
 }
 
 // Ensure returns the existing worker or starts exactly one worker for the
@@ -105,10 +113,21 @@ func (m *Manager) Ensure(ctx context.Context, cfg Config) (Worker, error) {
 	m.mu.Lock()
 	delete(m.inflight, cfg.ProjectID)
 	if err == nil && !m.closed {
+		if _, dup := m.workers[cfg.ProjectID]; dup {
+			m.mu.Unlock()
+			_ = w.Close(context.Background())
+			c.worker, c.err = m.workers[cfg.ProjectID], nil
+			close(c.done)
+			return c.worker, nil
+		}
 		// The inflight map guarantees a single starter per project and the
 		// lock is held from delete to insert, so no existing worker can
 		// appear while Start runs.
 		m.workers[cfg.ProjectID] = w
+		if _, ok := m.tokens[cfg.ProjectID]; !ok {
+			m.tokens[cfg.ProjectID] = newToken()
+			m.lastSeen[cfg.ProjectID] = m.clock()
+		}
 	}
 	if m.closed && err == nil {
 		m.mu.Unlock()
@@ -142,6 +161,8 @@ func (m *Manager) Stop(ctx context.Context, projectID string) error {
 	w := m.workers[projectID]
 	if w != nil {
 		delete(m.workers, projectID)
+		delete(m.tokens, projectID)
+		delete(m.lastSeen, projectID)
 	}
 	m.mu.Unlock()
 	if w == nil {
@@ -159,10 +180,16 @@ func (m *Manager) Close(ctx context.Context) error {
 		return nil
 	}
 	m.closed = true
+	if m.sweepStop != nil {
+		close(m.sweepStop)
+		m.sweepStop = nil
+	}
 	workers := make([]Worker, 0, len(m.workers))
 	for id, w := range m.workers {
 		workers = append(workers, w)
 		delete(m.workers, id)
+		delete(m.tokens, id)
+		delete(m.lastSeen, id)
 	}
 	m.mu.Unlock()
 
@@ -173,6 +200,103 @@ func (m *Manager) Close(ctx context.Context) error {
 		}
 	}
 	return first
+}
+
+// TokenOrMint returns the live token, minting one if the worker exists but
+// has no token (post-sweep rotation). False when no worker is running.
+func (m *Manager) TokenOrMint(projectID string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.workers[projectID]; !ok {
+		return "", false
+	}
+	if tok, ok := m.tokens[projectID]; ok {
+		return tok, true
+	}
+	tok := newToken()
+	if m.tokens == nil {
+		m.tokens = make(map[string]string)
+	}
+	if m.lastSeen == nil {
+		m.lastSeen = make(map[string]time.Time)
+	}
+	m.tokens[projectID] = tok
+	m.lastSeen[projectID] = m.clock()
+	return tok, true
+}
+
+// CheckToken reports whether sup is the live token for projectID.
+func (m *Manager) CheckToken(projectID, sup string) bool {
+	m.mu.RLock()
+	tok, ok := m.tokens[projectID]
+	m.mu.RUnlock()
+	if !ok || sup == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(tok), []byte(sup)) == 1
+}
+
+// Touch marks projectID as recently seen by a valid token holder.
+func (m *Manager) Touch(projectID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.tokens[projectID]; ok {
+		m.lastSeen[projectID] = m.clock()
+	}
+}
+
+// Sweep deletes tokens (and their presence) silent longer than silence.
+func (m *Manager) Sweep(now time.Time, silence time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, seen := range m.lastSeen {
+		if now.Sub(seen) > silence {
+			delete(m.tokens, id)
+			delete(m.lastSeen, id)
+		}
+	}
+}
+
+// StartSweeper runs one global ticker expiring silent tokens. Once-guarded;
+// Close stops it first.
+func (m *Manager) StartSweeper(interval, silence time.Duration) {
+	m.sweepOnce.Do(func() {
+		m.mu.Lock()
+		if m.closed {
+			m.mu.Unlock()
+			return
+		}
+		stop := make(chan struct{})
+		m.sweepStop = stop
+		m.mu.Unlock()
+		go func() {
+			t := time.NewTicker(interval)
+			defer t.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case now := <-t.C:
+					m.Sweep(now, silence)
+				}
+			}
+		}()
+	})
+}
+
+func (m *Manager) clock() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
+}
+
+func newToken() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("preview: crypto/rand failed: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
 }
 
 func validateConfig(cfg Config) error {

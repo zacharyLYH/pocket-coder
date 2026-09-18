@@ -64,15 +64,6 @@ func splitSuffix(name string) (base string, n int, ok bool) {
 	return name, 0, false
 }
 
-// HarnessSuffixed reports whether name is exactly base+"-"+<number> — the
-// namespace Launch uses for harness sessions. A bare name ("opencode") is
-// NOT suffixed, so a plain shell that happens to share a harness's id is
-// never mistaken for a harness session.
-func HarnessSuffixed(name, base string) bool {
-	b, _, ok := splitSuffix(name)
-	return ok && b == base
-}
-
 // ThemeArgs are the tmux commands appended to every session create so the
 // container's tmux matches the web terminal (TERM_THEME in
 // web/src/components/terminal/TerminalPane.tsx): truecolor passthrough, COLORTERM for
@@ -323,22 +314,6 @@ func (s *Service) Launch(ctx context.Context, container string, h harness.Harnes
 		return "", err
 	}
 	return s.LaunchNamed(ctx, container, name, h)
-}
-
-// ensureInstalled makes the harness binary present in the container: a
-// missing binary runs the plugin's install command (bounded by
-// installTimeout) and is then re-checked. A plugin with no install command
-// is tolerated here — the launch pipeline surfaces the missing command
-// in-session via the `|| echo` failure story.
-func (s *Service) ensureInstalled(ctx context.Context, container string, h harness.Harness) error {
-	found, err := s.commandPath(ctx, container, harness.Binary(h))
-	if err != nil {
-		return err
-	}
-	if found || h.Install == "" {
-		return nil
-	}
-	return s.runInstall(ctx, container, h)
 }
 
 // runInstall executes the plugin's install command and re-checks the binary.

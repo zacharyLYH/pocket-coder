@@ -16,9 +16,6 @@ func newState(t *testing.T) (*state.Store, *Store) {
 	return st, New(st)
 }
 
-// statePath lets assertions read the exact on-disk document.
-func statePath(st *state.Store) string { return st.Path() }
-
 func TestAddAndList(t *testing.T) {
 	st, s := newState(t)
 	fp, err := s.Add("me@example.com", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest", "laptop")

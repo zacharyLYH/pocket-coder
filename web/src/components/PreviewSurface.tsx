@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { api, projectPath } from '@/lib/api'
-import { previewSurfacePath } from '@/lib/preview'
+import { ApiError, api, projectPath } from '@/lib/api'
+import { PREVIEW_HEARTBEAT_MS, previewSurfacePath } from '@/lib/preview'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 
 // The project is not loaded in this iframe. It loads the authenticated noVNC
 // surface, which keeps the browser chrome and project traffic server-side.
@@ -22,10 +24,50 @@ import { previewSurfacePath } from '@/lib/preview'
 export function PreviewSurface({ projectId }: { projectId: string }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const [loaded, setLoaded] = useState(false)
+  const [token, setToken] = useState<string | null>(null)
+  const [expired, setExpired] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  const fetchToken = useCallback(() => {
+    setExpired(false)
+    setLoaded(false)
+    setToken(null)
+    setLoading(true)
+    api<{ token?: string }>(projectPath(projectId, '/preview'))
+      .then((s) => setToken(s.token ?? null))
+      .catch(() => setToken(null))
+      .finally(() => setLoading(false))
+  }, [projectId])
+
+  useEffect(() => {
+    fetchToken()
+  }, [fetchToken])
+
+  useEffect(() => {
+    if (!token || expired || typeof window === 'undefined') return
+    const beat = () => {
+      api(projectPath(projectId, '/preview/heartbeat'), {
+        method: 'POST',
+        headers: { 'X-Preview-Token': token },
+      }).catch((err) => {
+        if (err instanceof ApiError && err.status === 404) setExpired(true)
+      })
+    }
+    beat()
+    const t = setInterval(beat, PREVIEW_HEARTBEAT_MS)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') beat()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [projectId, token, expired])
 
   useEffect(() => {
     const frame = frameRef.current
-    if (!frame || !loaded || typeof ResizeObserver === 'undefined') return
+    if (!frame || !loaded || !token || typeof ResizeObserver === 'undefined') return
     let timer: ReturnType<typeof setTimeout> | null = null
     const sync = () => {
       const width = Math.round(frame.clientWidth)
@@ -33,6 +75,7 @@ export function PreviewSurface({ projectId }: { projectId: string }) {
       if (width < 100 || height < 100) return
       api(projectPath(projectId, '/preview/tools/viewport'), {
         method: 'POST',
+        headers: { 'X-Preview-Token': token },
         body: JSON.stringify({ width, height }),
       }).catch(() => {
         // Preview sidecar not up yet or gone — the next resize (or reopen)
@@ -57,18 +100,53 @@ export function PreviewSurface({ projectId }: { projectId: string }) {
       ro.disconnect()
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [projectId, loaded])
+  }, [projectId, loaded, token])
+
+  if (expired) {
+    return (
+      <main className="grid h-dvh w-full place-items-center p-6">
+        <Card className="max-w-md text-center">
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Preview expired — the sidecar rotated its token.
+            </p>
+            <Button className="mt-4" onClick={fetchToken}>
+              Resume
+            </Button>
+          </CardContent>
+        </Card>
+      </main>
+    )
+  }
+
+  if (!loading && !token) {
+    return (
+      <main className="grid h-dvh w-full place-items-center p-6">
+        <Card className="max-w-md text-center">
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Preview not running — start it from the Preview tab.
+            </p>
+          </CardContent>
+        </Card>
+      </main>
+    )
+  }
 
   return (
     <main className="h-dvh w-full">
-      <iframe
-        ref={frameRef}
-        title="Remote project preview"
-        className="h-full w-full border-0"
-        src={previewSurfacePath(projectId)}
-        allow="clipboard-read; clipboard-write"
-        onLoad={() => setLoaded(true)}
-      />
+      {token && (
+        <iframe
+          ref={frameRef}
+          title="Remote project preview"
+          className="h-full w-full border-0"
+          src={previewSurfacePath(projectId, token)}
+          allow="clipboard-read; clipboard-write"
+          onLoad={() => setLoaded(true)}
+        />
+      )}
     </main>
   )
 }
+
+// ApiError import is type-only to keep the heartbeat 404 path explicit.

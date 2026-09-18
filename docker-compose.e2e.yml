@@ -13,6 +13,8 @@ services:
       # E2E clones come from the per-run git daemon on the host
       # (web/e2e/global-setup.ts), not from GitHub.
       PCODER_ALLOW_ANY_REPO: "1"
+      PCODER_PREVIEW_TOKEN_SILENCE: ${PCODER_PREVIEW_TOKEN_SILENCE:-20s}
+      PCODER_PREVIEW_SWEEP_INTERVAL: ${PCODER_PREVIEW_SWEEP_INTERVAL:-1s}
     volumes:
       - ${PCODER_E2E_DATA_DIR}:/data
       - /var/run/docker.sock:/var/run/docker.sock

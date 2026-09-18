@@ -1,5 +1,5 @@
 import { expect, type APIRequestContext, type Page } from '@playwright/test'
-import { e2eRepo, projectURL } from './helpers'
+import { createProject, e2eRepo, projectURL } from './helpers'
 
 // Real full-stack fixture per devin-clone.md section 6.3:
 //   frontend: localhost:3000, backend: localhost:4000
@@ -123,17 +123,10 @@ export const reactFiles: Record<string, string> = {
 }
 
 // ── shared project-creation plumbing ──────────────────────────────────
-// createProject clones a fixture repo (slot) and returns its id.
+// createProject comes from helpers.ts (with 409-retry cleanup).
 // writeFilesCmd writes file contents into /workspace/app. The running-Vite
 // and preinstalled flows below reuse these, so each framework fixture is
 // just its file map plus a readiness variant.
-export async function createProject(request: APIRequestContext, repoUrl = e2eRepo(1)): Promise<string> {
-  const created = await request.post('/api/projects', { data: { repoUrl } })
-  expect(created.status()).toBe(201)
-  const { id } = (await created.json()) as { id: string }
-  return id
-}
-
 function writeFilesCmd(files: Record<string, string>): string {
   return Object.entries(files).map(([name, content]) => {
     const encoded = Buffer.from(content).toString('base64')
@@ -216,8 +209,9 @@ export async function waitForInspectContaining(
   marker: string,
   attempts = 60,
 ): Promise<void> {
+  const token = await statusToken(request, projectID)
   for (let i = 0; i < attempts; i++) {
-    const res = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+    const res = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
     if (res.ok() && ((await res.json()) as { html: string }).html.includes(marker)) return
     await new Promise((r) => setTimeout(r, 1000))
   }
@@ -287,7 +281,8 @@ export function pngSize(png: Buffer): { width: number; height: number } {
 // Poll the sidecar screenshot until the Chromium window matches the noVNC
 // iframe box (the preview page auto-fits on open/resize, debounced). Without
 // this, surface screenshots race the fit and flake between fitted/cropped.
-export async function waitForChromiumFit(page: Page, request: APIRequestContext, projectId: string) {
+export async function waitForChromiumFit(page: Page, request: APIRequestContext, projectId: string, token?: string) {
+  token ??= await statusToken(request, projectId)
   // Foreground the tab first: background tabs get their timers throttled,
   // which stalls the preview page's debounced fit sync nondeterministically.
   await page.bringToFront()
@@ -297,7 +292,7 @@ export async function waitForChromiumFit(page: Page, request: APIRequestContext,
   const box = await page.locator('iframe[title="Remote project preview"]').boundingBox()
   const want = { width: Math.round(box?.width ?? 0), height: Math.round(box?.height ?? 0) }
   await expect(async () => {
-    const res = await request.get(`/api/projects/${projectURL(projectId)}/preview/tools/screenshot`)
+    const res = await request.get(`/api/projects/${projectURL(projectId)}/preview/tools/screenshot`, tokenHeaders(token))
     expect(res.ok()).toBeTruthy()
     const { width, height } = pngSize(Buffer.from(await res.body()))
     expect(Math.abs(width - want.width) <= 4).toBe(true)
@@ -503,4 +498,37 @@ const vueFiles: Record<string, string> = {
 
 export async function createVueProject(request: APIRequestContext): Promise<string> {
   return createRunningViteProject(request, vueFiles)
+}
+
+// -- preview token helpers (preview-token-rfc section 6) --
+// The surface page mints a per-sidecar token; every tools call carries it.
+export async function statusToken(request: APIRequestContext, id: string): Promise<string> {
+  const res = await request.get(`/api/projects/${projectURL(id)}/preview`)
+  expect(res.ok()).toBeTruthy()
+  const body = (await res.json()) as { token?: string }
+  expect(body.token).toBeTruthy()
+  return body.token as string
+}
+
+export function tokenHeaders(token: string): { headers: Record<string, string> } {
+  return { headers: { 'X-Preview-Token': token } }
+}
+
+export async function toolGet(request: APIRequestContext, id: string, tool: string, token: string) {
+  return request.get(`/api/projects/${projectURL(id)}/preview/tools/${tool}`, tokenHeaders(token))
+}
+
+export async function surfaceToken(page: Page): Promise<string> {
+  const src = await page.locator('iframe[title="Remote project preview"]').getAttribute('src')
+  expect(src).toContain('token=')
+  const u = new URL(src as string, 'http://x')
+  return u.searchParams.get('token') as string
+}
+
+export async function openSurfacePage(browser: import("@playwright/test").Browser, id: string) {
+  const ctx = await browser.newContext()
+  const tab = await ctx.newPage()
+  await tab.goto(`/preview/${encodeURIComponent(id)}`)
+  await expect(tab.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: 60_000 })
+  return tab
 }

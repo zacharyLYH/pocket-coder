@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
-import { createPrecreatedProject, execInProject, waitForInspectContaining } from './preview.helpers'
+import { createPrecreatedProject, execInProject, waitForInspectContaining, statusToken, tokenHeaders } from './preview.helpers'
 
 test.describe('preview user journey', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -79,6 +79,7 @@ test.describe('preview user journey', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createPrecreatedProject(request)
+      const token = await statusToken(request, projectID)
       await page.goto('/')
       await page.getByTestId(`project-card-${projectID}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
@@ -105,7 +106,7 @@ test.describe('preview user journey', () => {
       // otherwise the shot enshrines a gray "Loading" frame.
       await expect(previewPage2.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
       await expect(async () => {
-        const r = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+        const r = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
         expect(r.ok()).toBeTruthy()
         expect(((await r.json()) as { html: string }).html).toContain('Full-Stack App')
       }).toPass({ timeout: 60_000 })
@@ -127,6 +128,7 @@ test.describe('preview user journey', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createPrecreatedProject(request)
+      const token = await statusToken(request, projectID)
       await page.goto('/')
       await page.getByTestId(`project-card-${projectID}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
@@ -151,7 +153,7 @@ test.describe('preview user journey', () => {
       // "Connecting" frame and flakes with sidecar startup speed.
       await expect(previewPage3.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
       await expect(async () => {
-        const r = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+        const r = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
         expect(r.ok()).toBeTruthy()
         expect(((await r.json()) as { html: string }).html).toContain('Full-Stack App')
       }).toPass({ timeout: 60_000 })

@@ -48,7 +48,7 @@ app|1|e2e/app.spec.ts e2e/preview.basic.spec.ts e2e/preview.hmr.spec.ts e2e/sshk
 stack|2|e2e/terminal.stack.spec.ts
 sessions|3|e2e/terminal.session.spec.ts e2e/terminal.mobile.spec.ts e2e/harness.inject.spec.ts e2e/harness.orchestration.spec.ts e2e/harness.relaunch.spec.ts
 visual|4|e2e/home.visual.spec.ts e2e/codemap.spec.ts
-preview.a|5|e2e/preview.tools.spec.ts
+preview.a|5|e2e/preview.tools.spec.ts e2e/preview.token.spec.ts
 preview.b|6|e2e/preview.journey.spec.ts e2e/preview.auth.spec.ts e2e/preview.port.spec.ts
 preview.c|7|e2e/preview.viewport.spec.ts e2e/preview.htmx.spec.ts e2e/quickcommands.spec.ts
 preview.d|8|e2e/preview.vue.spec.ts e2e/preview.reconnect.spec.ts e2e/preview.fit.spec.ts e2e/preview.vanilla.spec.ts

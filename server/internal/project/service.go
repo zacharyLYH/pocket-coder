@@ -264,11 +264,6 @@ func (s *Service) Get(ctx context.Context, id string) (Project, Status, error) {
 	return p, st, nil
 }
 
-// Update persists a project's desired state to state.json.
-func (s *Service) Update(id string, p Project) error {
-	return s.wrapNotFound(s.store.Update(id, p))
-}
-
 // EnsureContainer makes sure a project's CONTAINER exists, returning its
 // current state. If the container is missing but the project's volumes
 // persist (the disk is the source of truth), it recreates the container

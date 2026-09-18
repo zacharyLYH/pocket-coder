@@ -1,11 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
-import {
-  createRunningViteProjectOnPort,
-  openPreviewFromTerminal,
-  reactFiles,
-} from './preview.helpers'
+import { createRunningViteProjectOnPort, openPreviewFromTerminal, reactFiles, statusToken, tokenHeaders } from './preview.helpers'
 
 // BROWSER_TARGET plumb-through: before the port fix, the sidecar browser
 // was hardcoded to http://127.0.0.1:3000, so any project whose app listened
@@ -32,6 +28,7 @@ test.describe('preview non-default port', () => {
       // The helper clicks the :4001 port button + the Open button and
       // returns the popup that hosts PreviewSurface.
       const previewPage = await openPreviewFromTerminal(page, projectID, 4001)
+      const token = await statusToken(request, projectID)
 
       // Frontend proof: the popup is the /preview/<id> route, not a
       // blank tab or an auth redirect.
@@ -56,7 +53,7 @@ test.describe('preview non-default port', () => {
       // (not the historical :3000), so the rendered HTML is the fixture
       // from the non-default port. This is the only way to inspect what
       // the canvas is showing — the canvas pixels are opaque.
-      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`)
+      const inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       expect(inspectRes.ok()).toBeTruthy()
       const { html } = (await inspectRes.json()) as { html: string }
       expect(html).toContain('Full-Stack App')
