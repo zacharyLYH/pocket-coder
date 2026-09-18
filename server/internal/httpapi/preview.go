@@ -203,6 +203,10 @@ func handlePreviewHeartbeat(d Deps) http.HandlerFunc {
 		if previewTokenWorker(d, w, r) == nil {
 			return
 		}
+		// Reached only with a valid token (the gate above 404s
+		// otherwise), so each line is proof of tokened presence.
+		// The value itself is never logged.
+		slog.Info("preview heartbeat", "project", r.PathValue("id"))
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }

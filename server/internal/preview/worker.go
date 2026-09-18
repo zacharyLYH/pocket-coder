@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -127,6 +128,9 @@ func (m *Manager) Ensure(ctx context.Context, cfg Config) (Worker, error) {
 		if _, ok := m.tokens[cfg.ProjectID]; !ok {
 			m.tokens[cfg.ProjectID] = newToken()
 			m.lastSeen[cfg.ProjectID] = m.clock()
+			// The value itself is never logged: this line proves a
+			// capability was issued, not what it is.
+			slog.Info("preview token minted", "project", cfg.ProjectID, "reason", "start")
 		}
 	}
 	if m.closed && err == nil {
@@ -222,6 +226,9 @@ func (m *Manager) TokenOrMint(projectID string) (string, bool) {
 	}
 	m.tokens[projectID] = tok
 	m.lastSeen[projectID] = m.clock()
+	// Fresh mint while a worker is live means the previous token was
+	// swept after total silence: this is the rotation successor.
+	slog.Info("preview token minted", "project", projectID, "reason", "rotation")
 	return tok, true
 }
 
@@ -249,11 +256,16 @@ func (m *Manager) Touch(projectID string) {
 func (m *Manager) Sweep(now time.Time, silence time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var swept []string
 	for id, seen := range m.lastSeen {
 		if now.Sub(seen) > silence {
 			delete(m.tokens, id)
 			delete(m.lastSeen, id)
+			swept = append(swept, id)
 		}
+	}
+	if len(swept) > 0 {
+		slog.Info("preview tokens swept after silence", "projects", swept, "silence", silence.String())
 	}
 }
 
