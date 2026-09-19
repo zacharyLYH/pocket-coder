@@ -38,6 +38,7 @@ type Client interface {
 	Remove(ctx context.Context, id string, force bool) error
 	RemoveVolume(ctx context.Context, name string) error
 	Inspect(ctx context.Context, id string) (Container, error)
+	Stats(ctx context.Context, id string) (ContainerStats, error)
 	Exec(ctx context.Context, id string, cmd []string, tty bool) (ExecResult, error)
 	Attach(ctx context.Context, id string, cmd []string, stdin io.Reader, stdout, stderr io.Writer, tty bool) (string, <-chan ExecDone, error)
 	ResizeTTY(ctx context.Context, execID string, height, width int) error

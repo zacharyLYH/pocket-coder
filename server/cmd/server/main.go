@@ -22,9 +22,9 @@ import (
 	"pcoder/internal/events"
 	"pcoder/internal/harness"
 	"pcoder/internal/httpapi"
+	"pcoder/internal/obs"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
-	"pcoder/internal/projectlog"
 	"pcoder/internal/session"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
@@ -40,8 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	slog.SetDefault(logger)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	// state.Open creates the data dir if missing. state.json is the single
 	// source of truth for desired app state; env config seeds a fresh
@@ -62,6 +61,14 @@ func main() {
 		os.Exit(1)
 	}
 	defer ev.Close()
+
+	// Staged logging writes project lines to the observe file + stderr.
+	// events.log is NOT a destination: it holds only the global audit
+	// (boot, login, ssh keys — actions with no project), written by
+	// explicit Events.Append calls. Project detail lives in observe logs.
+	observe := obs.NewStore(cfg.DataDir)
+	defer observe.Close()
+	obs.Configure(observe, nil)
 
 	harnesses := harness.New(st)
 	seeded, err := harnesses.EnsureBuiltins()
@@ -88,7 +95,7 @@ func main() {
 	}
 
 	sshKeyStore := sshkeys.New(st)
-	svc := project.NewService(project.Open(st), dkr, ev)
+	svc := project.NewService(project.Open(st), dkr)
 	svc.SetSSHKeys(sshKeyStore)
 	svc.SetAllowAnyRepo(cfg.AllowAnyRepo)
 
@@ -118,23 +125,13 @@ func main() {
 	if len(seeded) > 0 {
 		ev.Append("harness.seed", map[string]any{"written": seeded})
 	}
-	logger.Info("data dir ready", "data_dir", cfg.DataDir, "seeded_harnesses", seeded)
-
-	plm := projectlog.NewManager(0)
-	ev.SetOnAppend(func(typ string, data map[string]any) {
-		if data == nil {
-			return
-		}
-		if projID, ok := data["project"].(string); ok && projID != "" {
-			plm.Append(projID, typ, typ, data)
-		}
-	})
+	slog.Info("data dir ready", "data_dir", cfg.DataDir, "seeded_harnesses", seeded)
 
 	srv := &http.Server{Addr: cfg.Bind, Handler: httpapi.New(httpapi.Deps{
 		Events: ev, Version: version, Auth: authSvc, Projects: svc,
 		Sessions: sessions, Harnesses: harnesses,
 		SSHKeys: sshKeyStore, State: st, Preview: previewManager,
-		ProjectLogs: plm, Codemaps: codemapStore,
+		Obs: observe, Docker: dkr, Codemaps: codemapStore,
 	})}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -142,28 +139,28 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("server listening", "addr", cfg.Bind, "data_dir", cfg.DataDir)
+		slog.Info("server listening", "addr", cfg.Bind, "data_dir", cfg.DataDir)
 		errCh <- srv.ListenAndServe()
 	}()
 
 	select {
 	case err := <-errCh:
 		if !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("server failed", "err", err)
+			slog.Error("server failed", "err", err)
 			os.Exit(1)
 		}
 	case <-ctx.Done():
-		logger.Info("signal received, shutting down")
+		slog.Info("signal received, shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := previewManager.Close(shutdownCtx); err != nil {
-			logger.Error("preview shutdown failed", "err", err)
+			slog.Error("preview shutdown failed", "err", err)
 		}
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			logger.Error("graceful shutdown failed", "err", err)
+			slog.Error("graceful shutdown failed", "err", err)
 			os.Exit(1)
 		}
-		logger.Info("shutdown complete")
+		slog.Info("shutdown complete")
 	}
 }
 

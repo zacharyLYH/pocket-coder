@@ -42,7 +42,7 @@ func codemapDeleteDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buff
 	}
 	d.Harnesses = hs
 	d.SSHKeys = sshkeys.New(st)
-	d.Projects = project.NewService(project.Open(st), md, d.Events)
+	d.Projects = project.NewService(project.Open(st), md)
 	d.Projects.SetCodemaps(d.Codemaps)
 	d.State = st
 	return d, md, pinOut, st, dataDir

@@ -336,9 +336,10 @@ func TestCodemapSuccess(t *testing.T) {
 	if !strings.Contains(body.Tools[1].Output, "func main()") {
 		t.Fatalf("read output lost: %+v", body.Tools[1])
 	}
-	// The live project log carries the full trace for the Logs tab.
+	// The live project log carries the full trace for the Nerdy Stuff tab.
 	gotTypes := map[string]int{}
-	for _, e := range d.ProjectLogs.Read("abc", 0, 0) {
+	logs, _, _ := d.Obs.Read("abc", 0, 0, 0, "", "", "", "", "")
+	for _, e := range logs {
 		gotTypes[e.Type]++
 	}
 	for _, want := range []string{"codemap.start", "codemap.tool", "codemap.tool_result", "codemap.done"} {
@@ -512,11 +513,12 @@ func TestCodemapModelBadJSON(t *testing.T) {
 		t.Fatalf("failure dropped threadId: %s", rec.Body)
 	}
 	gotTypes := map[string]int{}
-	for _, e := range d.ProjectLogs.Read("abc", 0, 0) {
+	logs, _, _ := d.Obs.Read("abc", 0, 0, 0, "", "", "", "", "")
+	for _, e := range logs {
 		gotTypes[e.Type]++
 	}
-	if gotTypes["codemap.thread_initialized"] != 1 || gotTypes["codemap.turn_failed"] != 1 || gotTypes["codemap.error"] != 1 {
-		t.Fatalf("failed turn boundary logs = %v, want initialization, fail persist, and run error", gotTypes)
+	if gotTypes["codemap.thread_initialized"] != 1 || gotTypes["codemap.turn"] != 2 {
+		t.Fatalf("failed turn boundary logs = %v, want initialization plus fail persist and run error under codemap.turn", gotTypes)
 	}
 	threads, err := d.Codemaps.List("abc")
 	if err != nil || len(threads) != 1 || threads[0].TurnCount != 1 {

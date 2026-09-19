@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"pcoder/internal/obs"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
 )
@@ -19,13 +20,20 @@ import (
 func handlePreviewStatus(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		worker, err := d.Preview.Get(id)
-		if errors.Is(err, preview.ErrNotFound) {
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.PreviewStatus, "preview status failed", err, nil)
+			}
+		}()
+		worker, gerr := d.Preview.Get(id)
+		if errors.Is(gerr, preview.ErrNotFound) {
 			writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "stopped"})
 			return
 		}
-		if err != nil {
-			writeInternalErr(w, "get preview", err)
+		if gerr != nil {
+			err = gerr
+			writeInternalErr(w, "get preview", gerr)
 			return
 		}
 		tok, ok := d.Preview.TokenOrMint(id)
@@ -53,6 +61,12 @@ func handlePreviewStatus(d Deps) http.HandlerFunc {
 
 func handlePreviewStart(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.PreviewStart, "preview start failed", err, nil)
+			}
+		}()
 		var body struct {
 			Port int `json:"port"`
 		}
@@ -60,49 +74,56 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 			return
 		}
 		if body.Port < 1 || body.Port > 65535 {
-			writeErr(w, http.StatusBadRequest, "invalid port")
+			err = errors.New("invalid port")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		worker, err := ensurePreviewWorker(d, r, body.Port)
-		if err != nil {
-			if errors.Is(err, project.ErrNotFound) || errors.Is(err, preview.ErrNotFound) {
+		worker, werr := ensurePreviewWorker(d, r, body.Port)
+		if werr != nil {
+			err = werr
+			if errors.Is(werr, project.ErrNotFound) || errors.Is(werr, preview.ErrNotFound) {
 				writeErr(w, http.StatusNotFound, "project not found")
 				return
 			}
-			writeInternalErr(w, "ensure preview", err)
+			writeInternalErr(w, "ensure preview", werr)
 			return
 		}
 		ep := worker.Endpoint()
-		s, err := getCDP(r.PathValue("id"), ep.CDP)
-		if err != nil {
-			writeInternalErr(w, "cdp connect", err)
+		s, cerr := getCDP(r.PathValue("id"), ep.CDP)
+		if cerr != nil {
+			err = cerr
+			writeInternalErr(w, "cdp connect", cerr)
 			return
 		}
 		target := "http://127.0.0.1:" + strconv.Itoa(body.Port)
-		raw, err := s.call(r.Context(), "Page.navigate", map[string]any{"url": target})
-		if err != nil {
-			writeInternalErr(w, "cdp navigate", err)
+		raw, nerr := s.call(r.Context(), "Page.navigate", map[string]any{"url": target})
+		if nerr != nil {
+			err = nerr
+			writeInternalErr(w, "cdp navigate", nerr)
 			return
 		}
 		var nav struct {
 			ErrorText string `json:"errorText"`
 		}
-		if err := json.Unmarshal(raw, &nav); err != nil {
-			writeInternalErr(w, "decode navigate", err)
+		if uerr := json.Unmarshal(raw, &nav); uerr != nil {
+			err = uerr
+			writeInternalErr(w, "decode navigate", uerr)
 			return
 		}
 		if nav.ErrorText != "" {
+			err = errors.New(nav.ErrorText)
 			writeErr(w, http.StatusBadGateway, nav.ErrorText)
 			return
 		}
 		// Synchronous readiness: a dead target fails loudly here.
 		ctx, cancel := context.WithTimeout(r.Context(), previewReadyTimeout)
 		defer cancel()
-		if err := waitForPageReady(ctx, s, target); err != nil {
-			writeErr(w, http.StatusBadGateway, "preview target never became ready")
+		if rerr := waitForPageReady(ctx, s, target); rerr != nil {
+			err = errors.New("preview target never became ready")
+			writeErr(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		plog(d, r.PathValue("id"), "preview.start", "Preview started on :"+strconv.Itoa(body.Port), map[string]any{"port": body.Port})
+		obs.Info(r.Context(), obs.PreviewStart, "Preview started on :"+strconv.Itoa(body.Port), map[string]any{"port": body.Port})
 		tok, _ := d.Preview.TokenOrMint(r.PathValue("id"))
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "port": body.Port, "status": "ready", "token": tok})
 	}
@@ -111,19 +132,26 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 func handlePreviewClose(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.PreviewClose, "preview close failed", err, nil)
+			}
+		}()
 		// Clear cached CDP session first: it dangles if the worker is gone
 		// (stop/restart/delete raced close), and a stale entry makes the next
 		// tools call dial a dead socket.
 		evictCDP(id)
-		if err := d.Preview.Stop(r.Context(), id); err != nil {
-			if errors.Is(err, preview.ErrNotFound) {
+		if serr := d.Preview.Stop(r.Context(), id); serr != nil {
+			if errors.Is(serr, preview.ErrNotFound) {
 				writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "stopped"})
 				return
 			}
-			writeInternalErr(w, "stop preview", err)
+			err = serr
+			writeInternalErr(w, "stop preview", serr)
 			return
 		}
-		plog(d, id, "preview.close", "Preview closed", nil)
+		obs.Info(r.Context(), obs.PreviewClose, "Preview closed", nil)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "stopped"})
 	}
 }
@@ -134,23 +162,30 @@ func handlePreviewClose(d Deps) http.HandlerFunc {
 func handlePreviewSurface(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.PreviewSurface, "preview surface failed", err, nil)
+			}
+		}()
 		if !d.Preview.CheckToken(id, r.URL.Query().Get("token")) {
 			writeErr(w, http.StatusNotFound, "not found")
 			return
 		}
-		worker, err := ensurePreviewWorker(d, r)
-		if err != nil {
+		worker, werr := ensurePreviewWorker(d, r)
+		if werr != nil {
 			writeErr(w, http.StatusNotFound, "not found")
 			return
 		}
 		d.Preview.Touch(id)
 		ep := worker.Endpoint()
-		target, err := url.Parse(ep.Display)
-		if err != nil || target.Scheme != "http" || target.Host == "" {
-			if err == nil {
-				err = errors.New("invalid private display endpoint")
+		target, perr := url.Parse(ep.Display)
+		if perr != nil || target.Scheme != "http" || target.Host == "" {
+			if perr == nil {
+				perr = errors.New("invalid private display endpoint")
 			}
-			writeInternalErr(w, "parse preview surface endpoint", err)
+			err = perr
+			writeInternalErr(w, "parse preview surface endpoint", perr)
 			return
 		}
 		prefix := "/api/projects/" + r.PathValue("id") + "/preview/"
@@ -166,10 +201,13 @@ func handlePreviewSurface(d Deps) http.HandlerFunc {
 		// visit, while its assets and the websockify stream share this
 		// handler and would spam the log.
 		if path == "vnc.html" || path == "vnc_lite.html" {
-			plog(d, r.PathValue("id"), "preview.open", "Preview opened", nil)
+			obs.Info(r.Context(), obs.PreviewOpen, "Preview opened", nil)
 		}
 		proxy := newPreviewProxy(target, path)
 		proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
+			// Feed the deferred error log; the defer fires once when the
+			// handler returns, so no direct obs call here.
+			err = proxyErr
 			writeInternalErr(w, "proxy preview surface", proxyErr)
 		}
 		proxy.ServeHTTP(w, r)
@@ -200,9 +238,14 @@ func newPreviewProxy(target *url.URL, path string) *httputil.ReverseProxy {
 // handlePreviewHeartbeat proves a live surface page for one project.
 func handlePreviewHeartbeat(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if previewTokenWorker(d, w, r) == nil {
+		// Heartbeat fires every few seconds per open surface. It goes to
+		// the runtime tail like everything else — filter it from the UI
+		// if the poll noise bothers you; slog stays as the cheap
+		// operator-side presence proof.
+		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			return
 		}
+		obs.Info(r.Context(), obs.PreviewHeartbeat, "preview heartbeat", nil)
 		// Reached only with a valid token (the gate above 404s
 		// otherwise), so each line is proof of tokened presence.
 		// The value itself is never logged.
@@ -214,8 +257,9 @@ func handlePreviewHeartbeat(d Deps) http.HandlerFunc {
 // previewTokenWorker gates token-carrying preview endpoints. It validates
 // X-Preview-Token (falling back to ?token=), requires a running worker,
 // and Touches lastSeen on success. On failure it writes 404 and returns
-// nil; on success it returns the live worker.
-func previewTokenWorker(d Deps, w http.ResponseWriter, r *http.Request) preview.Worker {
+// the cause (so callers can feed their deferred obs error log); on success
+// it returns the live worker and a nil error.
+func previewTokenWorker(d Deps, w http.ResponseWriter, r *http.Request) (preview.Worker, error) {
 	id := r.PathValue("id")
 	sup := r.Header.Get("X-Preview-Token")
 	if sup == "" {
@@ -223,15 +267,15 @@ func previewTokenWorker(d Deps, w http.ResponseWriter, r *http.Request) preview.
 	}
 	if !d.Preview.CheckToken(id, sup) {
 		writeErr(w, http.StatusNotFound, "not found")
-		return nil
+		return nil, errors.New("invalid preview token")
 	}
 	worker, err := d.Preview.Get(id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "not found")
-		return nil
+		return nil, err
 	}
 	d.Preview.Touch(id)
-	return worker
+	return worker, nil
 }
 
 // hasDotDotSegment reports whether path contains a ".." segment, encoded
@@ -254,20 +298,29 @@ func hasDotDotSegment(path string) bool {
 func handlePreviewPorts(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.PreviewPorts, "preview ports probe failed", err, nil)
+			}
+		}()
 		if d.Projects == nil {
-			writeErr(w, http.StatusNotFound, "no projects")
+			err = errors.New("no projects")
+			writeErr(w, http.StatusNotFound, err.Error())
 			return
 		}
-		if _, _, err := d.Projects.Get(r.Context(), id); err != nil {
+		if _, _, gerr := d.Projects.Get(r.Context(), id); gerr != nil {
+			err = gerr
 			writeErr(w, http.StatusNotFound, "no such project")
 			return
 		}
 		cid := project.ContainerName(id)
-		output, err := d.Sessions.ExecCommand(r.Context(), cid, "ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || true")
-		if err != nil {
+		output, xerr := d.Sessions.ExecCommand(r.Context(), cid, "ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || true")
+		if xerr != nil {
+			err = xerr
 			// Return an error rather than an empty list so the UI keeps its
-			// last-known ports instead of blinking them away.
-			slog.Warn("preview ports probe failed", "project", id, "err", err)
+			// last-known ports instead of blinking them away. No slog here:
+			// the deferred obs error already logs to stderr + file.
 			writeErr(w, http.StatusBadGateway, "ports probe failed")
 			return
 		}

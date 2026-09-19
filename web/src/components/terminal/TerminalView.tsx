@@ -9,7 +9,7 @@ import { TerminalPane, type ConnStatus } from '@/components/terminal/TerminalPan
 import { useAiConfig } from '@/hooks/useAiConfig'
 import { NewSessionDialog } from '@/components/terminal/NewSessionDialog'
 import { PreviewTab } from '@/components/terminal/PreviewTab'
-import { LogsTab } from '@/components/terminal/LogsTab'
+import { NerdyStuffTab } from '@/components/terminal/NerdyStuffTab'
 import { DiffTab } from '@/components/terminal/DiffTab'
 import { CodemapTab } from '@/components/terminal/CodemapTab'
 
@@ -206,9 +206,9 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           <DiffTab projectId={projectId} />
         </div>
       )}
-      {tab === 'logs' && (
+      {tab === 'nerdy' && (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">
-          <LogsTab projectId={projectId} />
+          <NerdyStuffTab projectId={projectId} />
         </div>
       )}
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"pcoder/internal/docker"
+	"pcoder/internal/obs"
 	"pcoder/internal/project"
 	"pcoder/internal/state"
 )
@@ -25,6 +26,11 @@ func handleCreateProject(d Deps) http.HandlerFunc {
 		if r.Body != nil && !decodeBody(w, r, &body, true) {
 			return
 		}
+		// No middleware injection here: the id doesn't exist until Create
+		// parses the repo URL, so there is no project ctx to log under on
+		// pre-parse failures. The service injects once known and owns all
+		// create logging (project.create/ready on success, project.clone
+		// on clone failure; same trace: the request ctx flows into Create).
 		id, p, err := d.Projects.Create(r.Context(), strings.TrimSpace(body.RepoURL), strings.TrimSpace(body.Branch), strings.TrimSpace(body.CloneMethod))
 		switch {
 		case errors.Is(err, project.ErrInvalidInput):
@@ -57,26 +63,41 @@ func handleListProjects(d Deps) http.HandlerFunc {
 
 func handleGetProject(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		p, status, err := d.Projects.Get(r.Context(), r.PathValue("id"))
-		switch {
-		case errors.Is(err, project.ErrNotFound):
-			writeErr(w, http.StatusNotFound, "no such project")
-		case err != nil:
-			writeInternalErr(w, "get project", err)
-		default:
-			writeJSON(w, http.StatusOK, map[string]any{
-				"id": r.PathValue("id"), "repo": p.Repo,
-				"branch": p.Branch, "cloneMethod": p.CloneMethod, "status": status.State,
-				"quickCommands": p.QuickCommands,
-			})
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.ProjectGet, "get project failed", err, nil)
+			}
+		}()
+		p, status, gerr := d.Projects.Get(r.Context(), r.PathValue("id"))
+		if gerr != nil {
+			err = gerr
+			if errors.Is(gerr, project.ErrNotFound) {
+				writeErr(w, http.StatusNotFound, "no such project")
+			} else {
+				writeInternalErr(w, "get project", gerr)
+			}
+			return
 		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": r.PathValue("id"), "repo": p.Repo,
+			"branch": p.Branch, "cloneMethod": p.CloneMethod, "status": status.State,
+			"quickCommands": p.QuickCommands,
+		})
 	}
 }
 
 func handlePatchProject(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.ProjectPatch, "patch project failed", err, nil)
+			}
+		}()
 		if d.State == nil {
-			writeErr(w, http.StatusInternalServerError, "state not available")
+			err = errors.New("state not available")
+			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		var body struct {
@@ -91,16 +112,18 @@ func handlePatchProject(d Deps) http.HandlerFunc {
 				alias = strings.TrimSpace(alias)
 				cmd = strings.TrimSpace(cmd)
 				if alias == "" || cmd == "" {
-					writeErr(w, http.StatusBadRequest, "alias and command must be non-empty")
+					err = errors.New("alias and command must be non-empty")
+					writeErr(w, http.StatusBadRequest, err.Error())
 					return
 				}
 				if !isValidAlias(alias) {
-					writeErr(w, http.StatusBadRequest, "invalid alias: "+alias)
+					err = errors.New("invalid alias: " + alias)
+					writeErr(w, http.StatusBadRequest, err.Error())
 					return
 				}
 			}
 		}
-		err := d.State.Mutate(func(doc *state.Document) error {
+		err = d.State.Mutate(func(doc *state.Document) error {
 			p, ok := doc.Projects[id]
 			if !ok {
 				return project.ErrNotFound
@@ -127,6 +150,7 @@ func handlePatchProject(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "patch project", err)
 			return
 		}
+		obs.Info(r.Context(), obs.ProjectPatch, "project patched", nil)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
@@ -138,6 +162,17 @@ func isValidAlias(s string) bool { return aliasRe.MatchString(s) }
 // handleProjectOp serves POST /{id}/start|stop|restart.
 func handleProjectOp(d Deps, op string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		key := map[string]string{
+			"start":   obs.ProjectStart,
+			"stop":    obs.ProjectStop,
+			"restart": obs.ProjectRestart,
+		}[op]
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, key, "project "+op+" failed", err, map[string]any{"op": op})
+			}
+		}()
 		id := r.PathValue("id")
 		ctx := r.Context()
 		if d.Preview != nil && (op == "stop" || op == "restart") {
@@ -147,7 +182,6 @@ func handleProjectOp(d Deps, op string) http.HandlerFunc {
 			// until its 30s timeout instead of failing fast.
 			evictCDP(id)
 		}
-		var err error
 		switch op {
 		case "start":
 			err = d.Projects.Start(ctx, id)
@@ -158,6 +192,10 @@ func handleProjectOp(d Deps, op string) http.HandlerFunc {
 		}
 		writeServiceErr(w, err)
 		if err == nil {
+			// The start/stop Info lines come from the service; restart is
+			// stop+start (two lines). One audit line keeps the op itself
+			// visible as a unit.
+			obs.Info(ctx, key, "project "+op+" ok", map[string]any{"op": op})
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		}
 	}
@@ -165,6 +203,12 @@ func handleProjectOp(d Deps, op string) http.HandlerFunc {
 
 func handleDeleteProject(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.ProjectDelete, "delete project failed", err, nil)
+			}
+		}()
 		if d.Preview != nil {
 			_ = d.Preview.Stop(r.Context(), r.PathValue("id"))
 		}
@@ -173,9 +217,12 @@ func handleDeleteProject(d Deps) http.HandlerFunc {
 		if scope == "" {
 			scope = project.ScopeAll
 		}
-		err := d.Projects.Delete(r.Context(), r.PathValue("id"), scope)
+		err = d.Projects.Delete(r.Context(), r.PathValue("id"), scope)
 		switch {
 		case err == nil:
+			if d.Obs != nil {
+				d.Obs.DeleteProject(r.PathValue("id"))
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		case errors.Is(err, project.ErrInvalidScope):
 			writeErr(w, http.StatusBadRequest, err.Error())

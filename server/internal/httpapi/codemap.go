@@ -8,6 +8,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"pcoder/internal/agent"
 	"pcoder/internal/codemap"
 	"pcoder/internal/codemapthreads"
+	"pcoder/internal/obs"
 )
 
 // codemapBusy serializes one run per project: a second POST while one is
@@ -92,9 +94,19 @@ func repoSHA(d Deps, r *http.Request, container, dir string) string {
 func handleCodemap(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		// Reserve/store failures below already log specifically (codemap.turn
+		// key); this deferred error covers only the pre-reserve failures
+		// that have no specific line yet.
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.CodemapAsk, "codemap ask failed", err, nil)
+			}
+		}()
 		cfg := aiConfig(d, aiBody{})
 		if !cfg.Valid() {
-			writeErr(w, http.StatusConflict, "ai not configured")
+			err = errors.New("ai not configured")
+			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
 		var body struct {
@@ -106,20 +118,23 @@ func handleCodemap(d Deps) http.HandlerFunc {
 		}
 		prompt := strings.TrimSpace(body.Prompt)
 		if prompt == "" {
-			writeErr(w, http.StatusBadRequest, "prompt is required")
+			err = errors.New("prompt is required")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if len([]rune(prompt)) > 4000 {
-			writeErr(w, http.StatusBadRequest, "prompt over 4000 chars")
+			err = errors.New("prompt over 4000 chars")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
+			err = errors.New("repo unavailable")
 			return
 		}
 		threadID := strings.TrimSpace(body.ThreadID)
 		if !codemapTake(id, threadID) {
-			plog(d, id, "codemap.busy", "run rejected: previous run still in flight", map[string]any{"prompt": excerpt2000(prompt)})
+			obs.Info(r.Context(), obs.CodemapBusy, "run rejected: previous run still in flight", map[string]any{"prompt": excerpt2000(prompt)})
 			writeErr(w, http.StatusConflict, "codemap busy — wait for the current run")
 			return
 		}
@@ -127,7 +142,8 @@ func handleCodemap(d Deps) http.HandlerFunc {
 
 		st := d.Codemaps
 		if st == nil {
-			writeInternalErr(w, "codemap store", errStoreUnconfigured)
+			err = errStoreUnconfigured
+			writeInternalErr(w, "codemap store", err)
 			return
 		}
 		// The placeholder exists before the model runs so a failed turn is
@@ -139,6 +155,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 		if threadID != "" {
 			th, gerr := st.Get(id, threadID)
 			if gerr != nil {
+				err = errors.New("unknown thread")
 				writeUnknownThread(w)
 				return
 			}
@@ -153,17 +170,17 @@ func handleCodemap(d Deps) http.HandlerFunc {
 					writeUnknownThread(w)
 					return
 				}
-				plog(d, id, "codemap.persistence_error", "turn reserve failed: "+rerr.Error(), map[string]any{"stage": "reserve_turn", "error": rerr.Error()})
+				obs.Error(r.Context(), obs.CodemapTurn, "turn reserve failed: "+rerr.Error(), map[string]any{"stage": "reserve_turn", "error": rerr.Error()})
 				writeCodemapErr(w, http.StatusInternalServerError, "reserve turn: "+rerr.Error(), threadID, threadTitle)
 				return
 			}
 			turnN, turnID = n, tid
-			plog(d, id, "codemap.turn_reserved", fmt.Sprintf("[%s] turn %d reserved before generation", tid, n), map[string]any{"turnId": tid, "threadId": threadID, "turn": n, "stage": "reserve_turn"})
+			obs.Info(r.Context(), obs.CodemapTurnReserved, fmt.Sprintf("[%s] turn %d reserved before generation", tid, n), map[string]any{"turnId": tid, "threadId": threadID, "turn": n, "stage": "reserve_turn"})
 		} else {
 			sha := repoSHA(d, r, container, dir)
 			tid, turn, rerr := st.ReserveNewThread(id, prompt, sha)
 			if rerr != nil {
-				plog(d, id, "codemap.persistence_error", "thread initialization failed: "+rerr.Error(), map[string]any{"stage": "reserve_thread", "error": rerr.Error()})
+				obs.Error(r.Context(), obs.CodemapTurn, "thread initialization failed: "+rerr.Error(), map[string]any{"stage": "reserve_thread", "error": rerr.Error()})
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "create thread: " + rerr.Error(), "stage": "reserve_thread"})
 				return
 			}
@@ -172,7 +189,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 			turnN = 1
 			threadTitle = codemapthreads.TitleFromPrompt(prompt)
 			codemapSet(id, threadID)
-			plog(d, id, "codemap.thread_initialized", fmt.Sprintf("[%s] thread + turn 1 reserved before generation; waiting for turn", threadID), map[string]any{"threadId": threadID, "title": threadTitle, "stage": "reserve_thread"})
+			obs.Info(r.Context(), obs.CodemapThreadInitialized, fmt.Sprintf("[%s] thread + turn 1 reserved before generation; waiting for turn", threadID), map[string]any{"threadId": threadID, "title": threadTitle, "stage": "reserve_thread"})
 		}
 
 		executeReservedTurn(d, w, r, id, container, dir, cfg, st, threadID, threadTitle, turnN, turnID, prompt, history)
@@ -188,17 +205,25 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		tid := r.PathValue("tid")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.CodemapRetry, "codemap retry failed", err, map[string]any{"threadId": tid})
+			}
+		}()
 		cfg := aiConfig(d, aiBody{})
 		if !cfg.Valid() {
-			writeErr(w, http.StatusConflict, "ai not configured")
+			err = errors.New("ai not configured")
+			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
+			err = errors.New("repo unavailable")
 			return
 		}
 		if !codemapTake(id, tid) {
-			plog(d, id, "codemap.busy", "retry rejected: previous run still in flight", map[string]any{"threadId": tid})
+			obs.Info(r.Context(), obs.CodemapBusy, "retry rejected: previous run still in flight", map[string]any{"threadId": tid})
 			writeErr(w, http.StatusConflict, "codemap busy — wait for the current run")
 			return
 		}
@@ -206,21 +231,25 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 
 		st := d.Codemaps
 		if st == nil {
-			writeInternalErr(w, "codemap store", errStoreUnconfigured)
+			err = errStoreUnconfigured
+			writeInternalErr(w, "codemap store", err)
 			return
 		}
 		th, gerr := st.Get(id, tid)
 		if gerr != nil {
+			err = errors.New("unknown thread")
 			writeUnknownThread(w)
 			return
 		}
 		if len(th.Turns) == 0 {
+			err = errors.New("unknown thread")
 			writeUnknownThread(w)
 			return
 		}
 		last := th.Turns[len(th.Turns)-1]
 		if last.Error == nil && len(last.Sections) > 0 && string(last.Sections) != "null" {
-			writeErr(w, http.StatusConflict, "retry only failed turns")
+			err = errors.New("retry only failed turns")
+			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
 		// History is turns 1..N-1 only: the failed attempt never feeds
@@ -237,11 +266,11 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 				writeUnknownThread(w)
 				return
 			}
-			plog(d, id, "codemap.persistence_error", "retry reserve failed: "+rerr.Error(), map[string]any{"stage": "retry_reserve", "error": rerr.Error()})
+			obs.Error(r.Context(), obs.CodemapTurn, "retry reserve failed: "+rerr.Error(), map[string]any{"stage": "retry_reserve", "error": rerr.Error()})
 			writeCodemapErr(w, http.StatusInternalServerError, "retry reserve: "+rerr.Error(), tid, th.Title)
 			return
 		}
-		plog(d, id, "codemap.retry_reserved", fmt.Sprintf("[%s] turn %d rewritten for retry", turnID, n), map[string]any{"turnId": turnID, "threadId": tid, "turn": n, "stage": "retry_reserve"})
+		obs.Info(r.Context(), obs.CodemapRetryReserved, fmt.Sprintf("[%s] turn %d rewritten for retry", turnID, n), map[string]any{"turnId": turnID, "threadId": tid, "turn": n, "stage": "retry_reserve"})
 		executeReservedTurn(d, w, r, id, container, dir, cfg, st, tid, th.Title, n, turnID, prompt, history)
 	}
 }
@@ -251,10 +280,11 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 // Post-manifest errors keep threadId+title so FE can open the failed
 // placeholder. Callers hold the codemapBusy slot.
 func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, container, dir string, cfg agent.Config, st *codemapthreads.Store, threadID, threadTitle string, turnN int, turnID, prompt string, history []map[string]any) {
+	r = r.WithContext(obs.WithProject(r.Context(), id))
 	sha := repoSHA(d, r, container, dir)
 	runStart := time.Now()
 	toolStarts := map[string]time.Time{}
-	plog(d, id, "codemap.start", fmt.Sprintf("ask %s | model=%s sha=%s history=%d chars=%d: %s", turnID, cfg.Model, sha, len(history), len(prompt), excerpt2000(prompt)),
+	obs.Info(r.Context(), obs.CodemapStart, fmt.Sprintf("ask %s | model=%s sha=%s history=%d chars=%d: %s", turnID, cfg.Model, sha, len(history), len(prompt), excerpt2000(prompt)),
 		map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "sha": sha, "history": len(history), "prompt": capData(prompt, 500)})
 	// Codemap turns are batch jobs over slow reasoning tiers: many
 	// tool rounds plus retries can run several minutes.
@@ -265,12 +295,12 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 		func(ev agent.TraceEvent) {
 			switch ev.Kind {
 			case "round":
-				plog(d, id, "codemap.round", fmt.Sprintf("[%s round %d] %s", turnID, ev.Round+1, excerpt2000(ev.Text)),
+				obs.Info(r.Context(), obs.CodemapRound, fmt.Sprintf("[%s round %d] %s", turnID, ev.Round+1, excerpt2000(ev.Text)),
 					map[string]any{"turnId": turnID, "round": ev.Round + 1})
 			case "tool_start":
 				step++
 				toolStarts[ev.Tool+"\x00"+ev.Args] = time.Now()
-				plog(d, id, "codemap.tool", fmt.Sprintf("[%s step %d] %s %s", turnID, step, ev.Tool, excerpt2000(ev.Args)),
+				obs.Info(r.Context(), obs.CodemapTool, fmt.Sprintf("[%s step %d] %s %s", turnID, step, ev.Tool, excerpt2000(ev.Args)),
 					map[string]any{"turnId": turnID, "step": step, "tool": ev.Tool})
 			case "tool_done":
 				started := toolStarts[ev.Tool+"\x00"+ev.Args]
@@ -279,17 +309,17 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 					ms = time.Since(started).Milliseconds()
 				}
 				if ev.Err != "" {
-					plog(d, id, "codemap.tool_error", fmt.Sprintf("[%s] %s failed in %dms: %s", turnID, ev.Tool, ms, excerpt2000(ev.Err)),
+					obs.Error(r.Context(), obs.CodemapTool, fmt.Sprintf("[%s] %s failed in %dms: %s", turnID, ev.Tool, ms, excerpt2000(ev.Err)),
 						map[string]any{"turnId": turnID, "step": step, "tool": ev.Tool, "error": capData(ev.Err, 4000), "durationMs": ms})
 				} else {
-					plog(d, id, "codemap.tool_result", fmt.Sprintf("[%s] %s done in %dms (%d chars): %s", turnID, ev.Tool, ms, len(ev.Result), excerpt2000(ev.Result)),
+					obs.Info(r.Context(), obs.CodemapToolResult, fmt.Sprintf("[%s] %s done in %dms (%d chars): %s", turnID, ev.Tool, ms, len(ev.Result), excerpt2000(ev.Result)),
 						map[string]any{"turnId": turnID, "step": step, "tool": ev.Tool, "chars": len(ev.Result), "durationMs": ms})
 				}
 			case "model_error":
-				plog(d, id, "codemap.model_error", fmt.Sprintf("[%s] model=%s failed after %dms: %s", turnID, cfg.Model, time.Since(runStart).Milliseconds(), excerpt2000(ev.Err)),
+				obs.Error(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] model=%s failed after %dms: %s", turnID, cfg.Model, time.Since(runStart).Milliseconds(), excerpt2000(ev.Err)),
 					map[string]any{"turnId": turnID, "model": cfg.Model, "error": capData(ev.Err, 4000)})
 			case "ref_drop":
-				plog(d, id, "codemap.ref_dropped", fmt.Sprintf("[%s] ref dropped %s %s: %s", turnID, ev.Tool, excerpt2000(ev.Args), excerpt2000(ev.Result)),
+				obs.Info(r.Context(), obs.CodemapRefDropped, fmt.Sprintf("[%s] ref dropped %s %s: %s", turnID, ev.Tool, excerpt2000(ev.Args), excerpt2000(ev.Result)),
 					map[string]any{"turnId": turnID, "path": ev.Tool, "range": ev.Args, "reason": ev.Result})
 			}
 		})
@@ -308,11 +338,11 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 		if raw, merr := json.Marshal(lineage); merr == nil {
 			lineageRaw = raw
 		} else {
-			plog(d, id, "codemap.lineage_error", fmt.Sprintf("[%s] lineage marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "error": merr.Error(), "stage": "marshal_lineage"})
+			obs.Error(r.Context(), obs.CodemapLineage, fmt.Sprintf("[%s] lineage marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "error": merr.Error(), "stage": "marshal_lineage"})
 		}
 	}
 	if err != nil {
-		plog(d, id, "codemap.error", fmt.Sprintf("[%s] failed after %dms: %s", turnID, time.Since(runStart).Milliseconds(), excerpt2000(err.Error())),
+		obs.Error(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] failed after %dms: %s", turnID, time.Since(runStart).Milliseconds(), excerpt2000(err.Error())),
 			map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "error": capData(err.Error(), 4000), "durationMs": time.Since(runStart).Milliseconds()})
 		// The placeholder stays visible with its error so the turn is
 		// retryable; the failure graph lands beside it in lineage.
@@ -320,9 +350,9 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 		if ferr := st.FailTurn(id, threadID, turnN, codemapthreads.Turn{
 			TurnID: turnID, SHA: sha, Prompt: prompt, Time: now,
 		}, err.Error(), lineageRaw); ferr != nil {
-			plog(d, id, "codemap.persistence_error", fmt.Sprintf("[%s] fail persist failed: %s", turnID, ferr), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "fail_turn", "error": ferr.Error()})
+			obs.Error(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] fail persist failed: %s", turnID, ferr), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "fail_turn", "error": ferr.Error()})
 		} else {
-			plog(d, id, "codemap.turn_failed", fmt.Sprintf("[%s] failed turn persisted with error", turnID), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "fail_turn"})
+			obs.Info(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] failed turn persisted with error", turnID), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "fail_turn"})
 		}
 		if ctx.Err() != nil {
 			writeCodemapErr(w, http.StatusGatewayTimeout, "codemap timed out", threadID, threadTitle)
@@ -336,13 +366,13 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 	// text lives only in lineage format_response events, never in N.json.
 	sectionsRaw, merr := json.Marshal(res.Sections)
 	if merr != nil {
-		plog(d, id, "codemap.persistence_error", fmt.Sprintf("[%s] sections marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_sections", "error": merr.Error()})
+		obs.Error(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] sections marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_sections", "error": merr.Error()})
 		writeCodemapErr(w, http.StatusInternalServerError, "marshal codemap sections: "+merr.Error(), threadID, threadTitle)
 		return
 	}
 	toolsRaw, merr := json.Marshal(rounds)
 	if merr != nil {
-		plog(d, id, "codemap.persistence_error", fmt.Sprintf("[%s] tools marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_tools", "error": merr.Error()})
+		obs.Error(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] tools marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_tools", "error": merr.Error()})
 		writeCodemapErr(w, http.StatusInternalServerError, "marshal codemap tools: "+merr.Error(), threadID, threadTitle)
 		return
 	}
@@ -352,7 +382,7 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 		Sections: json.RawMessage(sectionsRaw), Tools: json.RawMessage(toolsRaw),
 		Time: now,
 	}, lineageRaw); cerr != nil {
-		plog(d, id, "codemap.persistence_error", fmt.Sprintf("[%s] turn complete failed: %s", turnID, cerr), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "complete_turn", "error": cerr.Error()})
+		obs.Error(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] turn complete failed: %s", turnID, cerr), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "complete_turn", "error": cerr.Error()})
 		if cerr.Error() == "unknown thread" {
 			writeCodemapErr(w, http.StatusNotFound, "unknown thread", threadID, threadTitle)
 			return
@@ -360,18 +390,20 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 		writeCodemapErr(w, http.StatusInternalServerError, "complete turn: "+cerr.Error(), threadID, threadTitle)
 		return
 	}
-	plog(d, id, "codemap.turn_saved", fmt.Sprintf("[%s] thread turn persisted: title=%q sections=%d rounds=%d", turnID, threadTitle, len(res.Sections), len(rounds)), map[string]any{"turnId": turnID, "threadId": threadID, "title": threadTitle, "sections": len(res.Sections), "rounds": len(rounds), "stage": "complete_turn"})
+	obs.Info(r.Context(), obs.CodemapTurnSaved, fmt.Sprintf("[%s] thread turn persisted: title=%q sections=%d rounds=%d", turnID, threadTitle, len(res.Sections), len(rounds)), map[string]any{"turnId": turnID, "threadId": threadID, "title": threadTitle, "sections": len(res.Sections), "rounds": len(rounds), "stage": "complete_turn"})
 	if lineageRaw != nil {
-		plog(d, id, "codemap.lineage_saved", fmt.Sprintf("[%s] lineage saved (%d bytes)", turnID, len(lineageRaw)), map[string]any{"turnId": turnID, "bytes": len(lineageRaw), "stage": "save_lineage"})
+		obs.Info(r.Context(), obs.CodemapLineage, fmt.Sprintf("[%s] lineage saved (%d bytes)", turnID, len(lineageRaw)), map[string]any{"turnId": turnID, "bytes": len(lineageRaw), "stage": "save_lineage"})
 	}
+	obs.Info(r.Context(), obs.CodemapDone, fmt.Sprintf("[%s] done in %dms: %d section(s), %d tool call(s)",
+		turnID, time.Since(runStart).Milliseconds(), len(res.Sections), len(steps)),
+		map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "sha": sha,
+			"sections": len(res.Sections), "tools": len(steps), "durationMs": time.Since(runStart).Milliseconds()})
+	// The audit closes the turn: it stays the last event so readers can
+	// treat "last event is codemap.turn" as run completion.
 	_, _ = d.Events.Append("codemap.turn", map[string]any{
 		"project": id, "threadId": threadID, "turnId": turnID,
 		"prompt": capData(prompt, 500), "sections": len(res.Sections), "tools": len(steps),
 	})
-	plog(d, id, "codemap.done", fmt.Sprintf("[%s] done in %dms: %d section(s), %d tool call(s)",
-		turnID, time.Since(runStart).Milliseconds(), len(res.Sections), len(steps)),
-		map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "sha": sha,
-			"sections": len(res.Sections), "tools": len(steps), "durationMs": time.Since(runStart).Milliseconds()})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"turnId": turnID, "sha": sha, "sections": res.Sections, "tools": steps,
 		"threadId": threadID, "threadTitle": threadTitle,
@@ -548,34 +580,44 @@ func threadHistory(th codemapthreads.Thread) []map[string]any {
 
 func handleCodemapFile(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.CodemapFile, "read file failed", err, map[string]any{"path": r.URL.Query().Get("path")})
+			}
+		}()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
+			err = errors.New("repo unavailable")
 			return
 		}
 		q := r.URL.Query()
 		path := q.Get("path")
 		if !validGitPath(path) {
-			writeErr(w, http.StatusBadRequest, "invalid path")
+			err = errors.New("invalid path")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		start, serr := strconv.Atoi(q.Get("start"))
 		end, eerr := strconv.Atoi(q.Get("end"))
 		if serr != nil || eerr != nil || start < 1 || end < start || end-start > 119 {
-			writeErr(w, http.StatusBadRequest, "start/end must span 1-120 lines with start >= 1")
+			err = errors.New("start/end must span 1-120 lines with start >= 1")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		out, err := d.Sessions.ExecCommand(r.Context(), container,
+		out, xerr := d.Sessions.ExecCommand(r.Context(), container,
 			fmt.Sprintf("sed -n '%d,%dp' %s", start, end, shellQuote(dir+"/"+path)))
-		if err != nil {
+		if xerr != nil {
 			// Missing file (deleted since generation) reads as empty, not 500.
-			if strings.Contains(err.Error(), "exit ") && strings.TrimSpace(out) == "" {
+			if strings.Contains(xerr.Error(), "exit ") && strings.TrimSpace(out) == "" {
 				writeJSON(w, http.StatusOK, map[string]any{
 					"path": path, "content": "", "binary": false, "moved": true,
 					"sha": repoSHA(d, r, container, dir),
 				})
 				return
 			}
-			writeInternalErr(w, "read file", err)
+			err = xerr
+			writeInternalErr(w, "read file", xerr)
 			return
 		}
 		if strings.IndexByte(out, 0) >= 0 {

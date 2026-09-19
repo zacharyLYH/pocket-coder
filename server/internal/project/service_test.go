@@ -13,6 +13,7 @@ import (
 
 	"pcoder/internal/docker"
 	"pcoder/internal/events"
+	"pcoder/internal/obs"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
 	dockermocks "pcoder/mocks/docker"
@@ -22,7 +23,8 @@ const testRepo = "https://github.com/x/hello.git"
 
 // newService builds a Service over a real temp state file + event log and a
 // mocked Docker client, so pipeline behavior is exercised end to end
-// without an engine.
+// without an engine. obs is the default logger, fanning service lines into
+// the temp event log exactly like production.
 func newService(t *testing.T) (*Service, *dockermocks.MockClient, *state.Store, string) {
 	t.Helper()
 	dataDir := t.TempDir()
@@ -35,8 +37,12 @@ func newService(t *testing.T) (*Service, *dockermocks.MockClient, *state.Store, 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ev.Close() })
+	ob := obs.NewStore(dataDir)
+	t.Cleanup(ob.Close)
+	obs.Configure(ob, func(typ string, data map[string]any) { _, _ = ev.Append(typ, data) })
+	t.Cleanup(func() { obs.Configure(nil, nil) })
 	d := dockermocks.NewMockClient(t)
-	return NewService(Open(st), d, ev), d, st, dataDir
+	return NewService(Open(st), d), d, st, dataDir
 }
 
 func expectProjectReady(d *dockermocks.MockClient, id *string) {
@@ -61,10 +67,17 @@ func expectReconcile(d *dockermocks.MockClient) {
 
 func eventsOf(t *testing.T, s *Service) []events.Event {
 	t.Helper()
-	l, ok := s.ev.(*events.Log)
+	// The service no longer holds the event log (it logs through obs);
+	// reopen it read-only beside state.json.
+	st, ok := s.store.(*StateStore)
 	if !ok {
-		t.Fatalf("service event log is %T", s.ev)
+		t.Fatalf("service store is %T", s.store)
 	}
+	l, err := events.Open(filepath.Join(filepath.Dir(st.st.Path()), "events.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
 	evs, err := l.Read(0, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -204,12 +217,12 @@ func TestCreateCloneFailureKeepsProject(t *testing.T) {
 	}
 	foundErr := false
 	for _, e := range eventsOf(t, s) {
-		if e.Type == "error" && e.Data["op"] == "project.clone" {
+		if e.Type == "project.clone" && e.Data["detail"] == "fatal: repository not found" {
 			foundErr = true
 		}
 	}
 	if !foundErr {
-		t.Fatal("no error event for failed clone")
+		t.Fatal("no project.clone error event for failed clone")
 	}
 }
 

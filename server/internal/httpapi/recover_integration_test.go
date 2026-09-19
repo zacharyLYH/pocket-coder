@@ -13,7 +13,6 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 	"os"
@@ -98,14 +97,15 @@ func TestStateMockRecovery(t *testing.T) {
 	// (the "main" session metadata was already seeded, so nothing changed)
 	statetest.AssertEqual(t, statePath, wantDoc)
 
-	// the boot reconcile + re-clone is visible in the audit trail
-	logged, err := os.ReadFile(filepath.Join(dataDir, "events.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, typ := range []string{`"project.reconcile"`, `"project.clone"`} {
-		if !bytes.Contains(logged, []byte(typ)) {
-			t.Fatalf("events.log missing %s:\n%s", typ, logged)
+	// the boot reconcile + re-clone is visible in the project observe log
+	for _, typ := range []string{"project.reconcile", "project.clone"} {
+		code, body := doJSON(t, h, cookie, http.MethodGet, projectPath(id, "/observe?type="+typ), "")
+		if code != http.StatusOK {
+			t.Fatalf("observe %s: %d %v", typ, code, body)
+		}
+		logs, _ := body["logs"].([]any)
+		if len(logs) == 0 {
+			t.Fatalf("observe log missing %s lines", typ)
 		}
 	}
 

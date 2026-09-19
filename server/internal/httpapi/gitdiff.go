@@ -8,11 +8,13 @@ package httpapi
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"pcoder/internal/obs"
 	"pcoder/internal/project"
 )
 
@@ -129,8 +131,15 @@ func parseNumstat(out string, counts map[string][2]int, binary map[string]bool) 
 
 func handleGitStatus(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.GitStatus, "git status failed", err, nil)
+			}
+		}()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
+			err = errors.New("repo unavailable")
 			return
 		}
 		qd := shellQuote(dir)
@@ -139,14 +148,15 @@ func handleGitStatus(d Deps) http.HandlerFunc {
 		// change: X is a space). A sentinel first line keeps every entry
 		// line byte-intact; the handler drops it before parsing.
 		// git diff exits 1 on differences; `; true` keeps ExecCommand happy.
-		raw, err := d.Sessions.ExecCommand(r.Context(), container,
+		raw, xerr := d.Sessions.ExecCommand(r.Context(), container,
 			"echo STATUS-BEGIN; git -C "+qd+" status --porcelain=v1 --untracked-files=normal")
-		if err != nil {
-			if strings.Contains(err.Error(), "not a git repository") {
+		if xerr != nil {
+			if strings.Contains(xerr.Error(), "not a git repository") {
 				writeJSON(w, http.StatusOK, map[string]any{"branch": "", "files": []gitFile{}, "notRepo": true})
 				return
 			}
-			writeInternalErr(w, "git status", err)
+			err = xerr
+			writeInternalErr(w, "git status", xerr)
 			return
 		}
 		porcelain := ""
@@ -187,23 +197,32 @@ func handleGitStatus(d Deps) http.HandlerFunc {
 
 func handleGitDiff(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.GitDiff, "git diff failed", err, map[string]any{"path": r.URL.Query().Get("path")})
+			}
+		}()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
+			err = errors.New("repo unavailable")
 			return
 		}
 		path := r.URL.Query().Get("path")
 		if !validGitPath(path) {
-			writeErr(w, http.StatusBadRequest, "invalid path")
+			err = errors.New("invalid path")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		args := " diff -U3 -- "
 		if r.URL.Query().Get("staged") == "true" {
 			args = " diff --cached -U3 -- "
 		}
-		out, err := d.Sessions.ExecCommand(r.Context(), container,
+		out, xerr := d.Sessions.ExecCommand(r.Context(), container,
 			"git -C "+shellQuote(dir)+args+shellQuote(path)+"; true")
-		if err != nil {
-			writeInternalErr(w, "git diff", err)
+		if xerr != nil {
+			err = xerr
+			writeInternalErr(w, "git diff", xerr)
 			return
 		}
 		// Untracked files never appear in git diff; fall back to showing
@@ -281,8 +300,20 @@ func gitFileContents(ctx context.Context, d Deps, container, dir, path string, s
 
 func handleGitStage(d Deps, unstage bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		key := obs.GitStage
+		op := "stage"
+		if unstage {
+			op = "unstage"
+		}
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, key, "git "+op+" failed", err, map[string]any{"op": op})
+			}
+		}()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
+			err = errors.New("repo unavailable")
 			return
 		}
 		var body struct {
@@ -292,7 +323,8 @@ func handleGitStage(d Deps, unstage bool) http.HandlerFunc {
 			return
 		}
 		if !validGitPath(body.Path) {
-			writeErr(w, http.StatusBadRequest, "invalid path")
+			err = errors.New("invalid path")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		var cmd string
@@ -301,10 +333,12 @@ func handleGitStage(d Deps, unstage bool) http.HandlerFunc {
 		} else {
 			cmd = "git -C " + shellQuote(dir) + " add -- " + shellQuote(body.Path)
 		}
-		if _, err := d.Sessions.ExecCommand(r.Context(), container, cmd); err != nil {
-			writeInternalErr(w, "git stage", err)
+		if _, xerr := d.Sessions.ExecCommand(r.Context(), container, cmd); xerr != nil {
+			err = xerr
+			writeInternalErr(w, "git stage", xerr)
 			return
 		}
+		obs.Info(r.Context(), key, "git "+op+": "+body.Path, map[string]any{"op": op, "path": body.Path})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
@@ -314,8 +348,15 @@ func handleGitStage(d Deps, unstage bool) http.HandlerFunc {
 // it into the shell so quotes and newlines cannot break the command.
 func handleGitStageHunk(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.GitStageHunk, "git stage hunk failed", err, nil)
+			}
+		}()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
+			err = errors.New("repo unavailable")
 			return
 		}
 		var body struct {
@@ -327,12 +368,14 @@ func handleGitStageHunk(d Deps) http.HandlerFunc {
 			return
 		}
 		if !validGitPath(body.Path) {
-			writeErr(w, http.StatusBadRequest, "invalid path")
+			err = errors.New("invalid path")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if body.Patch == "" || len(body.Patch) > 256*1024 ||
 			(!strings.Contains(body.Patch, "diff --git") && !strings.Contains(body.Patch, "@@")) {
-			writeErr(w, http.StatusBadRequest, "invalid patch")
+			err = errors.New("invalid patch")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		b64 := base64.StdEncoding.EncodeToString([]byte(body.Patch))
@@ -342,10 +385,13 @@ func handleGitStageHunk(d Deps) http.HandlerFunc {
 		}
 		cmd := "echo '" + b64 + "' | base64 -d | git -C " + shellQuote(dir) +
 			" apply --cached" + flag + " -"
-		if _, err := d.Sessions.ExecCommand(r.Context(), container, cmd); err != nil {
-			writeErr(w, http.StatusBadRequest, "hunk no longer applies — refresh the diff")
+		if _, xerr := d.Sessions.ExecCommand(r.Context(), container, cmd); xerr != nil {
+			err = errors.New("hunk no longer applies — refresh the diff")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		obs.Info(r.Context(), obs.GitStageHunk, "hunk staged: "+body.Path,
+			map[string]any{"path": body.Path, "reverse": body.Reverse})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }

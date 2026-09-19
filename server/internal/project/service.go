@@ -12,7 +12,7 @@ import (
 
 	"pcoder/internal/codemapthreads"
 	"pcoder/internal/docker"
-	"pcoder/internal/events"
+	"pcoder/internal/obs"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
 	"pcoder/internal/textutil"
@@ -27,11 +27,6 @@ const (
 	repoTarget = "/workspace"
 	stopWait   = 10 * time.Second
 )
-
-// Events is the append side of the event log.
-type Events interface {
-	Append(typ string, data map[string]any) (events.Event, error)
-}
 
 // Scope selects what a delete removes. The home volume is runtime state (tmux sessions, harness files),
 // so it goes with the container; the repo volume is the user's work.
@@ -63,11 +58,12 @@ type Installer interface {
 	InstallHarness(ctx context.Context, container string, harnessID string) error
 }
 
-// Service is the project control plane on top of the store and Docker.
+// Service is the project control plane on top of the store and Docker. It
+// logs through obs (ctx, project, key, message, data): project lines go to
+// the observe file and stderr with no event-log wiring.
 type Service struct {
 	store     Store
 	dkr       docker.Client
-	ev        Events
 	sshKeys   *sshkeys.Store
 	installer Installer
 	// codemaps is the codemap chat store. Chats are project-scoped
@@ -82,8 +78,8 @@ type Service struct {
 }
 
 // NewService wires the pipeline together.
-func NewService(store Store, dkr docker.Client, ev Events) *Service {
-	return &Service{store: store, dkr: dkr, ev: ev}
+func NewService(store Store, dkr docker.Client) *Service {
+	return &Service{store: store, dkr: dkr}
 }
 
 // SetSSHKeys attaches an SSH key store for container key injection.
@@ -149,6 +145,9 @@ func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod strin
 	if err != nil {
 		return "", Project{}, err
 	}
+	// The project never changes through this call chain, so it rides in
+	// ctx from here on — downstream logs name only key and message.
+	ctx = obs.WithProject(ctx, id)
 	if cloneMethod == "" {
 		cloneMethod = "http"
 	}
@@ -162,7 +161,7 @@ func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod strin
 	if err := s.store.Create(id, p); err != nil {
 		return "", Project{}, err
 	}
-	s.ev.Append("project.create", map[string]any{"id": id, "repo": repoURL, "branch": branch, "cloneMethod": cloneMethod})
+	obs.Info(ctx, obs.ProjectCreate, "project created", map[string]any{"repo": repoURL, "branch": branch, "cloneMethod": cloneMethod})
 
 	cid, err := s.runProject(ctx, id)
 	if err != nil {
@@ -172,13 +171,14 @@ func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod strin
 
 	// Inject SSH keys before any clone so git SSH works.
 	if err := s.injectSSHKeys(ctx, cid); err != nil {
-		slog.Warn("ssh key injection", "id", id, "err", err)
+		obs.Warn(ctx, obs.ProjectSSHKeys, "ssh key injection failed: "+err.Error(),
+			map[string]any{"error": err.Error()})
 	}
 
 	if err := s.cloneRepo(ctx, id, cid, p); err != nil {
 		return "", Project{}, err
 	}
-	s.ev.Append("project.ready", map[string]any{"id": id})
+	obs.Info(ctx, obs.ProjectReady, "project ready", nil)
 	return id, p, nil
 }
 
@@ -189,7 +189,7 @@ func (s *Service) runProject(ctx context.Context, id string) (string, error) {
 	if err := s.dkr.EnsureNetwork(ctx, docker.DefaultNetwork); err != nil {
 		return "", err
 	}
-	if err := s.ensureProjectImage(ctx); err != nil {
+	if err := s.ensureProjectImage(ctx, id); err != nil {
 		return "", err
 	}
 	spec := docker.Spec{
@@ -238,7 +238,8 @@ func (s *Service) injectSSHKeys(ctx context.Context, container string) error {
 
 // ensureProjectImage builds the embedded project definition when the image
 // is not on the engine yet.
-func (s *Service) ensureProjectImage(ctx context.Context) error {
+func (s *Service) ensureProjectImage(ctx context.Context, id string) error {
+	ctx = obs.WithProject(ctx, id)
 	err := s.dkr.InspectImage(ctx, ProjectImage)
 	if err == nil {
 		return nil
@@ -246,8 +247,7 @@ func (s *Service) ensureProjectImage(ctx context.Context) error {
 	if !errors.Is(err, docker.ErrNotFound) {
 		return err
 	}
-	slog.Info("building project image", "image", ProjectImage)
-	s.ev.Append("project.image.build", map[string]any{"image": ProjectImage})
+	obs.Info(ctx, obs.ProjectImageBuild, "building project image", map[string]any{"image": ProjectImage})
 	return s.dkr.Build(ctx, docker.BuildOptions{Tag: ProjectImage, InputStream: projectContext()}, io.Discard)
 }
 
@@ -274,6 +274,7 @@ func (s *Service) Get(ctx context.Context, id string) (Project, Status, error) {
 // requests. Exited/paused containers are left alone (the user can Start
 // explicitly); callers check State themselves.
 func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error) {
+	ctx = obs.WithProject(ctx, id)
 	if _, err := s.store.Get(id); err != nil {
 		return Status{}, s.wrapNotFound(err)
 	}
@@ -285,15 +286,15 @@ func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error
 		return st, nil
 	}
 	// Container gone, volumes persist — recreate it.
-	slog.Info("reconciling missing container", "id", id)
 	cid, err := s.runProject(ctx, id)
 	if err != nil {
 		return Status{}, fmt.Errorf("reconcile container %s: %w", id, err)
 	}
-	s.ev.Append("project.reconcile", map[string]any{"id": id, "container": cid})
+	obs.Info(ctx, obs.ProjectReconcile, "reconciling missing container", map[string]any{"container": cid})
 	// Inject SSH keys so git clones work immediately.
 	if err := s.injectSSHKeys(ctx, cid); err != nil {
-		slog.Warn("ssh key injection after reconcile", "id", id, "err", err)
+		obs.Warn(ctx, obs.ProjectSSHKeys, "ssh key injection failed: "+err.Error(),
+			map[string]any{"error": err.Error()})
 	}
 	return ContainerStatus(ctx, s.dkr, ContainerName(id))
 }
@@ -306,21 +307,26 @@ func (s *Service) installRecordedHarnesses(ctx context.Context, id, cid string, 
 	if s.installer == nil || len(harnessIDs) == 0 {
 		return nil
 	}
+	ctx = obs.WithProject(ctx, id)
 	var firstErr error
 	for _, hid := range harnessIDs {
-		slog.Info("bootstrap: installing harness", "project", id, "harness", hid)
+		obs.Info(ctx, obs.HarnessInstall, "bootstrap: installing harness "+hid,
+			map[string]any{"harness": hid, "stage": "bootstrap"})
 		if err := s.installer.InstallHarness(ctx, cid, hid); err != nil {
 			if strings.Contains(err.Error(), "no such harness") {
-				slog.Warn("bootstrap: recorded harness no longer registered, skipping", "project", id, "harness", hid)
+				obs.Warn(ctx, obs.HarnessInstall, "bootstrap: recorded harness no longer registered, skipping "+hid,
+					map[string]any{"harness": hid, "stage": "bootstrap"})
 				continue
 			}
-			slog.Warn("bootstrap: harness install failed", "project", id, "harness", hid, "err", err)
+			obs.Error(ctx, obs.HarnessInstall, "bootstrap: harness install failed "+hid+": "+err.Error(),
+				map[string]any{"harness": hid, "stage": "bootstrap", "error": err.Error()})
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
-		slog.Info("bootstrap: harness installed", "project", id, "harness", hid)
+		obs.Info(ctx, obs.HarnessInstall, "bootstrap: harness installed "+hid,
+			map[string]any{"harness": hid, "stage": "bootstrap"})
 	}
 	return firstErr
 }
@@ -330,17 +336,16 @@ func (s *Service) installRecordedHarnesses(ctx context.Context, id, cid string, 
 // every recorded harness installed. This is the boot path; the per-request
 // safety net (EnsureContainer) only guarantees the container itself.
 func (s *Service) provisionProject(ctx context.Context, id string) error {
+	ctx = obs.WithProject(ctx, id)
 	st, err := s.EnsureContainer(ctx, id)
 	if err != nil {
 		return err
 	}
-	slog.Info("bootstrap: container state", "id", id, "state", st.State)
+	obs.Info(ctx, obs.ProjectBootstrap, "bootstrap: container "+st.State, map[string]any{"state": st.State})
 	if st.State != StateRunning {
-		slog.Info("bootstrap: starting container", "id", id)
 		if err := s.Start(ctx, id); err != nil {
 			return fmt.Errorf("start container: %w", err)
 		}
-		slog.Info("bootstrap: container started", "id", id)
 	}
 	p, err := s.store.Get(id)
 	if err != nil {
@@ -349,14 +354,18 @@ func (s *Service) provisionProject(ctx context.Context, id string) error {
 	// Fresh engine: the repo volume came up empty — nothing was recovered by
 	// recreating the container, so re-clone from the repo URL. Like Create,
 	// a clone failure keeps the project running (the user can repair it).
+	// cloneRepo owns its own lines (project.clone); only the trigger is here.
 	if p.Repo != "" {
 		cid := ContainerName(id)
 		if empty, err := s.repoVolumeEmpty(ctx, cid); err != nil {
-			slog.Warn("bootstrap: repo volume check", "id", id, "err", err)
+			obs.Warn(ctx, obs.ProjectBootstrap, "bootstrap: repo volume check failed: "+err.Error(),
+				map[string]any{"error": err.Error()})
 		} else if empty {
-			slog.Info("bootstrap: repo volume empty, re-cloning", "id", id, "repo", p.Repo)
+			obs.Info(ctx, obs.ProjectBootstrap, "bootstrap: repo volume empty, re-cloning",
+				map[string]any{"repo": p.Repo})
 			if err := s.cloneRepo(ctx, id, cid, p); err != nil {
-				slog.Warn("bootstrap: repo re-clone failed", "id", id, "err", err)
+				obs.Warn(ctx, obs.ProjectBootstrap, "bootstrap: repo re-clone failed: "+err.Error(),
+					map[string]any{"error": err.Error()})
 			}
 		}
 	}
@@ -376,9 +385,11 @@ func (s *Service) BringAllUp(ctx context.Context) error {
 	slog.Info("bootstrap: starting", "projects", len(entries))
 	var firstErr error
 	for _, e := range entries {
-		slog.Info("bootstrap: project", "id", e.ID)
+		pctx := obs.WithProject(ctx, e.ID)
+		obs.Info(pctx, obs.ProjectBootstrap, "bootstrap: project", nil)
 		if err := s.provisionProject(ctx, e.ID); err != nil {
-			slog.Error("bootstrap: project failed", "id", e.ID, "err", err)
+			obs.Error(pctx, obs.ProjectBootstrap, "bootstrap: project failed: "+err.Error(),
+				map[string]any{"error": err.Error()})
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -407,6 +418,7 @@ func (s *Service) cloneRepo(ctx context.Context, id, cid string, p Project) erro
 	if p.Repo == "" {
 		return nil
 	}
+	ctx = obs.WithProject(ctx, id)
 	args := []string{"git", "clone"}
 	if p.Branch != "" {
 		args = append(args, "--branch", p.Branch, "--single-branch")
@@ -418,10 +430,10 @@ func (s *Service) cloneRepo(ctx context.Context, id, cid string, p Project) erro
 		if err != nil {
 			detail = err.Error()
 		}
-		s.ev.Append("error", map[string]any{"op": "project.clone", "id": id, "detail": detail})
+		obs.Error(ctx, obs.ProjectClone, "clone failed: "+detail, map[string]any{"detail": detail})
 		return fmt.Errorf("clone %s: %s", p.Repo, detail)
 	}
-	s.ev.Append("project.clone", map[string]any{"id": id, "branch": p.Branch})
+	obs.Info(ctx, obs.ProjectClone, "clone landed", map[string]any{"branch": p.Branch})
 	return nil
 }
 
@@ -432,26 +444,28 @@ func (s *Service) List() ([]Entry, error) {
 
 // Start starts a stopped project's container.
 func (s *Service) Start(ctx context.Context, id string) error {
+	ctx = obs.WithProject(ctx, id)
 	if _, err := s.store.Get(id); err != nil {
 		return s.wrapNotFound(err)
 	}
 	if err := s.dkr.Start(ctx, ContainerName(id)); err != nil {
 		return err
 	}
-	s.ev.Append("project.start", map[string]any{"id": id})
+	obs.Info(ctx, obs.ProjectStart, "container started", nil)
 	return nil
 }
 
 // Stop stops a project's container; volumes persist across stops and
 // deletes unless the scope explicitly takes them.
 func (s *Service) Stop(ctx context.Context, id string) error {
+	ctx = obs.WithProject(ctx, id)
 	if _, err := s.store.Get(id); err != nil {
 		return s.wrapNotFound(err)
 	}
 	if err := s.dkr.Stop(ctx, ContainerName(id), stopWait); err != nil && !errors.Is(err, docker.ErrNotFound) {
 		return err
 	}
-	s.ev.Append("project.stop", map[string]any{"id": id})
+	obs.Info(ctx, obs.ProjectStop, "container stopped", nil)
 	return nil
 }
 
@@ -465,6 +479,7 @@ func (s *Service) Restart(ctx context.Context, id string) error {
 
 // Delete removes exactly the requested scope.
 func (s *Service) Delete(ctx context.Context, id string, scope Scope) error {
+	ctx = obs.WithProject(ctx, id)
 	if scope != ScopeContainer && scope != ScopeRepo && scope != ScopeMetadata && scope != ScopeAll {
 		return fmt.Errorf("%w: %q", ErrInvalidScope, scope)
 	}
@@ -507,14 +522,15 @@ func (s *Service) Delete(ctx context.Context, id string, scope Scope) error {
 		// failed file cleanup never blocks the project deletion itself.
 		if s.codemaps != nil {
 			if cerr := s.codemaps.DeleteProjectDir(id); cerr != nil {
-				slog.Warn("codemap cleanup failed on project delete", "project", id, "err", cerr)
+				obs.Warn(ctx, obs.ProjectDelete, "codemap cleanup failed: "+cerr.Error(),
+					map[string]any{"scope": string(scope), "stage": "cleanup_codemaps", "error": cerr.Error()})
 			}
 		}
 	}
 	if firstErr != nil {
 		return firstErr
 	}
-	s.ev.Append("project.delete", map[string]any{"id": id, "scope": scope})
+	obs.Info(ctx, obs.ProjectDelete, "project deleted", map[string]any{"scope": string(scope)})
 	return nil
 }
 

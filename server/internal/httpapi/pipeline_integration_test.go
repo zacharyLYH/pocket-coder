@@ -150,7 +150,7 @@ func TestProjectBranchPinning(t *testing.T) {
 }
 
 func TestCloneFailureLiveKeepsProjectAndLogsError(t *testing.T) {
-	h, _, svc, pinOut, ev, _ := newLiveDeps(t)
+	h, _, svc, pinOut, _, _ := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
 
 	// port 1 on the gateway: connection refused, deterministic failure.
@@ -179,18 +179,20 @@ func TestCloneFailureLiveKeepsProjectAndLogsError(t *testing.T) {
 	if code != http.StatusOK || !reflect.DeepEqual(body, wantStatus) {
 		t.Fatalf("post-failure status: got %d %v, want %v", code, body, wantStatus)
 	}
-	evs, err := ev.Read(0, 0)
-	if err != nil {
-		t.Fatal(err)
+	code, body = doJSON(t, h, cookie, http.MethodGet, projectPath(id, "/observe?type=project.clone&level=error"), "")
+	if code != http.StatusOK {
+		t.Fatalf("observe project.clone: %d %v", code, body)
 	}
 	found := false
-	for _, e := range evs {
-		if e.Type == "error" && e.Data["id"] == id && e.Data["op"] == "project.clone" {
+	for _, e := range body["logs"].([]any) {
+		line, _ := e.(map[string]any)
+		attrs, _ := line["attrs"].(map[string]any)
+		if line["type"] == "project.clone" && attrs["detail"] != nil {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal("expected an error event with op=project.clone for id " + id)
+		t.Fatal("expected a project.clone error line for id " + id)
 	}
 }
 
@@ -248,7 +250,7 @@ func TestProjectIsolationAndRestartSurvival(t *testing.T) {
 	auth2 := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut2})
 	lc2 := testutil.NewLifecycle(t)
 	h2 := New(Deps{Events: ev2, Version: "itest", Auth: auth2,
-		Projects: project.NewService(project.Open(st), lc2.Docker(), ev2)})
+		Projects: project.NewService(project.Open(st), lc2.Docker())})
 	code, body := doJSON(t, h2, cookie, http.MethodGet, projectPath(idB, ""), "")
 	if code != http.StatusOK || body["status"] != "running" {
 		t.Fatalf("restarted server lost the project: %d %v", code, body)

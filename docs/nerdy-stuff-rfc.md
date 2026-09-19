@@ -94,7 +94,7 @@ No persistence. FE keeps last 60 in-memory for sparkline.
 
 ## 6. Backend API
 
-- Middleware mints trace hex16 -> ctx (obs.WithTrace). internal/obs Info/Warn/Error(ctx, projectID, typ, msg, attrs...slog.Attr) writes events.Append + observe file (if projectID) + slog stderr.
+- Middleware mints trace hex16 -> ctx (obs.WithTrace). Staged logger: handlers bake the project id into ctx once (obs.WithProject) then call obs.Info/Warn/Error(ctx, key, msg, data), writing the observe file + slog stderr (never events.log — that holds only the global audit for actions with no project, via explicit Appends). One stable key per use case shared by its info and error lines (level carries the outcome, e.g. project.clone, codemap.tool, codemap.turn); error level feeds the errors inbox.
 - GET /api/projects/:id/observe?after&before&limit(def 200, max 1000)&level&source&type&trace&q -> {logs, firstSeq, lastSeq}
 - GET /api/projects/:id/observe/stats -> ResourceSample
 - GET /api/projects/:id/observe/errors -> {groups} (projection, 5s cache)

@@ -4,10 +4,12 @@
 package httpapi
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"pcoder/internal/harness"
+	"pcoder/internal/obs"
 	"pcoder/internal/project"
 )
 
@@ -58,6 +60,8 @@ func handleCreateHarness(d Deps) http.HandlerFunc {
 // auto-injected: the user decides, from this same page.
 func handleInstallHarness(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// {id} here is the harness id (not a project), so this route stays
+		// off the project middleware; per-project outcomes fan out below.
 		id := r.PathValue("id")
 		h, err := d.Harnesses.Get(id)
 		if err != nil {
@@ -87,6 +91,19 @@ func handleInstallHarness(d Deps) http.HandlerFunc {
 			if i < len(body.ProjectIDs) && res.Status == "ok" {
 				_ = d.Projects.RecordInstall(body.ProjectIDs[i], id)
 			}
+			if res.Detail == "no such project" {
+				continue // unknown id: no project file to attach it to
+			}
+			pctx := obs.WithProject(r.Context(), res.Project)
+			data := map[string]any{"harness": id, "detail": capData(res.Detail, 2000)}
+			switch res.Status {
+			case "ok":
+				obs.Info(pctx, obs.HarnessInstall, "harness "+h.Name+" installed in "+res.Project, data)
+			case "skipped":
+				obs.Warn(pctx, obs.HarnessInstall, "harness install skipped in "+res.Project+": "+res.Detail, data)
+			default:
+				obs.Error(pctx, obs.HarnessInstall, "harness install failed in "+res.Project+": "+res.Detail, data)
+			}
 		}
 		_, _ = d.Events.Append("harness.install", map[string]any{"id": id, "results": results})
 		writeJSON(w, http.StatusOK, map[string]any{"results": results})
@@ -113,22 +130,31 @@ func handleDeleteHarness(d Deps) http.HandlerFunc {
 // show what is ready and what will self-heal on launch.
 func handleProjectHarnesses(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.ProjectHarnesses, "project harnesses failed", err, nil)
+			}
+		}()
 		id, ok := ensureProject(d, w, r)
 		if !ok {
+			err = errors.New("project container not running")
 			return
 		}
-		harnesses, err := d.Harnesses.List()
-		if err != nil {
-			writeInternalErr(w, "list harnesses", err)
+		harnesses, lerr := d.Harnesses.List()
+		if lerr != nil {
+			err = lerr
+			writeInternalErr(w, "list harnesses", lerr)
 			return
 		}
 		cmds := make([]string, len(harnesses))
 		for i, h := range harnesses {
 			cmds[i] = harness.Binary(h)
 		}
-		installed, err := d.Sessions.Installed(r.Context(), project.ContainerName(id), cmds)
-		if err != nil {
-			writeInternalErr(w, "probe harnesses", err)
+		installed, perr := d.Sessions.Installed(r.Context(), project.ContainerName(id), cmds)
+		if perr != nil {
+			err = perr
+			writeInternalErr(w, "probe harnesses", perr)
 			return
 		}
 		type entry struct {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"pcoder/internal/obs"
 	"pcoder/internal/project"
 	"pcoder/internal/session"
 	"pcoder/internal/state"
@@ -70,22 +71,31 @@ func ensureProject(d Deps, w http.ResponseWriter, r *http.Request) (string, bool
 func handleTerminal(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.TerminalAttach, "terminal attach failed", err, map[string]any{"session": name})
+			}
+		}()
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 
 		// Pre-flight while we can still answer with real HTTP statuses.
 		if !session.ValidName(name) {
-			writeErr(w, http.StatusBadRequest, "invalid session name")
+			err = errors.New("invalid session name")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		var ok bool
 		if id, ok = ensureProject(d, w, r); !ok {
+			err = errors.New("project container not running")
 			return
 		}
 		container := project.ContainerName(id)
-		exists, err := d.Sessions.Exists(ctx, container, name)
-		if err != nil {
-			writeInternalErr(w, "terminal", err)
+		exists, xerr := d.Sessions.Exists(ctx, container, name)
+		if xerr != nil {
+			err = xerr
+			writeInternalErr(w, "terminal", xerr)
 			return
 		}
 		if !exists {
@@ -97,6 +107,7 @@ func handleTerminal(d Deps) http.HandlerFunc {
 					if h, herr := d.Harnesses.Get(sess.Harness); herr == nil {
 						if _, lerr := d.Sessions.LaunchNamed(ctx, container, name, h); lerr != nil {
 							if !errors.Is(lerr, session.ErrDuplicate) {
+								err = lerr
 								writeLaunchErr(w, d, id, sess.Harness, lerr)
 								return
 							}
@@ -111,16 +122,19 @@ func handleTerminal(d Deps) http.HandlerFunc {
 				}
 			} else {
 				// No state.json metadata — session truly doesn't exist.
-				writeErr(w, http.StatusNotFound, "no such session")
+				err = errors.New("no such session")
+				writeErr(w, http.StatusNotFound, err.Error())
 				return
 			}
 		}
 
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
+		conn, uerr := upgrader.Upgrade(w, r, nil)
+		if uerr != nil {
+			err = uerr
 			return // upgrade response already written
 		}
 		defer conn.Close()
+		obs.Info(r.Context(), obs.TerminalAttach, "terminal attached", map[string]any{"session": name})
 		_, _ = d.Events.Append("terminal.attach", map[string]any{"id": id, "session": name})
 		defer func() { _, _ = d.Events.Append("terminal.detach", map[string]any{"id": id, "session": name}) }()
 
@@ -283,13 +297,21 @@ func splitUTF8(b []byte) (n, hold int) {
 
 func handleListSessions(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.SessionList, "list sessions failed", err, nil)
+			}
+		}()
 		id, ok := ensureProject(d, w, r)
 		if !ok {
+			err = errors.New("project container not running")
 			return
 		}
-		sessions, err := d.Sessions.List(r.Context(), project.ContainerName(id))
-		if err != nil {
-			writeInternalErr(w, "terminal", err)
+		sessions, lerr := d.Sessions.List(r.Context(), project.ContainerName(id))
+		if lerr != nil {
+			err = lerr
+			writeInternalErr(w, "terminal", lerr)
 			return
 		}
 		// Merge state.json sessions that aren't in tmux yet (e.g. after a
@@ -312,6 +334,28 @@ func handleListSessions(d Deps) http.HandlerFunc {
 func handleCreateSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.SessionCreate, "create session failed", err, nil)
+			}
+		}()
+		// created writes the success response. The obs detail line is
+		// emitted before the explicit event Appends at each site (not here),
+		// so the Append stays the last events.log entry — tests and readers
+		// treat the explicit event as the completion marker.
+		created := func(status int, name, harness string) {
+			if harness != "" {
+				writeJSON(w, status, map[string]any{"name": name, "harness": harness})
+			} else {
+				writeJSON(w, status, map[string]any{"name": name})
+			}
+		}
+		// observed emits the per-project detail line under the use-case key.
+		observed := func(name, harness string) {
+			obs.Info(r.Context(), obs.SessionCreate, "session created: "+name,
+				map[string]any{"session": name, "harness": harness})
+		}
 		var body struct {
 			Name      string `json:"name"`      // plain-shell session or harness session with explicit name
 			HarnessID string `json:"harnessId"` // harness-driven session
@@ -326,13 +370,15 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 		}
 		var ok bool
 		if id, ok = ensureProject(d, w, r); !ok {
+			err = errors.New("project container not running")
 			return
 		}
 
 		if body.HarnessID == "" {
 			// plain-shell create (the terminal tab's ensure call)
 			if !session.ValidName(body.Name) {
-				writeErr(w, http.StatusBadRequest, "invalid session name")
+				err = errors.New("invalid session name")
+				writeErr(w, http.StatusBadRequest, err.Error())
 				return
 			}
 			container := project.ContainerName(id)
@@ -342,7 +388,8 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 				// relaunched as the harness it was.
 				alive, _ := d.Sessions.IsAlive(r.Context(), container, body.Name)
 				if alive {
-					writeJSON(w, http.StatusOK, map[string]any{"name": body.Name})
+					observed(body.Name, "")
+					created(http.StatusOK, body.Name, "")
 					return
 				}
 				// Dead session — kill it, then relaunch.
@@ -351,7 +398,9 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 				harnessID := sess.Harness
 				if harnessID == "" && hasMeta {
 					// Recorded as a plain shell — recreate as shell.
-					createShellSession(d, w, r.Context(), id, body.Name, false)
+					if cerr := createShellSession(d, w, r.Context(), id, body.Name, false); cerr != nil {
+						err = cerr
+					}
 					return
 				}
 				if harnessID == "" {
@@ -361,17 +410,21 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 				if h, herr := d.Harnesses.Get(harnessID); herr == nil {
 					restarted, lerr := d.Sessions.LaunchNamed(r.Context(), container, body.Name, h)
 					if lerr != nil {
+						err = lerr
 						writeLaunchErr(w, d, id, harnessID, lerr)
 						return
 					}
 					_ = d.Projects.RecordSession(id, restarted, harnessID)
+					observed(restarted, harnessID)
 					_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": restarted, "harness": harnessID})
-					writeJSON(w, http.StatusOK, map[string]any{"name": restarted})
+					created(http.StatusOK, restarted, harnessID)
 					return
 				}
 				// Harness gone — fall back to plain shell and clear stale metadata.
 				_ = d.Projects.RemoveSession(id, body.Name)
-				createShellSession(d, w, r.Context(), id, body.Name, false)
+				if cerr := createShellSession(d, w, r.Context(), id, body.Name, false); cerr != nil {
+					err = cerr
+				}
 				return
 			}
 			// Not in tmux. Creating from nothing requires explicit intent,
@@ -379,7 +432,8 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 			// is a typo — 404, not a surprise session.
 			sess, hasMeta := d.Projects.GetSession(id, body.Name)
 			if !body.Create && !hasMeta && body.Name != "main" {
-				writeErr(w, http.StatusNotFound, "no such session")
+				err = errors.New("no such session")
+				writeErr(w, http.StatusNotFound, err.Error())
 				return
 			}
 			if hasMeta && sess.Harness != "" {
@@ -389,43 +443,52 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 					if lerr != nil {
 						if errors.Is(lerr, session.ErrDuplicate) {
 							// Session exists despite tmux check — attach to it.
-							writeJSON(w, http.StatusOK, map[string]any{"name": body.Name})
+							observed(body.Name, sess.Harness)
+							created(http.StatusOK, body.Name, sess.Harness)
 							return
 						}
+						err = lerr
 						writeLaunchErr(w, d, id, sess.Harness, lerr)
 						return
 					}
 					_ = d.Projects.RecordSession(id, restarted, sess.Harness)
+					observed(restarted, sess.Harness)
 					_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": restarted, "harness": sess.Harness})
-					writeJSON(w, http.StatusOK, map[string]any{"name": restarted})
+					created(http.StatusOK, restarted, sess.Harness)
 					return
 				}
 				// Harness gone from registry — clear stale metadata.
 				_ = d.Projects.RemoveSession(id, body.Name)
 			}
-			createShellSession(d, w, r.Context(), id, body.Name, false)
+			if cerr := createShellSession(d, w, r.Context(), id, body.Name, false); cerr != nil {
+				err = cerr
+			}
 			return
 		}
 
 		// harness-driven create
-		h, err := d.Harnesses.Get(body.HarnessID)
-		if err != nil {
-			writeErr(w, http.StatusNotFound, err.Error())
+		h, herr := d.Harnesses.Get(body.HarnessID)
+		if herr != nil {
+			err = herr
+			writeErr(w, http.StatusNotFound, herr.Error())
 			return
 		}
 		// When a name is supplied, it is required and unique (409 on collision).
 		// When absent, fall back to auto-naming <harnessID>-<n> for backward compatibility.
 		if body.Name != "" {
 			if !session.ValidName(body.Name) {
-				writeErr(w, http.StatusBadRequest, "invalid session name")
+				err = errors.New("invalid session name")
+				writeErr(w, http.StatusBadRequest, err.Error())
 				return
 			}
 			if exists, _ := d.Sessions.Exists(r.Context(), project.ContainerName(id), body.Name); exists {
-				writeErr(w, http.StatusConflict, "session name already exists")
+				err = errors.New("session name already exists")
+				writeErr(w, http.StatusConflict, err.Error())
 				return
 			}
 			name, lerr := d.Sessions.LaunchNamed(r.Context(), project.ContainerName(id), body.Name, h)
 			if lerr != nil {
+				err = lerr
 				if errors.Is(lerr, session.ErrDuplicate) {
 					writeErr(w, http.StatusConflict, lerr.Error())
 					return
@@ -434,38 +497,48 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 				return
 			}
 			_ = d.Projects.RecordSession(id, name, h.ID)
+			observed(name, h.ID)
 			_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": name, "harness": h.ID})
 			_, _ = d.Events.Append("session.create", map[string]any{"id": id, "name": name, "harness": h.ID})
-			writeJSON(w, http.StatusCreated, map[string]any{"name": name, "harness": h.ID})
+			created(http.StatusCreated, name, h.ID)
 			return
 		}
-		name, err := d.Sessions.Launch(r.Context(), project.ContainerName(id), h)
-		if err != nil {
-			if errors.Is(err, session.ErrDuplicate) {
-				writeErr(w, http.StatusConflict, err.Error())
+		name, lerr := d.Sessions.Launch(r.Context(), project.ContainerName(id), h)
+		if lerr != nil {
+			err = lerr
+			if errors.Is(lerr, session.ErrDuplicate) {
+				writeErr(w, http.StatusConflict, lerr.Error())
 				return
 			}
-			writeLaunchErr(w, d, id, h.ID, err)
+			writeLaunchErr(w, d, id, h.ID, lerr)
 			return
 		}
 		_ = d.Projects.RecordSession(id, name, h.ID)
+		observed(name, h.ID)
 		_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": name, "harness": h.ID})
 		_, _ = d.Events.Append("session.create", map[string]any{"id": id, "name": name, "harness": h.ID})
-		writeJSON(w, http.StatusCreated, map[string]any{"name": name, "harness": h.ID})
+		created(http.StatusCreated, name, h.ID)
 	}
 }
 
 // createShellSession creates a plain shell session and writes the response:
 // 201 for a fresh create, 200 for a restart under the same name. A duplicate
-// name is success either way (create doubles as the ensure call).
-func createShellSession(d Deps, w http.ResponseWriter, ctx context.Context, id, name string, restart bool) {
-	if err := d.Sessions.Create(ctx, project.ContainerName(id), name); err != nil {
-		writeSessionErr(w, d, id, name, err)
-		return
+// name is success either way (create doubles as the ensure call). It
+// returns the cause so callers can feed their deferred obs error log.
+func createShellSession(d Deps, w http.ResponseWriter, ctx context.Context, id, name string, restart bool) error {
+	if cerr := d.Sessions.Create(ctx, project.ContainerName(id), name); cerr != nil {
+		writeSessionErr(w, d, id, name, cerr)
+		// Duplicate is success (create doubles as ensure): the session is
+		// already there, so the deferred error log must not fire.
+		if errors.Is(cerr, session.ErrDuplicate) {
+			return nil
+		}
+		return cerr
 	}
 	// Record as a plain shell so restart doesn't fall back to the ParseBase
 	// heuristic and relaunch a harness the user never chose.
 	_ = d.Projects.RecordSession(id, name, "")
+	obs.Info(ctx, obs.SessionCreate, "session created: "+name, map[string]any{"session": name})
 	event := map[string]any{"id": id, "name": name}
 	status := http.StatusCreated
 	if restart {
@@ -474,6 +547,7 @@ func createShellSession(d Deps, w http.ResponseWriter, ctx context.Context, id, 
 	}
 	_, _ = d.Events.Append("session.create", event)
 	writeJSON(w, status, map[string]any{"name": name})
+	return nil
 }
 
 // writeSessionErr maps shell-create errors; duplicates are success because
@@ -506,6 +580,12 @@ func writeLaunchErr(w http.ResponseWriter, d Deps, id, harnessID string, err err
 func handleRenameSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, oldName := r.PathValue("id"), r.PathValue("name")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.SessionRename, "rename session failed", err, map[string]any{"from": oldName})
+			}
+		}()
 		var body struct {
 			Name string `json:"name"`
 		}
@@ -513,46 +593,54 @@ func handleRenameSession(d Deps) http.HandlerFunc {
 			return
 		}
 		if !session.ValidName(body.Name) {
-			writeErr(w, http.StatusBadRequest, "invalid session name")
+			err = errors.New("invalid session name")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if !session.ValidName(oldName) {
-			writeErr(w, http.StatusBadRequest, "invalid session name")
+			err = errors.New("invalid session name")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		var ok bool
 		if id, ok = ensureProject(d, w, r); !ok {
+			err = errors.New("project container not running")
 			return
 		}
 		container := project.ContainerName(id)
-		if exists, err := d.Sessions.Exists(r.Context(), container, oldName); err != nil {
-			writeInternalErr(w, "rename session", err)
+		if exists, xerr := d.Sessions.Exists(r.Context(), container, oldName); xerr != nil {
+			err = xerr
+			writeInternalErr(w, "rename session", xerr)
 			return
 		} else if !exists {
-			writeErr(w, http.StatusNotFound, "no such session")
+			err = errors.New("no such session")
+			writeErr(w, http.StatusNotFound, err.Error())
 			return
 		}
-		if exists, err := d.Sessions.Exists(r.Context(), container, body.Name); err != nil {
-			writeInternalErr(w, "rename session", err)
+		if exists, xerr := d.Sessions.Exists(r.Context(), container, body.Name); xerr != nil {
+			err = xerr
+			writeInternalErr(w, "rename session", xerr)
 			return
 		} else if exists {
-			writeErr(w, http.StatusConflict, "session name already exists")
+			err = errors.New("session name already exists")
+			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
-		if err := d.Sessions.Rename(r.Context(), container, oldName, body.Name); err != nil {
-			if errors.Is(err, session.ErrInvalidName) {
-				writeErr(w, http.StatusBadRequest, err.Error())
+		if rerr := d.Sessions.Rename(r.Context(), container, oldName, body.Name); rerr != nil {
+			err = rerr
+			if errors.Is(rerr, session.ErrInvalidName) {
+				writeErr(w, http.StatusBadRequest, rerr.Error())
 				return
 			}
-			if errors.Is(err, session.ErrDuplicate) {
-				writeErr(w, http.StatusConflict, err.Error())
+			if errors.Is(rerr, session.ErrDuplicate) {
+				writeErr(w, http.StatusConflict, rerr.Error())
 				return
 			}
-			if err.Error() == fmt.Sprintf("no such session %q", oldName) {
+			if rerr.Error() == fmt.Sprintf("no such session %q", oldName) {
 				writeErr(w, http.StatusNotFound, "no such session")
 				return
 			}
-			writeInternalErr(w, "rename session", err)
+			writeInternalErr(w, "rename session", rerr)
 			return
 		}
 		// Move session metadata under the new name.
@@ -560,6 +648,8 @@ func handleRenameSession(d Deps) http.HandlerFunc {
 			_ = d.Projects.RecordSession(id, body.Name, sess.Harness)
 			_ = d.Projects.RemoveSession(id, oldName)
 		}
+		obs.Info(r.Context(), obs.SessionRename, "session renamed to "+body.Name,
+			map[string]any{"from": oldName, "to": body.Name})
 		_, _ = d.Events.Append("session.rename", map[string]any{"id": id, "from": oldName, "to": body.Name})
 		writeJSON(w, http.StatusOK, map[string]any{"name": body.Name})
 	}
@@ -568,6 +658,12 @@ func handleRenameSession(d Deps) http.HandlerFunc {
 func handleInjectSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.SessionInject, "inject session failed", err, map[string]any{"session": name})
+			}
+		}()
 		var body struct {
 			Command string `json:"command"`
 		}
@@ -575,25 +671,29 @@ func handleInjectSession(d Deps) http.HandlerFunc {
 			return
 		}
 		if strings.TrimSpace(body.Command) == "" {
-			writeErr(w, http.StatusBadRequest, "command is required")
+			err = errors.New("command is required")
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		var ok bool
 		if id, ok = ensureProject(d, w, r); !ok {
+			err = errors.New("project container not running")
 			return
 		}
-		if err := d.Sessions.Inject(r.Context(), project.ContainerName(id), name, body.Command); err != nil {
-			if errors.Is(err, session.ErrInvalidName) || errors.Is(err, session.ErrEmptyCommand) {
-				writeErr(w, http.StatusBadRequest, err.Error())
+		if ierr := d.Sessions.Inject(r.Context(), project.ContainerName(id), name, body.Command); ierr != nil {
+			err = ierr
+			if errors.Is(ierr, session.ErrInvalidName) || errors.Is(ierr, session.ErrEmptyCommand) {
+				writeErr(w, http.StatusBadRequest, ierr.Error())
 				return
 			}
-			if strings.Contains(err.Error(), "no such session") {
+			if strings.Contains(ierr.Error(), "no such session") {
 				writeErr(w, http.StatusNotFound, "no such session")
 				return
 			}
-			writeInternalErr(w, "inject session", err)
+			writeInternalErr(w, "inject session", ierr)
 			return
 		}
+		obs.Info(r.Context(), obs.SessionInject, "command injected into "+name, map[string]any{"session": name})
 		_, _ = d.Events.Append("session.inject", map[string]any{"id": id, "session": name})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
@@ -604,14 +704,23 @@ func handleInjectSession(d Deps) http.HandlerFunc {
 func handleKillSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.SessionKill, "kill session failed", err, map[string]any{"session": name})
+			}
+		}()
 		var ok bool
 		if id, ok = ensureProject(d, w, r); !ok {
+			err = errors.New("project container not running")
 			return
 		}
-		if err := d.Sessions.Kill(r.Context(), project.ContainerName(id), name); err != nil {
-			writeInternalErr(w, "kill session", err)
+		if kerr := d.Sessions.Kill(r.Context(), project.ContainerName(id), name); kerr != nil {
+			err = kerr
+			writeInternalErr(w, "kill session", kerr)
 			return
 		}
+		obs.Info(r.Context(), obs.SessionKill, "session killed: "+name, map[string]any{"session": name})
 		// Session metadata in state.json persists across kills so re-entry
 		// can relaunch it as the right kind of session.
 		_, _ = d.Events.Append("session.exit", map[string]any{"id": id, "name": name})
@@ -627,15 +736,23 @@ func handleKillSession(d Deps) http.HandlerFunc {
 func handleDeleteSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.SessionDelete, "delete session failed", err, map[string]any{"session": name})
+			}
+		}()
 		var ok bool
 		if id, ok = ensureProject(d, w, r); !ok {
+			err = errors.New("project container not running")
 			return
 		}
 		// Count sessions exactly like the picker renders them: live tmux
 		// sessions merged with state.json ghosts.
-		sessions, err := d.Sessions.List(r.Context(), project.ContainerName(id))
-		if err != nil {
-			writeInternalErr(w, "delete session", err)
+		sessions, lerr := d.Sessions.List(r.Context(), project.ContainerName(id))
+		if lerr != nil {
+			err = lerr
+			writeInternalErr(w, "delete session", lerr)
 			return
 		}
 		known := make(map[string]bool, len(sessions)+1)
@@ -648,17 +765,21 @@ func handleDeleteSession(d Deps) http.HandlerFunc {
 			known[sName] = true
 		}
 		if len(known) <= 1 {
-			writeErr(w, http.StatusConflict, "cannot delete the last session")
+			err = errors.New("cannot delete the last session")
+			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
-		if err := d.Sessions.Kill(r.Context(), project.ContainerName(id), name); err != nil {
-			writeInternalErr(w, "delete session", err)
+		if kerr := d.Sessions.Kill(r.Context(), project.ContainerName(id), name); kerr != nil {
+			err = kerr
+			writeInternalErr(w, "delete session", kerr)
 			return
 		}
-		if err := d.Projects.RemoveSession(id, name); err != nil {
-			writeInternalErr(w, "delete session metadata", err)
+		if rerr := d.Projects.RemoveSession(id, name); rerr != nil {
+			err = rerr
+			writeInternalErr(w, "delete session metadata", rerr)
 			return
 		}
+		obs.Info(r.Context(), obs.SessionDelete, "session deleted: "+name, map[string]any{"session": name})
 		_, _ = d.Events.Append("session.delete", map[string]any{"id": id, "name": name})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
@@ -669,9 +790,16 @@ func handleDeleteSession(d Deps) http.HandlerFunc {
 func handleRestartSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.SessionRestart, "restart session failed", err, map[string]any{"session": name})
+			}
+		}()
 		ctx := r.Context()
 		var ok bool
 		if id, ok = ensureProject(d, w, r); !ok {
+			err = errors.New("project container not running")
 			return
 		}
 		container := project.ContainerName(id)
@@ -684,7 +812,12 @@ func handleRestartSession(d Deps) http.HandlerFunc {
 		harnessID := sess.Harness
 		if harnessID == "" && hasMeta {
 			// Session was recorded as a plain shell — restart as shell.
-			createShellSession(d, w, ctx, id, name, true)
+			if cerr := createShellSession(d, w, ctx, id, name, true); cerr != nil {
+				err = cerr
+				return
+			}
+			obs.Info(r.Context(), obs.SessionRestart, "session restarted: "+name,
+				map[string]any{"session": name, "mode": "shell"})
 			return
 		}
 		if harnessID == "" {
@@ -694,15 +827,23 @@ func handleRestartSession(d Deps) http.HandlerFunc {
 		h, herr := d.Harnesses.Get(harnessID)
 		if herr != nil {
 			// No matching harness — plain shell restart under the same name.
-			createShellSession(d, w, ctx, id, name, true)
+			if cerr := createShellSession(d, w, ctx, id, name, true); cerr != nil {
+				err = cerr
+				return
+			}
+			obs.Info(r.Context(), obs.SessionRestart, "session restarted: "+name,
+				map[string]any{"session": name, "mode": "shell-fallback"})
 			return
 		}
 
-		restarted, err := d.Sessions.LaunchNamed(ctx, container, name, h)
-		if err != nil {
-			writeLaunchErr(w, d, id, harnessID, err)
+		restarted, lerr := d.Sessions.LaunchNamed(ctx, container, name, h)
+		if lerr != nil {
+			err = lerr
+			writeLaunchErr(w, d, id, harnessID, lerr)
 			return
 		}
+		obs.Info(r.Context(), obs.SessionRestart, "session restarted: "+restarted,
+			map[string]any{"session": restarted, "harness": harnessID, "mode": "harness"})
 		_ = d.Projects.RecordSession(id, restarted, harnessID)
 		_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": restarted, "harness": harnessID, "restart": true})
 		writeJSON(w, http.StatusOK, map[string]any{"name": restarted})

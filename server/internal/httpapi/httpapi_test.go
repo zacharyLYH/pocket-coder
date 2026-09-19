@@ -15,9 +15,9 @@ import (
 	"pcoder/internal/codemapthreads"
 	"pcoder/internal/events"
 	"pcoder/internal/harness"
+	"pcoder/internal/obs"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
-	"pcoder/internal/projectlog"
 	"pcoder/internal/session"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
@@ -53,8 +53,23 @@ func newTestDepsInDir(t *testing.T) (Deps, *bytes.Buffer, string) {
 	var pinOut bytes.Buffer
 	svc := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut})
 	svc.MailerName = "console"
-	return Deps{Events: ev, Version: "dev", Auth: svc, ProjectLogs: projectlog.NewManager(0),
+	ob := installObs(t, dataDir, ev)
+	return Deps{Events: ev, Version: "dev", Auth: svc, Obs: ob,
 		Codemaps: codemapthreads.New(filepath.Join(dataDir, "codemaps"))}, &pinOut, dataDir
+}
+
+// installObs configures staged logging over dataDir, mirroring production:
+// project lines go to the observe store + stderr only, never events.log
+// (ev holds just the explicit global audit Appends). Restores the
+// unconfigured state on cleanup. Tests are sequential, so the
+// process-global config is safe.
+func installObs(t *testing.T, dataDir string, ev EventLog) *obs.Store {
+	t.Helper()
+	ob := obs.NewStore(dataDir)
+	t.Cleanup(ob.Close)
+	obs.Configure(ob, nil)
+	t.Cleanup(func() { obs.Configure(nil, nil) })
+	return ob
 }
 
 func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
@@ -127,7 +142,7 @@ func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer,
 	if err != nil {
 		t.Fatal(err)
 	}
-	d.Projects = project.NewService(project.Open(st), md, d.Events)
+	d.Projects = project.NewService(project.Open(st), md)
 	// Same store instance the handlers use, mirroring main.go's wiring:
 	// project deletion must cascade into the codemap files.
 	d.Projects.SetCodemaps(d.Codemaps)

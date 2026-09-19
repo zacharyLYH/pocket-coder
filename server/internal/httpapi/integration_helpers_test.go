@@ -77,12 +77,13 @@ func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docke
 	var pinOut bytes.Buffer
 	authSvc := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut})
 	sshKeyStore := sshkeys.New(st)
-	svc := project.NewService(project.Open(st), dkr, ev)
+	svc := project.NewService(project.Open(st), dkr)
 	svc.SetSSHKeys(sshKeyStore)
 	// Live tests clone from a local git daemon, not GitHub.
 	// Production (config.AllowAnyRepo false) requires GitHub.
 	svc.SetAllowAnyRepo(true)
-	h := New(Deps{Events: ev, Version: "itest", Auth: authSvc, Projects: svc,
+	ob := installObs(t, dataDir, ev)
+	h := New(Deps{Events: ev, Version: "itest", Auth: authSvc, Projects: svc, Obs: ob,
 		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore, State: st,
 		Codemaps: codemapthreads.New(filepath.Join(dataDir, "codemaps"))})
 	return h, dkr, svc, &pinOut, ev, st

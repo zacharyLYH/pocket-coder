@@ -603,6 +603,63 @@ func (_c *MockClient_Start_Call) RunAndReturn(run func(context.Context, string) 
 	return _c
 }
 
+// Stats provides a mock function with given fields: ctx, id
+func (_m *MockClient) Stats(ctx context.Context, id string) (docker.ContainerStats, error) {
+	ret := _m.Called(ctx, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Stats")
+	}
+
+	var r0 docker.ContainerStats
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (docker.ContainerStats, error)); ok {
+		return rf(ctx, id)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) docker.ContainerStats); ok {
+		r0 = rf(ctx, id)
+	} else {
+		r0 = ret.Get(0).(docker.ContainerStats)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, id)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockClient_Stats_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Stats'
+type MockClient_Stats_Call struct {
+	*mock.Call
+}
+
+// Stats is a helper method to define mock.On call
+//   - ctx context.Context
+//   - id string
+func (_e *MockClient_Expecter) Stats(ctx interface{}, id interface{}) *MockClient_Stats_Call {
+	return &MockClient_Stats_Call{Call: _e.mock.On("Stats", ctx, id)}
+}
+
+func (_c *MockClient_Stats_Call) Run(run func(ctx context.Context, id string)) *MockClient_Stats_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *MockClient_Stats_Call) Return(_a0 docker.ContainerStats, _a1 error) *MockClient_Stats_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockClient_Stats_Call) RunAndReturn(run func(context.Context, string) (docker.ContainerStats, error)) *MockClient_Stats_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Stop provides a mock function with given fields: ctx, id, timeout
 func (_m *MockClient) Stop(ctx context.Context, id string, timeout time.Duration) error {
 	ret := _m.Called(ctx, id, timeout)

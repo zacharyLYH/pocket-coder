@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 
-export type FixedView = 'diff' | 'preview' | 'logs' | 'codemap'
+export type FixedView = 'diff' | 'preview' | 'nerdy' | 'codemap'
 
 // TerminalTabs is the single browser-like tab strip: one tab per session,
 // a "+ New Tab" opener, then the pinned Diff/Preview/Logs views. Session
@@ -28,7 +28,7 @@ export function TerminalTabs({ sessions, current, view, showCodemap, onSelectSes
     ...(showCodemap ? [{ id: 'codemap' as FixedView, label: 'Codemap', testid: 'tab-codemap' }] : []),
     { id: 'diff', label: 'Diff', testid: 'tab-diff' },
     { id: 'preview', label: 'Preview', testid: 'tab-preview' },
-    { id: 'logs', label: 'Logs', testid: 'tab-logs' },
+    { id: 'nerdy', label: 'Nerdy Stuff', testid: 'tab-nerdy' },
   ]
   return (
     <div role="tablist" aria-label="Sessions and views" className="flex items-center gap-1.5 overflow-x-auto px-3 py-1">

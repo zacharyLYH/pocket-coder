@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"pcoder/internal/codemapthreads"
+	"pcoder/internal/obs"
 )
 
 // errStoreUnconfigured surfaces a missing thread store as a 500.
@@ -36,13 +37,21 @@ func writeUnknownThread(w http.ResponseWriter) {
 func handleCodemapThreads(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.CodemapThreads, "list threads failed", err, nil)
+			}
+		}()
 		st, ok := threadsOr500(w, d)
 		if !ok {
+			err = errStoreUnconfigured
 			return
 		}
-		summaries, err := st.List(id)
-		if err != nil {
-			writeInternalErr(w, "list threads", err)
+		summaries, lerr := st.List(id)
+		if lerr != nil {
+			err = lerr
+			writeInternalErr(w, "list threads", lerr)
 			return
 		}
 		if summaries == nil {
@@ -63,12 +72,20 @@ func handleCodemapThreadGet(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		tid := r.PathValue("tid")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.CodemapThread, "get thread failed", err, map[string]any{"threadId": tid})
+			}
+		}()
 		st, ok := threadsOr500(w, d)
 		if !ok {
+			err = errStoreUnconfigured
 			return
 		}
-		th, err := st.Get(id, tid)
-		if err != nil {
+		th, gerr := st.Get(id, tid)
+		if gerr != nil {
+			err = errors.New("unknown thread")
 			writeUnknownThread(w)
 			return
 		}
@@ -84,19 +101,28 @@ func handleCodemapThreadDelete(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		tid := r.PathValue("tid")
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.CodemapThreadDeleted, "delete thread failed", err, map[string]any{"threadId": tid})
+			}
+		}()
 		st, ok := threadsOr500(w, d)
 		if !ok {
+			err = errStoreUnconfigured
 			return
 		}
 		if running, busy := codemapRunning(id); busy && running != "" && running == tid {
-			writeErr(w, http.StatusConflict, "codemap busy — wait for the current run")
+			err = errors.New("codemap busy — wait for the current run")
+			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
-		if err := st.Delete(id, tid); err != nil {
-			writeInternalErr(w, "delete thread", err)
+		if derr := st.Delete(id, tid); derr != nil {
+			err = derr
+			writeInternalErr(w, "delete thread", derr)
 			return
 		}
-		plog(d, id, "codemap.thread_deleted", "chat "+tid+" deleted", map[string]any{"threadId": tid})
+		obs.Info(r.Context(), obs.CodemapThreadDeleted, "chat "+tid+" deleted", map[string]any{"threadId": tid})
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 	}
 }

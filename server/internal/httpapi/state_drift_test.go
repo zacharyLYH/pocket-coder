@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"pcoder/internal/docker"
+	"pcoder/internal/project"
 	"pcoder/internal/state"
 	"pcoder/internal/state/statetest"
 	"strings"
@@ -25,24 +26,26 @@ import (
 //
 // Runs at unit speed (no build tag, no engine). The FE e2e suite covers UI
 // paths; this test owns byte-exact end-state verification.
-// projectIDByRepo finds the id of the most recent project.create event for
-// repo — the only trace of a project whose create response carried an error.
+// projectIDByRepo finds the id of the project with this repo URL in the
+// state store — the only trace of a project whose create response carried
+// an error (a failed clone keeps the record). Pure state read, no Docker.
 func projectIDByRepo(t *testing.T, d Deps, repo string) string {
 	t.Helper()
-	evs, err := d.Events.Read(0, 0)
+	entries, err := project.Open(d.State).List()
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := ""
-	for _, e := range evs {
-		if e.Type == "project.create" && e.Data["repo"] == repo {
-			id, _ = e.Data["id"].(string)
+	for _, e := range entries {
+		p, err := project.Open(d.State).Get(e.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Repo == repo {
+			return e.ID
 		}
 	}
-	if id == "" {
-		t.Fatalf("no project.create event for repo %q", repo)
-	}
-	return id
+	t.Fatalf("no project with repo %q", repo)
+	return ""
 }
 
 func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {

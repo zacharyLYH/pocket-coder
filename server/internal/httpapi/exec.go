@@ -7,6 +7,7 @@ package httpapi
 import (
 	"net/http"
 
+	"pcoder/internal/obs"
 	"pcoder/internal/project"
 )
 
@@ -59,6 +60,12 @@ func runInProjects(d Deps, r *http.Request, ids []string, run func(container str
 // handleExecCommand runs an arbitrary command in the selected projects.
 // This is the general orchestration primitive — harness installs are a
 // dedicated endpoint on top of the same machinery.
+//
+// No middleware injection here: the request fans out over body.projectIds,
+// so there is no single project. Each per-project outcome is logged under
+// its own project instead (the deferred-err pattern can't cover fan-out —
+// the request-level err only covers malformed bodies, which have no
+// project to attach to).
 func handleExecCommand(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body batchExecBody
@@ -76,6 +83,21 @@ func handleExecCommand(d Deps) http.HandlerFunc {
 		results := runInProjects(d, r, body.ProjectIDs, func(container string) (string, error) {
 			return d.Sessions.ExecCommand(r.Context(), container, body.Command)
 		})
+		for _, res := range results {
+			if res.Detail == "no such project" {
+				continue // unknown id: no project file to attach it to
+			}
+			pctx := obs.WithProject(r.Context(), res.Project)
+			data := map[string]any{"command": capData(body.Command, 500), "detail": capData(res.Detail, 2000)}
+			switch res.Status {
+			case "ok":
+				obs.Info(pctx, obs.ProjectsExec, "exec ok in "+res.Project, data)
+			case "skipped":
+				obs.Warn(pctx, obs.ProjectsExec, "exec skipped in "+res.Project+": "+res.Detail, data)
+			default:
+				obs.Error(pctx, obs.ProjectsExec, "exec failed in "+res.Project+": "+res.Detail, data)
+			}
+		}
 		_, _ = d.Events.Append("projects.exec", map[string]any{"command": body.Command, "results": results})
 		writeJSON(w, http.StatusOK, map[string]any{"results": results})
 	}

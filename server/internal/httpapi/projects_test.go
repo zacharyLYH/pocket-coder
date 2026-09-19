@@ -245,15 +245,15 @@ func TestLazyReconciliationViaSessionHandler(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list sessions after reconcile: %d %s", rec.Code, rec.Body)
 	}
-	// the reconcile event should have been emitted
-	evs, _ := d.Events.Read(0, 0)
+	// the reconcile line should have been logged to the project log
+	logs, _, _ := d.Obs.Read("abc", 0, 0, 0, "", "", "", "", "")
 	found := false
-	for _, e := range evs {
-		if e.Type == "project.reconcile" && e.Data["id"] == "abc" {
+	for _, e := range logs {
+		if e.Type == "project.reconcile" && e.Project == "abc" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal("no project.reconcile event after lazy reconciliation")
+		t.Fatal("no project.reconcile line after lazy reconciliation")
 	}
 }
