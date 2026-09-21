@@ -26,7 +26,7 @@ export function TerminalTabs({ sessions, current, view, showCodemap, onSelectSes
 }) {
   const fixed: { id: FixedView; label: string; testid: string }[] = [
     ...(showCodemap ? [{ id: 'codemap' as FixedView, label: 'Codemap', testid: 'tab-codemap' }] : []),
-    { id: 'diff', label: 'Diff', testid: 'tab-diff' },
+    { id: 'diff', label: 'Git', testid: 'tab-diff' },
     { id: 'preview', label: 'Preview', testid: 'tab-preview' },
     { id: 'nerdy', label: 'Nerdy Stuff', testid: 'tab-nerdy' },
   ]

@@ -64,6 +64,9 @@ func sdkTools(tools []Tool) []openai.ChatCompletionToolUnionParam {
 		if schema == nil {
 			schema = map[string]any{"type": "object", "properties": map[string]any{}}
 		}
+		// Strict stays false on purpose: users bring any OpenAI-compatible
+		// endpoint (Ollama, proxies), and many 400 on strict schemas.
+		// Shape is enforced best-effort + validated by every caller.
 		out = append(out, openai.ChatCompletionToolUnionParam{
 			OfFunction: &openai.ChatCompletionFunctionToolParam{
 				Function: shared.FunctionDefinitionParam{

@@ -1,10 +1,11 @@
-import { useEffect, type RefObject } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
 import { projectPath } from '@/lib/api'
 import { parseTerminalFrame } from '@/lib/terminalFrame'
+import { TERM_INPUT_EVENT } from '@/components/terminal/QuickKeys'
 
 export type ConnStatus = 'connecting' | 'live' | 'ended'
 
@@ -49,6 +50,19 @@ export function TerminalPane({ projectId, session, redial, hostRef, onStatus, on
   onStatus: (status: ConnStatus) => void
   onError: (message: string) => void
 }) {
+  // Live socket for the QuickKeys strip (same input path as typed keys).
+  const wsRef = useRef<WebSocket | null>(null)
+  useEffect(() => {
+    const onInput = (e: Event) => {
+      const ws = wsRef.current
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'input', data: (e as CustomEvent<string>).detail }))
+      }
+    }
+    window.addEventListener(TERM_INPUT_EVENT, onInput)
+    return () => window.removeEventListener(TERM_INPUT_EVENT, onInput)
+  }, [])
+
   useEffect(() => {
     let disposed = false
     let opened = false
@@ -98,6 +112,7 @@ export function TerminalPane({ projectId, session, redial, hostRef, onStatus, on
 
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
       ws = new WebSocket(`${proto}://${location.host}/ws/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(session)}`)
+      wsRef.current = ws
 
       ws.onopen = () => {
         if (disposed || !ws) return
@@ -135,6 +150,7 @@ export function TerminalPane({ projectId, session, redial, hostRef, onStatus, on
       disposed = true
       observer.disconnect()
       ws?.close()
+      if (wsRef.current === ws) wsRef.current = null
       term.dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

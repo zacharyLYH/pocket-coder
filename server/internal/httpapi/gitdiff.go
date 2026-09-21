@@ -77,6 +77,9 @@ func gitRepoDir(d Deps, w http.ResponseWriter, r *http.Request) (container, dir 
 		writeInternalErr(w, "repo target", err)
 		return "", "", false
 	}
+	// Rotation: EnsureContainer early-returns while the container lives,
+	// so re-inject here on marker mismatch. Warn-only, never blocks git.
+	_ = d.Projects.EnsureGitConfig(r.Context(), container)
 	return container, dir, true
 }
 
@@ -165,6 +168,22 @@ func handleGitStatus(d Deps) http.HandlerFunc {
 		}
 		branch, _ := d.Sessions.ExecCommand(r.Context(), container,
 			"git -C "+qd+" rev-parse --abbrev-ref HEAD")
+		// Detached HEAD reports as the short sha (branch switching
+		// allows moving away; nothing clever).
+		if b := strings.TrimSpace(branch); b == "" || b == "HEAD" {
+			if sha, _ := d.Sessions.ExecCommand(r.Context(), container,
+				"git -C "+qd+" rev-parse --short HEAD"); strings.TrimSpace(sha) != "" {
+				branch = sha
+			}
+		}
+		// Unborn HEAD (no commits yet) gates Push: there is nothing to
+		// send, and the failure git prints is inscrutable. --quiet keeps
+		// the output to just the exit code.
+		unborn := true
+		if out, _ := d.Sessions.ExecCommand(r.Context(), container,
+			"git -C "+qd+" rev-parse --verify --quiet HEAD >/dev/null 2>&1; echo $?"); strings.TrimSpace(out) == "0" {
+			unborn = false
+		}
 		unstagedStat, _ := d.Sessions.ExecCommand(r.Context(), container,
 			"git -C "+qd+" diff --numstat; true")
 		stagedStat, _ := d.Sessions.ExecCommand(r.Context(), container,
@@ -176,6 +195,26 @@ func handleGitStatus(d Deps) http.HandlerFunc {
 		binary := map[string]bool{}
 		parseNumstat(unstagedStat, unstaged, binary)
 		parseNumstat(stagedStat, staged, binary)
+
+		// Upstream tracking for the Commit & Push label + PR-row gating.
+		// Fails soft: any error → null upstream, status still 200.
+		upstream := map[string]any(nil)
+		uName, uerr := d.Sessions.ExecCommand(r.Context(), container,
+			"git -C "+qd+" rev-parse --abbrev-ref @{u} 2>/dev/null")
+		if uerr == nil && strings.TrimSpace(uName) != "" {
+			counts, cerr := d.Sessions.ExecCommand(r.Context(), container,
+				"git -C "+qd+" rev-list --left-right --count @{u}...HEAD")
+			if cerr == nil {
+				fields := strings.Fields(counts)
+				if len(fields) == 2 {
+					behind, _ := strconv.Atoi(fields[0])
+					ahead, _ := strconv.Atoi(fields[1])
+					upstream = map[string]any{
+						"name": strings.TrimSpace(uName), "ahead": ahead, "behind": behind,
+					}
+				}
+			}
+		}
 
 		files := make([]gitFile, 0, len(xy))
 		for path, codes := range xy {
@@ -191,7 +230,7 @@ func handleGitStatus(d Deps) http.HandlerFunc {
 		if files == nil {
 			files = []gitFile{}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"branch": branch, "files": files})
+		writeJSON(w, http.StatusOK, map[string]any{"branch": branch, "files": files, "upstream": upstream, "unborn": unborn})
 	}
 }
 
@@ -214,9 +253,20 @@ func handleGitDiff(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		args := " diff -U3 -- "
+		// context controls -U<n>: 3 (default), 10, 30, or full (huge U so
+		// every line is context). Drives the mobile progressive expansion.
+		un := 3
+		switch r.URL.Query().Get("context") {
+		case "10":
+			un = 10
+		case "30":
+			un = 30
+		case "full":
+			un = 100000
+		}
+		args := fmt.Sprintf(" diff -U%d -- ", un)
 		if r.URL.Query().Get("staged") == "true" {
-			args = " diff --cached -U3 -- "
+			args = fmt.Sprintf(" diff --cached -U%d -- ", un)
 		}
 		out, xerr := d.Sessions.ExecCommand(r.Context(), container,
 			"git -C "+shellQuote(dir)+args+shellQuote(path)+"; true")
@@ -234,7 +284,7 @@ func handleGitDiff(d Deps) http.HandlerFunc {
 					"git -C "+shellQuote(dir)+" ls-files --others --exclude-standard -- "+shellQuote(path))
 			if cerr == nil && strings.TrimSpace(content) == path {
 				raw, rerr := d.Sessions.ExecCommand(r.Context(), container,
-					"git -C "+shellQuote(dir)+" diff --no-index -- /dev/null "+shellQuote(path)+"; true")
+					"git -C "+shellQuote(dir)+" diff --no-index -U"+strconv.Itoa(un)+" -- /dev/null "+shellQuote(path)+"; true")
 				if rerr == nil && strings.TrimSpace(raw) != "" {
 					out = raw
 				}

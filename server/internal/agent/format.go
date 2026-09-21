@@ -66,7 +66,7 @@ func formatResult(ctx context.Context, client openai.Client, cfg Config, schemaN
 	lin.record("format_request", func(ev *LineageEvent) {
 		ev.Payload = payloadOf(freqRaw)
 	})
-	res, responseRaw, err := attemptCompletion(ctx, client, fparams, onTrace,
+	res, responseRaw, err := Completion(ctx, client, fparams, onTrace,
 		"LLM Format request", "LLM Format response", "format call", 1)
 	if err != nil {
 		if onTrace != nil {

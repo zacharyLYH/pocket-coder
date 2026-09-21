@@ -42,6 +42,14 @@ func TestGitStatusEndpointKeepsLeadingSpace(t *testing.T) {
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		[]string{"bash", "-lc", "git -C '/workspace' diff --cached --numstat; true"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
+	// Upstream probe (new): fails soft to null upstream.
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
+		[]string{"bash", "-lc", "git -C '/workspace' rev-parse --abbrev-ref @{u} 2>/dev/null"}, false).
+		Return(docker.ExecResult{ExitCode: 1}, nil).Maybe()
+	// Unborn-HEAD probe: has commits here.
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
+		[]string{"bash", "-lc", "git -C '/workspace' rev-parse --verify --quiet HEAD >/dev/null 2>&1; echo $?"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "0\n"}, nil).Maybe()
 
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)

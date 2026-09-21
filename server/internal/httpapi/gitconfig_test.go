@@ -1,0 +1,130 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/mock"
+
+	"pcoder/internal/docker"
+	"pcoder/internal/state"
+)
+
+// fakeGitHub serves the token live-check: only "good-token" passes.
+func fakeGitHub(t *testing.T) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "Bearer good-token" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"login":"me"}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	old := gitHubUserURL
+	gitHubUserURL = srv.URL
+	t.Cleanup(func() { gitHubUserURL = old })
+}
+
+func clearGit(t *testing.T, st *state.Store) {
+	t.Helper()
+	if err := st.Mutate(func(doc *state.Document) error {
+		doc.Git = nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGitConfigTestThenSave(t *testing.T) {
+	d, _, pinOut, st := newProjectDeps(t)
+	clearGit(t, st)
+	fakeGitHub(t)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	// GET omits the secret and reports unconfigured.
+	rec := authedGet(t, h, cookie, "/api/git/config")
+	var got map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if rec.Code != http.StatusOK || got["configured"] != false || got["hasToken"] != false {
+		t.Fatalf("get unconfigured: %d %v", rec.Code, got)
+	}
+
+	// Bad token: 502, nothing saved.
+	rec = authedPost(t, h, cookie, "/api/git/test", `{"name":"N","email":"n@e.com","token":"bad-token"}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("test bad token: %d %q, want 502", rec.Code, rec.Body)
+	}
+	rec = authedGet(t, h, cookie, "/api/git/config")
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if got["configured"] != false {
+		t.Fatalf("bad token must not save: %v", got)
+	}
+
+	// Good token tests, then saves.
+	rec = authedPost(t, h, cookie, "/api/git/test", `{"name":"N","email":"n@e.com","token":"good-token"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("test good token: %d %q", rec.Code, rec.Body)
+	}
+	rec = authedPost(t, h, cookie, "/api/git/config", `{"name":"N","email":"n@e.com","token":"good-token"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save: %d %q", rec.Code, rec.Body)
+	}
+	rec = authedGet(t, h, cookie, "/api/git/config")
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if got["configured"] != true || got["name"] != "N" || got["hasToken"] != true {
+		t.Fatalf("get configured: %d %v", rec.Code, got)
+	}
+	if strings.Contains(rec.Body.String(), "good-token") {
+		t.Fatalf("GET must never leak the token: %q", rec.Body)
+	}
+	var name string
+	st.View(func(doc *state.Document) { name = doc.Git.Name })
+	if name != "N" {
+		t.Fatalf("token not persisted, name=%q", name)
+	}
+
+	// Missing fields are a 400, not a live check.
+	rec = authedPost(t, h, cookie, "/api/git/test", `{"name":"N"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("test incomplete: %d, want 400", rec.Code)
+	}
+}
+
+func TestCreateProjectGatedOnGit(t *testing.T) {
+	d, _, pinOut, st := newProjectDeps(t)
+	clearGit(t, st)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	rec := authedPost(t, h, cookie, "/api/projects", `{"repoUrl":"https://github.com/x/hello.git"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "git not configured") {
+		t.Fatalf("create ungated: %d %q, want 409 git not configured", rec.Code, rec.Body)
+	}
+}
+
+func TestGitPullAuthErrorCopy(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
+		Return(docker.ExecResult{ExitCode: 1}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
+		gitCmd("pull --ff-only"), false).
+		Return(docker.ExecResult{ExitCode: 128, Output: "fatal: Authentication failed"}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedPost(t, h, cookie, "/api/projects/abc/git/pull", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("pull failure: got %d %q, want 502", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "Git credentials rejected") {
+		t.Fatalf("pull auth error must point at Git setup: %q", rec.Body)
+	}
+}

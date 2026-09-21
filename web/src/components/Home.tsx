@@ -4,12 +4,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { BusyOverlay } from '@/components/BusyOverlay'
 import { AICard } from '@/components/AICard'
+import { GitCard } from '@/components/GitCard'
 import { HarnessesCard } from '@/components/HarnessesCard'
 import { ProjectsCard } from '@/components/ProjectsCard'
 import { SshKeysCard } from '@/components/SshKeysCard'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { api } from '@/lib/api'
-import type { SSHKey } from '@/lib/types'
+import type { GitConfigStatus, SSHKey } from '@/lib/types'
 import { useProjects } from '@/hooks/useProjects'
 
 // The logged-in home page: projects, the harness/command orchestration
@@ -24,6 +25,7 @@ export function Home({ email, onLogout, navigate }: {
   const { projects, loading, error, refresh } = useProjects()
   const [sshKeys, setSshKeys] = useState<SSHKey[]>([])
   const [harnessBusy, setHarnessBusy] = useState(false)
+  const [gitConfigured, setGitConfigured] = useState(true)
 
   function loadSshKeys() {
     api<{ keys: SSHKey[] }>('/api/ssh-keys')
@@ -31,7 +33,14 @@ export function Home({ email, onLogout, navigate }: {
       .catch(() => {})
   }
 
+  function loadGit() {
+    api<GitConfigStatus>('/api/git/config')
+      .then((d) => setGitConfigured(d.configured))
+      .catch(() => {})
+  }
+
   useEffect(() => { loadSshKeys() }, [])
+  useEffect(() => { loadGit() }, [])
 
   async function logout() {
     try {
@@ -66,11 +75,13 @@ export function Home({ email, onLogout, navigate }: {
             error={error}
             refresh={refresh}
             sshKeyCount={sshKeys.length}
+            gitConfigured={gitConfigured}
             navigate={navigate}
           />
         </div>
         <HarnessesCard projects={projects} onInstalled={refresh} onBusyChange={setHarnessBusy} />
         <AICard />
+        <GitCard onChanged={loadGit} />
         <SshKeysCard keys={sshKeys} onChanged={loadSshKeys} />
       </main>
       {harnessBusy && <BusyOverlay />}

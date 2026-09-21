@@ -119,6 +119,16 @@ func New(d Deps) http.Handler {
 		authedProject("POST", "/api/projects/{id}/git/stage", func(d Deps) http.HandlerFunc { return handleGitStage(d, false) })
 		authedProject("POST", "/api/projects/{id}/git/unstage", func(d Deps) http.HandlerFunc { return handleGitStage(d, true) })
 		authedProject("POST", "/api/projects/{id}/git/stage-hunk", handleGitStageHunk)
+		authedProject("POST", "/api/projects/{id}/git/commit", handleGitCommit)
+		authedProject("GET", "/api/projects/{id}/git/identity", handleGitIdentity)
+		authedProject("POST", "/api/projects/{id}/git/identity", handleGitIdentity)
+		authedProject("POST", "/api/projects/{id}/git/push", handleGitPush)
+		authedProject("POST", "/api/projects/{id}/git/pull", handleGitPull)
+		authedProject("GET", "/api/projects/{id}/git/branches", handleGitBranches)
+		authedProject("POST", "/api/projects/{id}/git/switch", handleGitSwitch)
+		authedProject("POST", "/api/projects/{id}/git/commit-message", handleGitCommitMessage)
+		authedProject("POST", "/api/projects/{id}/git/pr-body", handleGitPRBody)
+		authedProject("POST", "/api/projects/{id}/git/explain", handleGitExplain)
 		authedProject("POST", "/api/projects/{id}/codemap", handleCodemap)
 		authedProject("GET", "/api/projects/{id}/codemap/threads", handleCodemapThreads)
 		authedProject("GET", "/api/projects/{id}/codemap/threads/{tid}", handleCodemapThreadGet)
@@ -131,6 +141,9 @@ func New(d Deps) http.Handler {
 		authed("GET", "/api/ai/config", handleGetAIConfig)
 		authed("POST", "/api/ai/test", handleTestAI)
 		authed("POST", "/api/ai/config", handleSaveAIConfig)
+		authed("GET", "/api/git/config", handleGetGitConfig)
+		authed("POST", "/api/git/test", handleTestGit)
+		authed("POST", "/api/git/config", handleSaveGitConfig)
 	}
 
 	if d.Preview != nil {

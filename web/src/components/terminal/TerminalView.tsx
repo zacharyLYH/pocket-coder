@@ -12,6 +12,7 @@ import { PreviewTab } from '@/components/terminal/PreviewTab'
 import { NerdyStuffTab } from '@/components/terminal/NerdyStuffTab'
 import { DiffTab } from '@/components/terminal/DiffTab'
 import { CodemapTab } from '@/components/terminal/CodemapTab'
+import { QuickKeys } from '@/components/terminal/QuickKeys'
 
 // The terminal screen: header (status, session picker, actions) above the
 // live terminal pane. Owns which session is attached and the shared status/
@@ -180,6 +181,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           fixed view is open — the pane is only hidden. Unmounting here
           would detach from the session and dispose xterm, so returning
           would re-ensure, redial, and lose scrollback. */}
+      {tab === 'terminal' && <QuickKeys />}
       <div className={`min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl touch-manipulation ${tab === 'terminal' ? '' : 'hidden'}`}>
         <div ref={hostRef} className="h-full w-full touch-manipulation" />
         <TerminalPane
@@ -203,7 +205,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
       )}
       {tab === 'diff' && (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">
-          <DiffTab projectId={projectId} />
+          <DiffTab projectId={projectId} onSelectView={setTab} />
         </div>
       )}
       {tab === 'nerdy' && (

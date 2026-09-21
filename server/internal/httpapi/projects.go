@@ -26,6 +26,10 @@ func handleCreateProject(d Deps) http.HandlerFunc {
 		if r.Body != nil && !decodeBody(w, r, &body, true) {
 			return
 		}
+		if !gitConfigured(d) {
+			writeErr(w, http.StatusConflict, "git not configured")
+			return
+		}
 		// No middleware injection here: the id doesn't exist until Create
 		// parses the repo URL, so there is no project ctx to log under on
 		// pre-parse failures. The service injects once known and owns all
@@ -37,6 +41,8 @@ func handleCreateProject(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, project.ErrConflict):
 			writeErr(w, http.StatusConflict, err.Error())
+		case err != nil && isGitAuthError(err.Error()):
+			writeErr(w, http.StatusBadGateway, gitAuthMsg)
 		case err != nil:
 			writeErr(w, http.StatusInternalServerError, err.Error())
 		default:

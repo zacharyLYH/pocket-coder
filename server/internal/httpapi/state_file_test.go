@@ -82,6 +82,7 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 	// sum of what the API did: one user, two harnesses, one key, one project
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": "me@example.com"},
+		"git":  map[string]any{"name": "Test", "email": "test@example.com", "token": "test-token"},
 		"harnesses": map[string]any{
 			"fake":     wantFakeHarnessEntry,
 			"my-agent": map[string]any{"id": "my-agent", "name": "My Agent", "command": "my-agent", "install": "npm i -g my-agent"},
@@ -118,6 +119,7 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 	// gone, and ONLY the untouched harnesses remain ---
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": "me@example.com"},
+		"git":  map[string]any{"name": "Test", "email": "test@example.com", "token": "test-token"},
 		"harnesses": map[string]any{
 			"fake":     wantFakeHarnessEntry,
 			"my-agent": map[string]any{"id": "my-agent", "name": "My Agent", "command": "my-agent", "install": "npm i -g my-agent"},

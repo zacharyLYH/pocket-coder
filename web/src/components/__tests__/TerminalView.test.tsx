@@ -230,7 +230,7 @@ describe('TerminalView session management', () => {
 
     // Transport into Diff: no Actions menu, fixed title instead of session name.
     await act(async () => { fireEvent.click(screen.getByTestId('tab-diff')) })
-    expect(screen.getByTestId('fixed-view-title').textContent).toContain('Diff')
+    expect(screen.getByTestId('fixed-view-title').textContent).toContain('Git')
     expect(screen.queryByTestId('terminal-actions-trigger')).toBeNull()
     expect(screen.queryByTestId('current-session')).toBeNull()
 

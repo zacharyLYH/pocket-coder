@@ -14,7 +14,14 @@ export type GitFileStatus = {
   unstagedDel: number
   binary: boolean
 }
-export type GitStatusResponse = { branch: string; files: GitFileStatus[]; notRepo?: boolean }
+export type GitUpstream = { name: string; ahead: number; behind: number } | null
+export type GitStatusResponse = { branch: string; files: GitFileStatus[]; notRepo?: boolean; upstream?: GitUpstream; unborn?: boolean }
+export type GitBranchList = {
+  current: string
+  detached: boolean
+  local: { name: string; relativeTime: string }[]
+  remote: { name: string; relativeTime: string }[]
+}
 export type GitDiffResponse = {
   path: string
   diff: string
@@ -26,6 +33,7 @@ export type GitDiffResponse = {
 }
 
 export type AIConfigStatus = { baseURL: string; model: string; configured: boolean }
+export type GitConfigStatus = { name: string; email: string; hasToken: boolean; configured: boolean }
 export type CodemapRef = { path: string; startLine: number; endLine: number; snippet: string; function?: string }
 export type CodemapSection = { title: string; summary: string; refs: CodemapRef[] }
 export type CodemapToolCall = { tool: string; args: string; output?: string; error?: string }

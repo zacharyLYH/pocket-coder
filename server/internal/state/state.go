@@ -25,6 +25,7 @@ type Document struct {
 	User      User               `json:"user"`
 	SMTP      *SMTP              `json:"smtp,omitempty"`
 	AI        *AIConfig          `json:"ai,omitempty"`
+	Git       *GitConfig         `json:"git,omitempty"`
 	Projects  map[string]Project `json:"projects,omitempty"`  // keyed by project id
 	Harnesses map[string]Harness `json:"harnesses,omitempty"` // keyed by harness slug id
 	SSHKeys   []SSHKey           `json:"sshKeys,omitempty"`
@@ -87,6 +88,18 @@ type AIConfig struct {
 	APIKey  string `json:"apiKey"`
 	Model   string `json:"model"`
 }
+
+// GitConfig is the single global git identity + HTTPS token (GitHub PAT,
+// repo scope) provisioned into every container. Token never leaves the
+// server: APIs omit it, state.json holds it at 0600 like the AI key.
+type GitConfig struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	Token string `json:"token"`
+}
+
+// Valid reports whether the config is complete enough to gate on.
+func (g *GitConfig) Valid() bool { return g != nil && g.Name != "" && g.Email != "" && g.Token != "" }
 
 // SSHKey is a registered public key, injected into projects for
 // git SSH clones. Fingerprint is derived from PublicKey content.

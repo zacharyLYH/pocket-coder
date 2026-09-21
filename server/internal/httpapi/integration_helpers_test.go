@@ -73,6 +73,13 @@ func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docke
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Creation gate: live tests exercise the pipeline, not setup.
+	if err := st.Mutate(func(doc *state.Document) error {
+		doc.Git = &state.GitConfig{Name: "Test", Email: "test@example.com", Token: "test-token"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	var pinOut bytes.Buffer
 	authSvc := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut})

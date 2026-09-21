@@ -48,6 +48,15 @@ const (
 	GitDiff      = "git.diff"
 	GitStage     = "git.stage"
 	GitStageHunk = "git.stage_hunk"
+	GitCommit    = "git.commit"
+	GitIdentity  = "git.identity"
+	GitPush      = "git.push"
+	GitPull      = "git.pull"
+	GitBranches  = "git.branches"
+	GitSwitch    = "git.switch"
+	GitCommitMsg = "git.commit_message"
+	GitPRBody    = "git.pr_body"
+	GitExplain   = "git.explain"
 
 	// Codemap turns + threads + file reader.
 	CodemapBusy              = "codemap.busy"
@@ -136,4 +145,8 @@ var AuditTypes = []string{
 	PreviewNavigate,
 	GitStage,
 	GitStageHunk,
+	GitCommit,
+	GitPush,
+	GitPull,
+	GitSwitch,
 }

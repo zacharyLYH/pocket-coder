@@ -109,7 +109,7 @@ func (l *loop) request(ctx context.Context, step int) (openai.ChatCompletionMess
 	params := l.params()
 	requestRaw, _ := jsonOf(params)
 	l.lin.record("llm_request", func(ev *LineageEvent) { ev.Step, ev.Payload = step, payloadOf(requestRaw) })
-	res, resRaw, err := attemptCompletion(ctx, l.client, params, l.onTrace,
+	res, resRaw, err := Completion(ctx, l.client, params, l.onTrace,
 		"LLM Request", "LLM Response", fmt.Sprintf("step %d", step+1), stepAttempts)
 	if err != nil {
 		l.lin.record("error", func(ev *LineageEvent) { ev.Step, ev.Err = step, err.Error() })
@@ -211,7 +211,7 @@ func (l *loop) closeOut(ctx context.Context) (string, error) {
 	params := openai.ChatCompletionNewParams{Model: l.cfg.Model, Messages: l.msgs}
 	finalRaw, _ := jsonOf(params)
 	l.lin.record("llm_request", func(ev *LineageEvent) { ev.Step, ev.Payload = l.maxStep, payloadOf(finalRaw) })
-	res, _, err := attemptCompletion(ctx, l.client, params, l.onTrace,
+	res, _, err := Completion(ctx, l.client, params, l.onTrace,
 		"LLM Final-answer request", "LLM Final-answer response", "final-answer call", stepAttempts)
 	if err != nil {
 		l.trace(TraceEvent{Kind: "model_error", Err: err.Error()})

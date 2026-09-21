@@ -2,6 +2,8 @@ package project
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -65,6 +67,7 @@ type Service struct {
 	store     Store
 	dkr       docker.Client
 	sshKeys   *sshkeys.Store
+	git       func() (name, email, token string)
 	installer Installer
 	// codemaps is the codemap chat store. Chats are project-scoped
 	// artifacts: when the record goes, the chat files go with it. Wired
@@ -84,6 +87,10 @@ func NewService(store Store, dkr docker.Client) *Service {
 
 // SetSSHKeys attaches an SSH key store for container key injection.
 func (s *Service) SetSSHKeys(sk *sshkeys.Store) { s.sshKeys = sk }
+
+// SetGit attaches the global git identity provider (name, email, token;
+// empty token means unconfigured). Wired from state in main.
+func (s *Service) SetGit(fn func() (string, string, string)) { s.git = fn }
 
 // SetCodemaps attaches the codemap chat store for delete cascades.
 func (s *Service) SetCodemaps(cs *codemapthreads.Store) { s.codemaps = cs }
@@ -174,6 +181,10 @@ func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod strin
 		obs.Warn(ctx, obs.ProjectSSHKeys, "ssh key injection failed: "+err.Error(),
 			map[string]any{"error": err.Error()})
 	}
+	if err := s.injectGitConfig(ctx, cid); err != nil {
+		obs.Warn(ctx, obs.ProjectSSHKeys, "git config injection failed: "+err.Error(),
+			map[string]any{"error": err.Error()})
+	}
 
 	if err := s.cloneRepo(ctx, id, cid, p); err != nil {
 		return "", Project{}, err
@@ -236,6 +247,72 @@ func (s *Service) injectSSHKeys(ctx context.Context, container string) error {
 	return nil
 }
 
+// gitSHA is the rotation marker: hash of name+email+token.
+func gitSHA(name, email, token string) string {
+	sum := sha256.Sum256([]byte(name + "\x00" + email + "\x00" + token))
+	return hex.EncodeToString(sum[:])
+}
+
+// injectGitConfig provisions the global git identity + HTTPS credential
+// helper into the container. Warn-only at call sites, never bricks boot.
+func (s *Service) injectGitConfig(ctx context.Context, container string) error {
+	if s.git == nil {
+		return nil
+	}
+	name, email, token := s.git()
+	if token == "" {
+		return nil
+	}
+	if err := s.dkr.WriteFile(ctx, container, "/root/.git-credentials",
+		[]byte("https://x-access-token:"+token+"@github.com")); err != nil {
+		return fmt.Errorf("write git-credentials: %w", err)
+	}
+	exec := func(args ...string) error {
+		res, err := s.dkr.Exec(ctx, container, args, false)
+		if err != nil {
+			return err
+		}
+		if res.ExitCode != 0 {
+			return fmt.Errorf("%s", strings.TrimSpace(res.Output))
+		}
+		return nil
+	}
+	if err := exec("sh", "-c", "git config --global credential.helper 'store --file /root/.git-credentials' && chmod 600 /root/.git-credentials"); err != nil {
+		return err
+	}
+	if name != "" {
+		if err := exec("git", "config", "--global", "user.name", name); err != nil {
+			return err
+		}
+	}
+	if email != "" {
+		if err := exec("git", "config", "--global", "user.email", email); err != nil {
+			return err
+		}
+	}
+	if err := s.dkr.WriteFile(ctx, container, "/root/.git-configured-sha", []byte(gitSHA(name, email, token))); err != nil {
+		return fmt.Errorf("write git marker: %w", err)
+	}
+	return nil
+}
+
+// EnsureGitConfig re-injects on marker mismatch so token rotation
+// propagates while the container lives. One extra cat per call.
+func (s *Service) EnsureGitConfig(ctx context.Context, container string) error {
+	if s.git == nil {
+		return nil
+	}
+	name, email, token := s.git()
+	if token == "" {
+		return nil
+	}
+	if res, err := s.dkr.Exec(ctx, container, []string{"cat", "/root/.git-configured-sha"}, false); err == nil &&
+		strings.TrimSpace(res.Output) == gitSHA(name, email, token) {
+		return nil
+	}
+	return s.injectGitConfig(ctx, container)
+}
+
 // ensureProjectImage builds the embedded project definition when the image
 // is not on the engine yet.
 func (s *Service) ensureProjectImage(ctx context.Context, id string) error {
@@ -294,6 +371,10 @@ func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error
 	// Inject SSH keys so git clones work immediately.
 	if err := s.injectSSHKeys(ctx, cid); err != nil {
 		obs.Warn(ctx, obs.ProjectSSHKeys, "ssh key injection failed: "+err.Error(),
+			map[string]any{"error": err.Error()})
+	}
+	if err := s.injectGitConfig(ctx, cid); err != nil {
+		obs.Warn(ctx, obs.ProjectSSHKeys, "git config injection failed: "+err.Error(),
 			map[string]any{"error": err.Error()})
 	}
 	return ContainerStatus(ctx, s.dkr, ContainerName(id))

@@ -5,9 +5,16 @@ import '@git-diff-view/react/styles/diff-view.css'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
-import { api, errMsg, projectPath } from '@/lib/api'
-import type { GitDiffResponse, GitFileStatus, GitStatusResponse } from '@/lib/types'
+import { api, ApiError, errMsg, projectPath } from '@/lib/api'
+import { copyToClipboard } from '@/lib/clipboard'
+import { BranchSheet } from '@/components/terminal/BranchSheet'
+import type { GitBranchList, GitDiffResponse, GitFileStatus, GitStatusResponse } from '@/lib/types'
+
+// Context levels for the per-file progressive expansion (§1.1).
+const CONTEXT_LEVELS = [3, 10, 30, 0] as const // 0 = full
+const contextParam = (n: number) => (n === 0 ? 'full' : String(n))
 
 // parseHunks splits raw unified diff text into its @@ hunks, dropping the
 // `diff --git` / `---` / `+++` preamble. Each entry keeps its @@ header so
@@ -90,7 +97,7 @@ const HunkView = memo(function HunkView({ path, hunk, oldContent, newContent }: 
 // Diff tab: file list with per-file and per-hunk staging, plus a copy-only
 // Ask-AI notepad. Unified view only with wrapping: split view cannot win
 // on a phone. Polls status like PreviewTab; per-file diffs load on expand.
-export function DiffTab({ projectId }: { projectId: string }) {
+export function DiffTab({ projectId, onSelectView }: { projectId: string; onSelectView?: (v: 'diff' | 'preview' | 'nerdy' | 'codemap') => void }) {
   const [status, setStatus] = useState<GitStatusResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
@@ -105,6 +112,21 @@ export function DiffTab({ projectId }: { projectId: string }) {
     }
   })
   const [copied, setCopied] = useState(false)
+
+  // Git tab additions (mobile-git-flow-rfc).
+  const [contextByPath, setContextByPath] = useState<Record<string, number>>({})
+  const [message, setMessage] = useState('')
+  const [identityOpen, setIdentityOpen] = useState(false)
+  const [idName, setIdName] = useState('')
+  const [idEmail, setIdEmail] = useState('')
+  const [commitSha, setCommitSha] = useState<string | null>(null)
+  const [gitBusy, setGitBusy] = useState<string | null>(null)
+  const [gitError, setGitError] = useState<string | null>(null)
+  const [prDesc, setPrDesc] = useState<{ title: string; body: string } | null>(null)
+  const [prState, setPrState] = useState<'idle' | 'pushing' | 'pushed' | 'rejected'>('idle')
+  const [branchOpen, setBranchOpen] = useState(false)
+  const [branches, setBranches] = useState<GitBranchList | null>(null)
+  const [newBranch, setNewBranch] = useState('')
 
   const refresh = useCallback(async (): Promise<GitStatusResponse | null> => {
     try {
@@ -134,12 +156,16 @@ export function DiffTab({ projectId }: { projectId: string }) {
     }
   }, [notes, projectId])
 
-  async function loadDiff(path: string, staged: boolean) {
+  async function loadDiff(path: string, staged: boolean, contextLevel?: number) {
+    const un = contextLevel ?? contextByPath[path] ?? 3
     const key = `${staged ? 's' : 'u'}:${path}`
     setDiffs((prev) => ({ ...prev, [key]: { ...emptyFileDiff, loading: true } }))
     try {
       const d = await api<GitDiffResponse>(
-        projectPath(projectId, `/git/diff?path=${encodeURIComponent(path)}&staged=${staged}`),
+        projectPath(
+          projectId,
+          `/git/diff?path=${encodeURIComponent(path)}&staged=${staged}&context=${contextParam(un)}`,
+        ),
       )
       setDiffs((prev) => ({
         ...prev,
@@ -167,6 +193,24 @@ export function DiffTab({ projectId }: { projectId: string }) {
     if (f.staged !== ' ' && f.staged !== '?') {
       if (!diffs[`s:${path}`]) void loadDiff(path, true)
     }
+  }
+
+  // bumpContext moves one file through 3 → 10 → 30 → full and refetches.
+  function bumpContext(path: string) {
+    const cur = contextByPath[path] ?? 3
+    const idx = CONTEXT_LEVELS.indexOf(cur as (typeof CONTEXT_LEVELS)[number])
+    const next = CONTEXT_LEVELS[Math.min(idx + 1, CONTEXT_LEVELS.length - 1)]
+    setContextByPath((prev) => ({ ...prev, [path]: next }))
+    const f = status?.files.find((x) => x.path === path)
+    if (!f) return
+    if (f.unstaged !== ' ' || f.staged === '?') void loadDiff(path, false, next)
+    if (f.staged !== ' ' && f.staged !== '?') void loadDiff(path, true, next)
+  }
+
+  // collapseAll resets every file's expansion + context (ephemeral).
+  function collapseAll() {
+    setExpanded({})
+    setContextByPath({})
   }
 
   // reloadExpanded refetches both diff sections for every expanded file
@@ -240,23 +284,150 @@ export function DiffTab({ projectId }: { projectId: string }) {
     setCopied(false)
   }
 
+  // ---- Git tab actions (§2, §4) ----
+
+  // runGit wraps one git-busy action: busy flag + error slot handled once.
+  async function runGit<T>(key: string, fn: () => Promise<T>): Promise<T | null> {
+    setGitBusy(key)
+    setGitError(null)
+    try {
+      return await fn()
+    } catch (e) {
+      setGitError(errMsg(e))
+      return null
+    } finally {
+      setGitBusy(null)
+    }
+  }
+
+  async function doCommit(): Promise<string | null> {
+    setGitBusy('commit')
+    setGitError(null)
+    try {
+      const d = await api<{ ok: boolean; commit: string; branch: string }>(
+        projectPath(projectId, '/git/commit'),
+        { method: 'POST', body: JSON.stringify({ message }) },
+      )
+      setCommitSha(d.commit)
+      setMessage('')
+      await reloadExpanded(await refresh())
+      return d.commit
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && String(e.message).includes('identity')) {
+        setIdentityOpen(true)
+      }
+      setGitError(errMsg(e))
+      return null
+    } finally {
+      setGitBusy(null)
+    }
+  }
+
+  async function saveIdentity() {
+    const d = await runGit('identity', () =>
+      api<{ name: string; email: string }>(projectPath(projectId, '/git/identity'), {
+        method: 'POST',
+        body: JSON.stringify({ name: idName, email: idEmail }),
+      }),
+    )
+    if (d) {
+      setIdentityOpen(false)
+      setGitError(null)
+    }
+  }
+
+  async function generateMessage() {
+    const d = await runGit('gen-msg', () =>
+      api<{ subject: string; body: string }>(
+        projectPath(projectId, '/git/commit-message'),
+        { method: 'POST' },
+      ),
+    )
+    if (d) setMessage(d.body ? `${d.subject}\n\n${d.body}` : d.subject)
+  }
+
+  async function doPush() {
+    setGitBusy('push')
+    setGitError(null)
+    setPrState('pushing')
+    try {
+      await api(projectPath(projectId, '/git/push'), { method: 'POST' })
+      setPrState('pushed')
+      await refresh()
+    } catch (e) {
+      setPrState('rejected')
+      setGitError(errMsg(e))
+    } finally {
+      setGitBusy(null)
+    }
+  }
+
+  async function doPull() {
+    const ok = await runGit('pull', () => api(projectPath(projectId, '/git/pull'), { method: 'POST' }))
+    if (ok !== null) await refresh()
+  }
+
+  // draftDescription asks the model for a PR description of the commit
+  // just made. Copy-only: push already shipped the branch, this text is
+  // for pasting into the forge.
+  async function draftDescription() {
+    if (!commitSha) return
+    const d = await runGit('gen-pr', () =>
+      api<{ title: string; body: string }>(projectPath(projectId, '/git/pr-body'), {
+        method: 'POST',
+        body: JSON.stringify({ sha: commitSha }),
+      }),
+    )
+    if (d) setPrDesc({ title: d.title, body: d.body })
+  }
+
+  // explain fires a working-tree walkthrough (staged + unstaged +
+  // untracked — everything uncommitted, not just what will commit).
+  // Fire-and-forget: on 202 we jump to the Codemap tab, whose
+  // remount-into-run effect opens the thread.
+  async function explain() {
+    const ok = await runGit('explain', () =>
+      api(projectPath(projectId, '/git/explain'), {
+        method: 'POST',
+        body: JSON.stringify({ mode: 'working-tree' }),
+      }),
+    )
+    if (ok !== null) onSelectView?.('codemap')
+  }
+
+  async function openBranchSheet() {
+    setBranchOpen(true)
+    try {
+      const d = await api<GitBranchList>(projectPath(projectId, '/git/branches'))
+      setBranches(d)
+    } catch (e) {
+      setGitError(errMsg(e))
+    }
+  }
+
+  async function switchBranch(name: string, create = false) {
+    setGitBusy('switch')
+    setGitError(null)
+    try {
+      await api(projectPath(projectId, '/git/switch'), {
+        method: 'POST',
+        body: JSON.stringify({ branch: name, create }),
+      })
+      setBranchOpen(false)
+      setNewBranch('')
+      setDiffs({})
+      setExpanded({})
+      await refresh()
+    } catch (e) {
+      setGitError(errMsg(e))
+    } finally {
+      setGitBusy(null)
+    }
+  }
+
   async function copyNotes() {
     if (!notes.trim()) return
-    try {
-      await navigator.clipboard.writeText(notes)
-    } catch {
-      // iOS Safari can refuse clipboard access: fall back to a selection
-      // the user copies by hand.
-      const el = document.querySelector<HTMLTextAreaElement>('[data-testid="diff-notes"]')
-      el?.focus()
-      el?.select()
-      try {
-        document.execCommand('copy')
-      } catch {
-        // The text stays selected for a manual copy.
-      }
-    }
-    setCopied(true)
+    if (await copyToClipboard(notes)) setCopied(true)
   }
 
   const files = status?.files ?? []
@@ -275,7 +446,7 @@ export function DiffTab({ projectId }: { projectId: string }) {
     const hunks = parseHunks(fd.diff)
     if (hunks.length === 0) return <p className="py-2 text-xs text-muted-foreground">No hunks in this section.</p>
     return (
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2">
         {fd.truncated && (
           <p className="text-xs text-muted-foreground">Truncated at 300 KB — read the rest in the terminal.</p>
         )}
@@ -319,6 +490,7 @@ export function DiffTab({ projectId }: { projectId: string }) {
     const hasStaged = f.staged !== ' ' && f.staged !== '?'
     const adds = f.stagedAdd + f.unstagedAdd
     const dels = f.stagedDel + f.unstagedDel
+    const ctx = contextByPath[f.path] ?? 3
     return (
       <div key={f.path} className="overflow-hidden rounded-lg border" data-testid="diff-file" data-path={f.path}>
         <button
@@ -337,8 +509,21 @@ export function DiffTab({ projectId }: { projectId: string }) {
           )}
         </button>
         {isOpen && (
-          <div className="flex flex-col gap-3 border-t p-2">
-            <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-2 border-t p-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Per-file context expansion (§1.1): 3 → 10 → 30 → full. */}
+              {!f.binary && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="min-h-[36px] px-2 font-mono text-[11px]"
+                  onClick={() => bumpContext(f.path)}
+                  disabled={ctx === 0}
+                  data-testid="diff-context-bump"
+                >
+                  {ctx === 0 ? 'Context: full' : `Context: ${ctx} ▾`}
+                </Button>
+              )}
               {hasUnstaged && (
                 <Button
                   size="sm"
@@ -390,16 +575,34 @@ export function DiffTab({ projectId }: { projectId: string }) {
     )
   }
 
+  const upstream = status?.upstream ?? null
+  const treeDirty = files.length > 0
+  const ahead = upstream?.ahead ?? 0
+  const hasUpstream = upstream !== null
+  // Push needs something to send: unborn HEAD (zero commits) has
+  // nothing, and a clean tree already in sync is a no-op. First push
+  // (no upstream yet) stays enabled — it records tracking via -u.
+  const pushDisabled = status?.unborn
+    ? 'Commit first — this repo has no commits yet.'
+    : !treeDirty && hasUpstream && ahead === 0
+      ? 'Nothing to push — the branch is up to date.'
+      : null
+
   return (
     <Card className="flex h-full w-full flex-col shadow-sm" data-testid="diff-tab">
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
-          <CardTitle className="text-base">Diff</CardTitle>
-          {status && status.branch && (
+          <CardTitle className="text-base">Git</CardTitle>
+          <button
+            onClick={() => void openBranchSheet()}
+            className="min-h-[36px]"
+            data-testid="git-branch-badge"
+            title="Switch branch"
+          >
             <Badge variant="outline" className="font-mono font-normal">
-              {status.branch}
+              {status?.branch || '—'} {hasUpstream && ahead > 0 ? `↑${ahead}` : ''}
             </Badge>
-          )}
+          </button>
           {files.length > 0 && (
             <Badge variant="secondary" className="font-normal">
               {files.length} {files.length === 1 ? 'file' : 'files'}
@@ -410,11 +613,67 @@ export function DiffTab({ projectId }: { projectId: string }) {
             ↻ Refresh
           </Button>
         </div>
-        <CardDescription>Stage what the harness changed. Commits stay in the terminal.</CardDescription>
+        <CardDescription>Review what the harness changed, then commit and push.</CardDescription>
       </CardHeader>
       <Separator />
-      <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-4">
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pt-3">
         {error && <p className="text-xs text-destructive" data-testid="diff-error">{error}</p>}
+        {gitError && (
+          <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-2" data-testid="git-error">
+            <p className="min-w-0 flex-1 text-xs break-all text-destructive">{gitError}</p>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="min-h-[36px] shrink-0"
+              onClick={() => void copyToClipboard(gitError)}
+              data-testid="git-error-copy"
+            >
+              Copy
+            </Button>
+          </div>
+        )}
+        {/* Message box (§2): always visible at the top of the content. */}
+        {!status?.notRepo && (
+          <div className="flex flex-col gap-1.5 rounded-lg border p-2" data-testid="git-commit-section">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Commit</span>
+              <span className="flex-1" />
+              <Button
+                size="sm"
+                variant="ghost"
+                className="min-h-[36px]"
+                disabled={gitBusy !== null || !treeDirty}
+                onClick={() => void generateMessage()}
+                data-testid="git-generate-message"
+              >
+                {gitBusy === 'gen-msg' ? '✨ Generating…' : '✨ Generate'}
+              </Button>
+            </div>
+            <textarea
+              className="min-h-12 w-full rounded-md border bg-background p-2 font-mono text-xs"
+              placeholder="Commit message (multi-line ok)"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              data-testid="git-message"
+            />
+            {identityOpen && (
+              <div className="flex flex-col gap-2 rounded-md border bg-muted/30 p-2" data-testid="git-identity-form">
+                <p className="text-xs text-muted-foreground">Set git identity for this repo (required to commit):</p>
+                <Input placeholder="Name" value={idName} onChange={(e) => setIdName(e.target.value)} data-testid="git-identity-name" />
+                <Input placeholder="Email" value={idEmail} onChange={(e) => setIdEmail(e.target.value)} data-testid="git-identity-email" />
+                <Button
+                  size="sm"
+                  className="min-h-[44px]"
+                  disabled={gitBusy !== null || !idName.trim() || !idEmail.trim()}
+                  onClick={() => void saveIdentity()}
+                  data-testid="git-identity-save"
+                >
+                  Save identity
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
         {status === null ? (
           <p className="text-xs text-muted-foreground">Loading…</p>
         ) : status.notRepo ? (
@@ -425,36 +684,159 @@ export function DiffTab({ projectId }: { projectId: string }) {
               <p className="text-xs text-muted-foreground">Init one in the terminal to review diffs here.</p>
             </div>
           </div>
-        ) : files.length === 0 ? (
-          <div className="grid place-items-center rounded-lg border border-dashed bg-muted/30 p-8 text-center" data-testid="diff-empty">
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-2xl">○</span>
-              <p className="text-sm font-medium">No changes</p>
-              <p className="text-xs text-muted-foreground">Working tree is clean.</p>
-            </div>
-          </div>
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto" data-testid="diff-file-list">
-            {staged.length > 0 && (
-              <div className="flex flex-col gap-2">
-                <p className="text-xs font-medium text-muted-foreground">Staged ({staged.length})</p>
-                {staged.map(renderFile)}
+          <>
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="min-h-[36px]"
+                disabled={gitBusy !== null || !treeDirty}
+                onClick={() => void explain()}
+                data-testid="git-explain-tree"
+              >
+                {gitBusy === 'explain' ? 'Explaining…' : 'Explain in Codemap'}
+              </Button>
+              {files.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="min-h-[36px]"
+                  onClick={collapseAll}
+                  data-testid="git-collapse-all"
+                >
+                  Collapse all
+                </Button>
+              )}
+            </div>
+            {files.length === 0 ? (
+              <div className="grid place-items-center rounded-lg border border-dashed bg-muted/30 p-8 text-center" data-testid="diff-empty">
+                <div className="flex flex-col items-center gap-2">
+                  <span className="text-2xl">○</span>
+                  <p className="text-sm font-medium">No changes</p>
+                  <p className="text-xs text-muted-foreground">Working tree is clean.</p>
+                </div>
+              </div>
+            ) : (
+              // min-h-36 floors the list: on short screens the fixed
+              // message/actions blocks must not squeeze it to zero.
+              <div className="flex min-h-36 flex-1 flex-col gap-2 overflow-auto" data-testid="diff-file-list">
+                {staged.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs font-medium text-muted-foreground">Staged ({staged.length})</p>
+                    {staged.map(renderFile)}
+                  </div>
+                )}
+                {unstaged.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs font-medium text-muted-foreground">Unstaged ({unstaged.length})</p>
+                    {unstaged.map(renderFile)}
+                  </div>
+                )}
+                {untracked.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs font-medium text-muted-foreground">Untracked ({untracked.length})</p>
+                    {untracked.map(renderFile)}
+                  </div>
+                )}
               </div>
             )}
-            {unstaged.length > 0 && (
-              <div className="flex flex-col gap-2">
-                <p className="text-xs font-medium text-muted-foreground">Unstaged ({unstaged.length})</p>
-                {unstaged.map(renderFile)}
+          </>
+        )}
+        {/* Commit and Push are separate buttons: commit lands locally,
+            push ships the branch (first push records tracking via -u).
+            No combined states — a failed push leaves the sha chip and a
+            push-only retry, never a duplicate commit. */}
+        {!status?.notRepo && (
+          <div className="flex flex-col gap-1.5 rounded-lg border p-2" data-testid="git-actions">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                className="min-h-[44px] flex-1"
+                disabled={gitBusy !== null || !message.trim() || !treeDirty}
+                onClick={() => void doCommit()}
+                data-testid="git-commit"
+              >
+                {gitBusy === 'commit' ? 'Committing…' : 'Commit'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="min-h-[44px] flex-1"
+                disabled={gitBusy !== null || pushDisabled !== null}
+                title={pushDisabled ?? undefined}
+                onClick={() => void doPush()}
+                data-testid="git-push"
+              >
+                {gitBusy === 'push' ? 'Pushing…' : 'Push'}
+              </Button>
+              {hasUpstream && upstream.behind > 0 && (
+                <Button size="sm" variant="outline" className="min-h-[44px]" disabled={gitBusy !== null} onClick={() => void doPull()} data-testid="git-pull">
+                  {gitBusy === 'pull' ? 'Pulling…' : `Pull (↓${upstream.behind})`}
+                </Button>
+              )}
+            </div>
+            {pushDisabled !== null && gitBusy === null && (
+              <p className="text-[11px] text-muted-foreground" data-testid="git-push-hint">{pushDisabled}</p>
+            )}
+          </div>
+        )}
+        {/* Ship status: the commit sha, push state, and the AI-drafted PR
+            description (copy-only — push already shipped the branch). Kept
+            separate from the actions above so success stays visible after
+            the poll refreshes the tree clean. */}
+        {!status?.notRepo && (commitSha !== null || prState !== 'idle' || prDesc !== null) && (
+          <div className="flex flex-col gap-1.5 rounded-lg border p-2" data-testid="git-ship">
+            {commitSha && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="git-commit-sha">
+                <Badge variant="secondary" className="font-mono">{commitSha}</Badge> committed
               </div>
             )}
-            {untracked.length > 0 && (
-              <div className="flex flex-col gap-2">
-                <p className="text-xs font-medium text-muted-foreground">Untracked ({untracked.length})</p>
-                {untracked.map(renderFile)}
+            {prState !== 'idle' && (
+              <p className="text-xs text-muted-foreground" data-testid="git-push-state">
+                {prState === 'pushing' ? 'Pushing…' : prState === 'pushed' ? 'Pushed ✓' : 'Push rejected ✗ — see error above'}
+              </p>
+            )}
+            {commitSha && !prDesc && (
+              <div className="flex items-center gap-2">
+                <span className="flex-1" />
+                <Button size="sm" variant="ghost" className="min-h-[36px]" disabled={gitBusy !== null} onClick={() => void draftDescription()} data-testid="git-draft-desc">
+                  {gitBusy === 'gen-pr' ? '✨ Drafting…' : '✨ Draft PR description'}
+                </Button>
+              </div>
+            )}
+            {prDesc && (
+              <div className="flex flex-col gap-1.5 rounded-md border bg-muted/20 p-2" data-testid="git-pr-desc">
+                <p className="text-xs font-medium break-all">{prDesc.title}</p>
+                <p className="text-xs whitespace-pre-wrap break-all text-muted-foreground">{prDesc.body}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="min-h-[36px] self-start"
+                  onClick={() => void copyToClipboard(`${prDesc.title}\n\n${prDesc.body}`)}
+                  data-testid="git-pr-desc-copy"
+                >
+                  Copy description
+                </Button>
               </div>
             )}
           </div>
         )}
+
+        {/* ---- Branch sheet (§5) ---- */}
+        {branchOpen && (
+          <BranchSheet
+            branches={branches}
+            gitBusy={gitBusy}
+            newBranch={newBranch}
+            onNewBranch={setNewBranch}
+            hasUpstream={hasUpstream}
+            ahead={ahead}
+            onClose={() => setBranchOpen(false)}
+            onSwitch={(name, create) => void switchBranch(name, create)}
+          />
+        )}
+
         <div className="rounded-lg border" data-testid="diff-notepad">
           <button
             className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2 text-left text-sm"

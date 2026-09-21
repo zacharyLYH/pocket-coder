@@ -28,11 +28,11 @@ import type { ConnStatus } from '@/components/terminal/TerminalPane'
 // switching lives in the tab strip below (TerminalTabs), not here.
 // Permanent deletion is handled by the ✕ close button on each tab.
 //
-// When a pinned view (Codemap/Diff/Preview/Nerdy Stuff) is active the header
+// When a pinned view (Codemap/Git/Preview/Nerdy Stuff) is active the header
 // switches to fixed-view mode: no connection badge, no session name, and
 // no Actions menu — session actions act on the attached terminal session,
 // which is not visible while transported into a fixed view.
-const FIXED_LABELS: Record<string, string> = { codemap: 'Codemap', diff: 'Diff', preview: 'Preview', nerdy: 'Nerdy Stuff' }
+const FIXED_LABELS: Record<string, string> = { codemap: 'Codemap', diff: 'Git', preview: 'Preview', nerdy: 'Nerdy Stuff' }
 
 export function TerminalHeader({ projectId, current, status, view, onBack, onRestart, onRename, onKill }: {
   projectId: string

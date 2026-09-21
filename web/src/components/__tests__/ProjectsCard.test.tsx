@@ -91,4 +91,11 @@ describe('ProjectsCard', () => {
     fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'https://github.com/x/y.git' } })
     expect(screen.getByRole('button', { name: 'Clone project' })).not.toBeDisabled()
   })
+
+  it('disables create with a hint while git is unconfigured', () => {
+    renderCard({ gitConfigured: false })
+    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'https://github.com/x/y.git' } })
+    expect(screen.getByRole('button', { name: 'Clone project' })).toBeDisabled()
+    expect(screen.getByTestId('git-setup-hint')).toBeInTheDocument()
+  })
 })

@@ -97,6 +97,15 @@ func main() {
 	sshKeyStore := sshkeys.New(st)
 	svc := project.NewService(project.Open(st), dkr)
 	svc.SetSSHKeys(sshKeyStore)
+	svc.SetGit(func() (string, string, string) {
+		var name, email, token string
+		st.View(func(doc *state.Document) {
+			if doc.Git != nil {
+				name, email, token = doc.Git.Name, doc.Git.Email, doc.Git.Token
+			}
+		})
+		return name, email, token
+	})
 	svc.SetAllowAnyRepo(cfg.AllowAnyRepo)
 
 	// Codemap chats are project-scoped artifacts: deleting a project

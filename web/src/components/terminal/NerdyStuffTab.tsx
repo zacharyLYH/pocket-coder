@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
+import { copyToClipboard } from '@/lib/clipboard'
 import { EMPTY_FILTERS, useObserve, type ObserveFilters } from '@/hooks/useObserve'
 
 const LEVELS = ['all', 'info', 'warn', 'error']
@@ -119,16 +120,7 @@ export function NerdyStuffTab({ projectId }: { projectId: string }) {
   }
 
   async function copyTrace(trace: string) {
-    try {
-      await navigator.clipboard.writeText(trace)
-    } catch {
-      const ta = document.createElement('textarea')
-      ta.value = trace
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand('copy')
-      ta.remove()
-    }
+    await copyToClipboard(trace)
     setCopied(true)
     setTimeout(() => setCopied(false), 1200)
   }

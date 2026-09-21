@@ -21,12 +21,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 // Projects card: the project list plus the create form (GitHub repo URL,
 // branch, clone method). Every project is a clone: the id is owner/repo.
 // Deleting and creating are explicit and confirmed.
-export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, navigate }: {
+export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, gitConfigured = true, navigate }: {
   projects: Project[]
   loading: boolean
   error: string | null
   refresh: () => Promise<void>
   sshKeyCount: number
+  gitConfigured?: boolean
   navigate: (to: string) => void
 }) {
   const [repoUrl, setRepoUrl] = useState('')
@@ -157,7 +158,10 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, n
             )}
           </div>
           {createError && <p className="text-destructive max-h-24 overflow-auto break-all text-xs">{createError}</p>}
-          <Button type="submit" disabled={creating || !repoUrl.trim()}>
+          {!gitConfigured && (
+            <p className="text-muted-foreground text-xs" data-testid="git-setup-hint">Set up Git below to create projects.</p>
+          )}
+          <Button type="submit" disabled={creating || !repoUrl.trim() || !gitConfigured}>
             {creating ? 'Creating…' : 'Clone project'}
           </Button>
         </form>

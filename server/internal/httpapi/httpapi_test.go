@@ -142,6 +142,16 @@ func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer,
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Creation-gate default: tests exercise the pipeline, not the setup
+	// gate (which has its own test). Seeding here keeps every create
+	// test on the happy path; the service's git provider stays nil so
+	// no container writes happen.
+	if err := st.Mutate(func(doc *state.Document) error {
+		doc.Git = &state.GitConfig{Name: "Test", Email: "test@example.com", Token: "test-token"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	d.Projects = project.NewService(project.Open(st), md)
 	// Same store instance the handlers use, mirroring main.go's wiring:
 	// project deletion must cascade into the codemap files.
