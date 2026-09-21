@@ -175,7 +175,7 @@ func TestCloneFailureLiveKeepsProjectAndLogsError(t *testing.T) {
 	id := entries[0].ID
 	deleteTestProject(t, h, cookie, id)
 	code, body = doJSON(t, h, cookie, http.MethodGet, projectPath(id, ""), "")
-	wantStatus := map[string]any{"id": id, "repo": badURL, "branch": "", "cloneMethod": "http", "status": "running", "quickCommands": nil}
+	wantStatus := map[string]any{"id": id, "repo": badURL, "branch": "", "cloneMethod": "http", "status": "running", "shortcuts": nil}
 	if code != http.StatusOK || !reflect.DeepEqual(body, wantStatus) {
 		t.Fatalf("post-failure status: got %d %v, want %v", code, body, wantStatus)
 	}

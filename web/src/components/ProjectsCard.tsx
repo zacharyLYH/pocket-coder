@@ -1,170 +1,70 @@
 import { useState, type FormEvent } from 'react'
-
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { api, errMsg, projectPath } from '@/lib/api'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { api, errMsg } from '@/lib/api'
 import { terminalPath } from '@/lib/paths'
 import type { Project } from '@/lib/types'
-import { QuickCommandsModal } from '@/components/QuickCommandsModal'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-// Projects card: the project list plus the create form (GitHub repo URL,
-// branch, clone method). Every project is a clone: the id is owner/repo.
-// Deleting and creating are explicit and confirmed.
+import { ProjectMenu } from '@/components/ProjectMenu'
+
+// Projects: the row itself opens the terminal. Everything else lives
+// in the per-project menu; the clone form hides in a disclosure.
 export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, gitConfigured = true, navigate }: {
-  projects: Project[]
-  loading: boolean
-  error: string | null
-  refresh: () => Promise<void>
-  sshKeyCount: number
-  gitConfigured?: boolean
-  navigate: (to: string) => void
+  projects: Project[]; loading: boolean; error: string | null; refresh: () => Promise<void>
+  sshKeyCount: number; gitConfigured?: boolean; navigate: (to: string) => void
 }) {
   const [repoUrl, setRepoUrl] = useState('')
   const [branch, setBranch] = useState('')
   const [cloneMethod, setCloneMethod] = useState<'http' | 'ssh'>('http')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-  const [qcProject, setQcProject] = useState<string | null>(null)
-
   async function createProject(e: FormEvent) {
     e.preventDefault()
-    setCreating(true)
-    setCreateError(null)
+    setCreating(true); setCreateError(null)
     try {
-      await api('/api/projects', {
-        method: 'POST',
-        body: JSON.stringify({ repoUrl: repoUrl.trim(), branch: branch.trim(), cloneMethod }),
-      })
-      setRepoUrl('')
-      setBranch('')
-      await refresh()
-    } catch (err) {
-      setCreateError(errMsg(err))
-    } finally {
-      setCreating(false)
-    }
+      await api('/api/projects', { method: 'POST', body: JSON.stringify({ repoUrl: repoUrl.trim(), branch: branch.trim(), cloneMethod }) })
+      setRepoUrl(''); setBranch(''); await refresh()
+    } catch (err) { setCreateError(errMsg(err)) } finally { setCreating(false) }
   }
-
-  async function confirmDelete() {
-    if (!deleteTarget) return
-    setDeleteTarget(null)
-    try {
-      await api(projectPath(deleteTarget, '?scope=all'), { method: 'DELETE' })
-      await refresh()
-    } catch {
-      // leave the row in place; the next refresh shows the truth
-    }
-  }
-
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Projects</CardTitle>
-        <CardDescription>One terminal per project, session "main".</CardDescription>
+    <Card className="gap-3 py-4">
+      <CardHeader className="px-4">
+        <CardTitle className="text-[17px] tracking-tight">Projects</CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        {loading && <p className="text-muted-foreground text-sm">Loading projects…</p>}
-        {!loading && error && (
-          <p className="text-destructive text-sm">Failed to load projects: {error}</p>
-        )}
+      <CardContent className="flex flex-col gap-1 px-2">
+        {loading && <p className="px-2 text-sm text-muted-foreground">Loading projects…</p>}
+        {!loading && error && <p className="px-2 text-sm text-destructive">Failed to load projects: {error}</p>}
         {!loading && !error && projects.length === 0 && (
-          <p className="text-muted-foreground text-sm">No projects yet.</p>
+          <p className="px-2 text-sm text-muted-foreground">No projects yet. Clone a repo to open a terminal anywhere.</p>
         )}
         {projects.map((p) => (
-          <div key={p.id} data-testid={`project-card-${p.id}`} className="flex items-center justify-between gap-2 text-sm">
-            <span title={p.id} className="min-w-0 flex-1 truncate">{p.id}</span>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => navigate(terminalPath(p.id, 'main'))}>
-                Terminal
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="ghost" data-testid={`project-menu-${p.id}`}>⋯</Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={() => setQcProject(p.id)}>Update quick commands</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setDeleteTarget(p.id)} className="text-destructive">Delete project</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+          <div key={p.id} data-testid={`project-card-${p.id}`} className="flex items-center gap-1 rounded-xl px-2 py-1 active:bg-muted">
+            <button onClick={() => navigate(terminalPath(p.id, 'main'))} className="min-h-[44px] min-w-0 flex-1 cursor-pointer truncate text-left text-[15px]" aria-label={`Open ${p.id} terminal`}>
+              <span className="block truncate font-medium underline-offset-4 hover:underline">{p.id.split('/')[1] ?? p.id}</span>
+              <span className="block truncate font-mono text-xs text-muted-foreground">{p.id}</span>
+            </button>
+            <ProjectMenu project={p} projects={projects} onChanged={() => { void refresh() }} navigate={navigate} />
           </div>
         ))}
-
-        <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete project</AlertDialogTitle>
-              <AlertDialogDescription>
-                This will permanently remove the project and all volumes. This action cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={confirmDelete}>Delete</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-
-        {qcProject && <QuickCommandsModal projectId={qcProject} open={!!qcProject} onOpenChange={(o) => { if (!o) setQcProject(null) }} onSaved={refresh} />}
-
-        <form onSubmit={createProject} className="mt-2 flex flex-col gap-2 border-t pt-3">
-          <Input
-            type="text"
-            placeholder="GitHub Repo URL (e.g. https://github.com/owner/repo)"
-            value={repoUrl}
-            onChange={(e) => setRepoUrl(e.target.value)}
-          />
-          <Input
-            type="text"
-            placeholder="Branch (optional)"
-            value={branch}
-            onChange={(e) => setBranch(e.target.value)}
-          />
-          <div className="flex items-center gap-2 text-sm">
-            <label className="shrink-0 whitespace-nowrap text-muted-foreground">Clone via:</label>
-            <div className="flex shrink-0 rounded-md border">
-              <button
-                type="button"
-                className={`px-3 py-1 text-xs ${cloneMethod === 'http' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-                onClick={() => setCloneMethod('http')}
-              >
-                HTTPS
-              </button>
-              <button
-                type="button"
-                className={`px-3 py-1 text-xs ${cloneMethod === 'ssh' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-                onClick={() => setCloneMethod('ssh')}
-              >
-                SSH
-              </button>
+        <details className="mx-2 mt-1 rounded-xl bg-muted/50" {...(projects.length === 0 ? { open: true } : {})}>
+          <summary className="min-h-[44px] cursor-pointer list-none px-3 py-3 text-sm font-medium active:opacity-70">Clone a repo</summary>
+          <form onSubmit={createProject} className="flex flex-col gap-2 p-3 pt-0">
+            <Input type="text" placeholder="GitHub Repo URL (e.g. https://github.com/owner/repo)" value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} className="min-h-[44px]" />
+            <Input type="text" placeholder="Branch (optional)" value={branch} onChange={(e) => setBranch(e.target.value)} className="min-h-[44px]" />
+            <div className="flex items-center gap-2 text-sm">
+              <label className="shrink-0 whitespace-nowrap text-muted-foreground">Clone via:</label>
+              <div className="flex shrink-0 rounded-md border text-xs" role="group" aria-label="Clone method">
+                <button type="button" aria-pressed={cloneMethod === 'http'} onClick={() => setCloneMethod('http')} className={`min-h-[44px] px-4 ${cloneMethod === 'http' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>HTTPS</button>
+                <button type="button" aria-pressed={cloneMethod === 'ssh'} onClick={() => setCloneMethod('ssh')} className={`min-h-[44px] px-4 ${cloneMethod === 'ssh' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>SSH</button>
+              </div>
+              {cloneMethod === 'ssh' && sshKeyCount === 0 && <span className="text-xs text-destructive">No SSH keys — add one under Connections below.</span>}
+              {cloneMethod === 'ssh' && sshKeyCount > 0 && <span className="text-xs text-muted-foreground">{sshKeyCount} key(s) registered</span>}
             </div>
-            {cloneMethod === 'ssh' && sshKeyCount === 0 && (
-              <span className="text-destructive text-xs">No SSH keys — add one below.</span>
-            )}
-            {cloneMethod === 'ssh' && sshKeyCount > 0 && (
-              <span className="text-muted-foreground text-xs">{sshKeyCount} key(s) registered</span>
-            )}
-          </div>
-          {createError && <p className="text-destructive max-h-24 overflow-auto break-all text-xs">{createError}</p>}
-          {!gitConfigured && (
-            <p className="text-muted-foreground text-xs" data-testid="git-setup-hint">Set up Git below to create projects.</p>
-          )}
-          <Button type="submit" disabled={creating || !repoUrl.trim() || !gitConfigured}>
-            {creating ? 'Creating…' : 'Clone project'}
-          </Button>
-        </form>
+            {createError && <p className="max-h-24 overflow-auto break-all text-xs text-destructive">{createError}</p>}
+            {!gitConfigured && <p className="text-xs text-muted-foreground" data-testid="git-setup-hint">Set up Git in Setup to create projects.</p>}
+            <Button type="submit" disabled={creating || !repoUrl.trim() || !gitConfigured} className="min-h-[44px]">{creating ? 'Creating…' : 'Clone project'}</Button>
+          </form>
+        </details>
       </CardContent>
     </Card>
   )

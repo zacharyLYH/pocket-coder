@@ -45,16 +45,27 @@ type SMTP struct {
 	From     string `json:"from,omitempty"`
 }
 
+// Shortcut is one user-defined terminal shortcut: a named value that is
+// either injected into the session as a command or sent as raw key input,
+// resolved from the value at run time. One list, one editor, one fetch.
+type Shortcut struct {
+	ID      string `json:"id"`
+	Alias   string `json:"alias"` // label shown in the shortcuts modal
+	Kind    string `json:"kind"`  // "cmd" or "keys" (run hint, resolved from the value)
+	Command string `json:"command,omitempty"`
+	Keys    string `json:"keys,omitempty"`
+}
+
 // Project is one project. Only what cannot be defaulted; the id is the
 // repo's owner/repo (the display name), and the container/volumes are
 // derived from it and reconciled from here.
 type Project struct {
-	Repo          string             `json:"repo"`
-	Branch        string             `json:"branch,omitempty"`
-	CloneMethod   string             `json:"cloneMethod,omitempty"`   // "ssh" or "http" (default)
-	Harnesses     []string           `json:"harnesses,omitempty"`     // installed harness ids, ordered by install
-	Sessions      map[string]Session `json:"sessions,omitempty"`      // keyed by session name
-	QuickCommands map[string]string  `json:"quickCommands,omitempty"` // alias → command
+	Repo        string             `json:"repo"`
+	Branch      string             `json:"branch,omitempty"`
+	CloneMethod string             `json:"cloneMethod,omitempty"` // "ssh" or "http" (default)
+	Harnesses   []string           `json:"harnesses,omitempty"`   // installed harness ids, ordered by install
+	Sessions    map[string]Session `json:"sessions,omitempty"`    // keyed by session name
+	Shortcuts   []Shortcut         `json:"shortcuts,omitempty"`   // the one shortcuts list (commands and keys alike)
 }
 
 // Session is high-level metadata about a tmux session. Stored in

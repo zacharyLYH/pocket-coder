@@ -12,7 +12,9 @@ import { PreviewTab } from '@/components/terminal/PreviewTab'
 import { NerdyStuffTab } from '@/components/terminal/NerdyStuffTab'
 import { DiffTab } from '@/components/terminal/DiffTab'
 import { CodemapTab } from '@/components/terminal/CodemapTab'
-import { QuickKeys } from '@/components/terminal/QuickKeys'
+import { sendTermInput } from '@/components/terminal/QuickKeys'
+import { ShortcutsModal } from '@/components/shortcuts/ShortcutsModal'
+import { parseKeyCombo, type Shortcut } from '@/lib/shortcuts'
 
 // The terminal screen: header (status, session picker, actions) above the
 // live terminal pane. Owns which session is attached and the shared status/
@@ -31,6 +33,8 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   const [redial, setRedial] = useState(0)
   const [newDialogOpen, setNewDialogOpen] = useState(false)
   const [tab, setTab] = useState<'terminal' | FixedView>('terminal')
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [shortcutError, setShortcutError] = useState<string | null>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   // The Codemap tab only exists once a model key is configured. Hidden
   // until the config loads so key-less backends never show it.
@@ -146,6 +150,23 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
     setRedial((n) => n + 1)
   }
 
+  // Run a shortcut from the modal: commands inject into the session,
+  // key combos go over the PTY input path. Uses the row's current
+  // (possibly unsaved) values so users can try before saving.
+  async function runShortcut(s: Shortcut) {
+    setShortcutError(null)
+    try {
+      if (s.kind === 'cmd') {
+        await api(projectPath(projectId, `/sessions/${current}/inject`), { method: 'POST', body: JSON.stringify({ command: s.command ?? '' }) })
+      } else {
+        sendTermInput(parseKeyCombo(s.keys ?? ''))
+      }
+      setShortcutsOpen(false)
+    } catch (err) {
+      setShortcutError(errMsg(err))
+    }
+  }
+
   return (
     <div className="flex h-dvh w-full flex-col gap-3 bg-muted/40 p-0">
       <div className="px-3 pt-3">
@@ -169,6 +190,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
         onDeleteSession={(name) => void del(name)}
         onNewTab={() => setNewDialogOpen(true)}
         onSelectView={setTab}
+        onOpenShortcuts={() => { setShortcutError(null); setShortcutsOpen(true) }}
       />
 
       {error && (
@@ -181,7 +203,10 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           fixed view is open — the pane is only hidden. Unmounting here
           would detach from the session and dispose xterm, so returning
           would re-ensure, redial, and lose scrollback. */}
-      {tab === 'terminal' && <QuickKeys />}
+      {tab === 'terminal' && shortcutError && (
+        <p className="mx-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs break-all text-destructive" data-testid="sc-inject-error">{shortcutError}</p>
+      )}
+      <ShortcutsModal projectId={projectId} open={shortcutsOpen} onOpenChange={setShortcutsOpen} onRun={(s) => void runShortcut(s)} />
       <div className={`min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl touch-manipulation ${tab === 'terminal' ? '' : 'hidden'}`}>
         <div ref={hostRef} className="h-full w-full touch-manipulation" />
         <TerminalPane

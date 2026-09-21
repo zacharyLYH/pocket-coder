@@ -50,7 +50,7 @@ export function TerminalPane({ projectId, session, redial, hostRef, onStatus, on
   onStatus: (status: ConnStatus) => void
   onError: (message: string) => void
 }) {
-  // Live socket for the QuickKeys strip (same input path as typed keys).
+  // Live socket for synthetic input (shortcuts modal's key buttons).
   const wsRef = useRef<WebSocket | null>(null)
   useEffect(() => {
     const onInput = (e: Event) => {

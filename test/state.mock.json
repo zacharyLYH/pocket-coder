@@ -12,9 +12,17 @@
         "main": {},
         "oc1": { "harness": "opencode" }
       },
-      "quickCommands": {
-        "dev": "npm install && npm start -- --host 0.0.0.0"
-      }
+      "shortcuts": [
+        { "id": "qc-dev", "alias": "dev", "kind": "cmd", "command": "npm install && npm start -- --host 0.0.0.0" },
+        { "id": "default-esc", "alias": "Esc", "kind": "keys", "keys": "Esc" },
+        { "id": "default-tab", "alias": "Tab", "kind": "keys", "keys": "Tab" },
+        { "id": "default-up", "alias": "Up", "kind": "keys", "keys": "Up" },
+        { "id": "default-down", "alias": "Down", "kind": "keys", "keys": "Down" },
+        { "id": "default-left", "alias": "Left", "kind": "keys", "keys": "Left" },
+        { "id": "default-right", "alias": "Right", "kind": "keys", "keys": "Right" },
+        { "id": "default-ctrl-c", "alias": "Ctrl-C", "kind": "keys", "keys": "Ctrl-C" },
+        { "id": "default-ctrl-d", "alias": "Ctrl-D", "kind": "keys", "keys": "Ctrl-D" }
+      ]
     }
   },
   "harnesses": {

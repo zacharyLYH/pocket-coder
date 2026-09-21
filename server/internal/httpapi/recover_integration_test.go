@@ -33,7 +33,7 @@ func TestStateMockRecovery(t *testing.T) {
 	seed := `{"user":{"email":"me@example.com"},"projects":{` +
 		`"` + id + `":{"repo":"` + url + `","branch":"main","cloneMethod":"http",` +
 		`"harnesses":["opencode"],"sessions":{"main":{},"oc1":{"harness":"opencode"}},` +
-		`"quickCommands":{"dev":"npm install && npm start -- --host 0.0.0.0"}}},` +
+		`"shortcuts":[{"id":"qc-dev","alias":"dev","kind":"cmd","command":"npm install && npm start -- --host 0.0.0.0"}]}},` +
 		`"harnesses":{"opencode":{"id":"opencode","name":"OpenCode","command":"opencode","install":"npm i -g opencode-ai"}}}`
 	dataDir := t.TempDir()
 	statePath := filepath.Join(dataDir, "state.json")

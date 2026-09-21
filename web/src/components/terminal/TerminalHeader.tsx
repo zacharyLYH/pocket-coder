@@ -17,9 +17,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { api, errMsg, projectPath } from '@/lib/api'
-import { useQuickCommands } from '@/hooks/useQuickCommands'
-import { QuickCommandsModal } from '@/components/QuickCommandsModal'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import type { ConnStatus } from '@/components/terminal/TerminalPane'
 
@@ -50,18 +47,6 @@ export function TerminalHeader({ projectId, current, status, view, onBack, onRes
   const [renameValue, setRenameValue] = useState('')
   const [renameBusy, setRenameBusy] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
-  const [qcOpen, setQcOpen] = useState(false)
-  const { commands: quickCommands, reload: reloadQuickCommands } = useQuickCommands(isFixedView ? null : projectId)
-  const [injectError, setInjectError] = useState<string | null>(null)
-
-  async function inject(command: string) {
-    setInjectError(null)
-    try {
-      await api(projectPath(projectId, `/sessions/${current}/inject`), { method: 'POST', body: JSON.stringify({ command }) })
-    } catch (e) {
-      setInjectError(errMsg(e))
-    }
-  }
 
   const statusMeta = {
     connecting: { label: 'Connecting…', dot: 'bg-amber-500' },
@@ -120,34 +105,18 @@ export function TerminalHeader({ projectId, current, status, view, onBack, onRes
         <ThemeToggle />
 
         {!isFixedView && (
-          <>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" data-testid="terminal-actions-trigger">Actions ▾</Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuItem onSelect={onRestart} data-testid="terminal-action-restart">Restart</DropdownMenuItem>
-                <DropdownMenuItem onSelect={openRename} data-testid="terminal-action-rename">Rename</DropdownMenuItem>
-                <DropdownMenuItem onSelect={onKill} data-testid="terminal-action-kill" className="text-destructive">Kill</DropdownMenuItem>
-                <div className="my-1 h-px bg-border" />
-                {Object.entries(quickCommands).length === 0 ? (
-                  <div className="px-2 py-1 text-xs text-muted-foreground">No quick commands</div>
-                ) : (
-                  Object.entries(quickCommands).map(([alias, cmd]) => (
-                    <DropdownMenuItem key={alias} onSelect={() => inject(cmd)} data-testid={`qc-run-${alias}`}>
-                      {alias}: {cmd.slice(0, 30)}
-                    </DropdownMenuItem>
-                  ))
-                )}
-                <DropdownMenuItem onSelect={() => setQcOpen(true)} data-testid="qc-manage">Update quick commands…</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <QuickCommandsModal projectId={projectId} open={qcOpen} onOpenChange={setQcOpen} onSaved={reloadQuickCommands} />
-          </>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" data-testid="terminal-actions-trigger">Actions ▾</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onSelect={onRestart} data-testid="terminal-action-restart">Restart</DropdownMenuItem>
+              <DropdownMenuItem onSelect={openRename} data-testid="terminal-action-rename">Rename</DropdownMenuItem>
+              <DropdownMenuItem onSelect={onKill} data-testid="terminal-action-kill" className="text-destructive">Kill</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </header>
-      {!isFixedView && injectError && <p className="text-xs text-destructive" data-testid="qc-inject-error">{injectError}</p>}
 
 
 

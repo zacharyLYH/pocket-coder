@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Check, FlaskConical, GitBranch } from 'lucide-react'
+import { FlaskConical } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { api, errMsg } from '@/lib/api'
 
 // GitCard: the one global git identity + HTTPS token (GitHub PAT).
@@ -61,70 +59,24 @@ export function GitCard({ onChanged }: { onChanged?: () => void }) {
   }
 
   return (
-    <Card className="mt-4" data-testid="git-card">
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <GitBranch className="size-4 text-muted-foreground" />
-          <CardTitle className="text-base">Git setup</CardTitle>
-          {tested && <Badge variant="secondary"><Check className="size-3" /> tested</Badge>}
-          {saved && <Badge variant="secondary"><Check className="size-3" /> saved</Badge>}
-        </div>
-        <CardDescription>One identity + GitHub PAT for clone, push, pull. Test first, then save.{' '}
-          <a
-            href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens"
-            target="_blank"
-            rel="noreferrer"
-            className="underline"
-            title="A Personal Access Token is GitHub's password replacement for HTTPS git — create one with the repo scope and paste it below."
-          >
-            What&apos;s a PAT?
-          </a>
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        <Input
-          type="text"
-          placeholder="Name"
-          value={name}
-          onChange={(e) => { setName(e.target.value); markDirty() }}
-          data-testid="git-name"
-        />
-        <Input
-          type="text"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => { setEmail(e.target.value); markDirty() }}
-          data-testid="git-email"
-        />
-        <Input
-          type="password"
-          placeholder="Personal Access Token (repo scope)"
-          value={token}
-          onChange={(e) => { setToken(e.target.value); markDirty() }}
-          data-testid="git-token"
-        />
-        {error && <p className="text-destructive max-h-24 overflow-auto break-all text-xs" data-testid="git-error">{error}</p>}
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            className="flex-1"
-            disabled={busy !== null || !name.trim() || !email.trim() || !token.trim()}
-            onClick={() => void test()}
-            data-testid="git-test"
-          >
-            <FlaskConical className="size-4" />
-            {busy === 'test' ? 'Testing…' : 'Test'}
-          </Button>
-          <Button
-            className="flex-1"
-            disabled={busy !== null || !tested}
-            onClick={() => void save()}
-            data-testid="git-save"
-          >
-            {busy === 'save' ? 'Saving…' : 'Save'}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+    <div data-testid="git-card" className="flex flex-col gap-2">
+      <p className="text-xs text-muted-foreground">One identity + GitHub PAT for clone, push, pull. Test first, then save.{' '}
+        <a href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens" target="_blank" rel="noreferrer" className="underline">What's a PAT?</a>
+        {tested && <span> tested</span>}
+        {saved && <span> saved</span>}
+      </p>
+      <Input type="text" placeholder="Name" value={name} onChange={(e) => { setName(e.target.value); markDirty() }} data-testid="git-name" className="min-h-[44px]" />
+      <Input type="text" placeholder="Email" value={email} onChange={(e) => { setEmail(e.target.value); markDirty() }} data-testid="git-email" className="min-h-[44px]" />
+      <Input type="password" placeholder="Personal Access Token (repo scope)" value={token} onChange={(e) => { setToken(e.target.value); markDirty() }} data-testid="git-token" className="min-h-[44px]" />
+      {error && <p className="text-destructive max-h-24 overflow-auto break-all text-xs" data-testid="git-error">{error}</p>}
+      <div className="flex gap-2">
+        <Button variant="outline" className="min-h-[44px] flex-1" disabled={busy !== null || !name.trim() || !email.trim() || !token.trim()} onClick={() => void test()} data-testid="git-test">
+          <FlaskConical className="size-4" />{busy === 'test' ? 'Testing...' : 'Test'}
+        </Button>
+        <Button className="min-h-[44px] flex-1" disabled={busy !== null || !tested} onClick={() => void save()} data-testid="git-save">
+          {busy === 'save' ? 'Saving...' : 'Save'}
+        </Button>
+      </div>
+    </div>
   )
 }

@@ -175,7 +175,7 @@ type Check struct {
 ```
 
 CRUD via `PATCH /api/projects/{id}` (extend the existing body that
-carries quickCommands): `checks *[]Check` — nil leaves unchanged,
+carries shortcuts): `checks *[]Check` — nil leaves unchanged,
 empty clears, else replaces wholesale with server-generated ids (no
 forged collisions). Validate: name non-empty ≤ 40 chars, command
 non-empty ≤ 500 chars. No dependency graph.

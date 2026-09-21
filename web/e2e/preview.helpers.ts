@@ -168,7 +168,7 @@ export async function createRunningViteProjectOnPort(request: APIRequestContext,
   return id
 }
 
-// Preinstalled project with code but no running servers, plus quickCommands
+// Preinstalled project with code but no running servers, plus shortcuts
 // so a test can start them via inject (the user-driven flow).
 async function createPreinstalledProject(request: APIRequestContext, files: Record<string, string>, slot = 1): Promise<string> {
   const id = await createProject(request, e2eRepo(slot))
@@ -177,7 +177,10 @@ async function createPreinstalledProject(request: APIRequestContext, files: Reco
   expect(res.ok()).toBeTruthy()
   await waitForNpmInstall(request, id)
   await request.patch(`/api/projects/${projectURL(id)}`, {
-    data: { quickCommands: { dev: 'cd /workspace/app && npm run dev -- --host 0.0.0.0 --port 3000', backend: 'cd /workspace/app && nohup node server.js >/tmp/pcoder-backend.log 2>&1 &' } },
+    data: { shortcuts: [
+      { id: 's-dev', alias: 'dev', kind: 'cmd', command: 'cd /workspace/app && npm run dev -- --host 0.0.0.0 --port 3000' },
+      { id: 's-backend', alias: 'backend', kind: 'cmd', command: 'cd /workspace/app && nohup node server.js >/tmp/pcoder-backend.log 2>&1 &' },
+    ] },
   })
   return id
 }

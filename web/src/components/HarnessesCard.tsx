@@ -2,7 +2,6 @@ import { useEffect, useState, type FormEvent } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { api, errMsg } from '@/lib/api'
 import { isLaunchable } from '@/lib/types'
@@ -15,7 +14,7 @@ type RowMsg = { kind: 'ok' | 'error'; text: string }
 // explicit and synchronous: pick the projects, the work happens now, and
 // per-project results (or errors) surface right here. New projects are
 // never auto-injected — they appear in the pickers and the user decides.
-export function HarnessesCard({ projects, onInstalled, onBusyChange }: { projects: Project[]; onInstalled?: () => void; onBusyChange?: (busy: boolean) => void }) {
+export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyChange }: { projects: Project[]; initialProjectId?: string; onInstalled?: () => void; onBusyChange?: (busy: boolean) => void }) {
   const [harnesses, setHarnesses] = useState<Harness[]>([])
   const [pickerFor, setPickerFor] = useState<string | null>(null) // harness id or 'command'
   const [picked, setPicked] = useState<Record<string, boolean>>({})
@@ -40,6 +39,13 @@ export function HarnessesCard({ projects, onInstalled, onBusyChange }: { project
   }
 
   function openPicker(key: string) {
+    // from a project menu the run is scoped to that project; the picker can widen it
+    if (initialProjectId) {
+      setPicked({ [initialProjectId]: true })
+      setRowMsg((m) => ({ ...m, [key]: undefined }))
+      setPickerFor((cur) => (cur === key ? null : key))
+      return
+    }
     // default to every project selected except those already installed for this harness
     const all: Record<string, boolean> = {}
     for (const p of projects) {
@@ -96,15 +102,7 @@ export function HarnessesCard({ projects, onInstalled, onBusyChange }: { project
   const suggestions = harnesses.filter(isLaunchable)
 
   return (
-    <Card className="mt-4">
-      <CardHeader>
-        <CardTitle className="text-base">Harnesses</CardTitle>
-        <CardDescription>
-          Agent CLIs your projects can run. Install downloads now — pick the projects, errors surface here.
-          New projects are never touched until you choose them.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
         {suggestions.length === 0 && (
           <p className="text-muted-foreground text-sm">No harnesses yet.</p>
         )}
@@ -193,8 +191,7 @@ export function HarnessesCard({ projects, onInstalled, onBusyChange }: { project
           onOpenChange={setAddOpen}
           onAdded={load}
         />
-      </CardContent>
-    </Card>
+    </div>
   )
 }
 

@@ -88,7 +88,7 @@ func handleGetProject(d Deps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id": r.PathValue("id"), "repo": p.Repo,
 			"branch": p.Branch, "cloneMethod": p.CloneMethod, "status": status.State,
-			"quickCommands": p.QuickCommands,
+			"shortcuts": p.Shortcuts,
 		})
 	}
 }
@@ -107,26 +107,17 @@ func handlePatchProject(d Deps) http.HandlerFunc {
 			return
 		}
 		var body struct {
-			QuickCommands *map[string]string `json:"quickCommands"`
+			Shortcuts *[]state.Shortcut `json:"shortcuts"`
 		}
 		if !decodeBody(w, r, &body, false) {
 			return
 		}
 		id := r.PathValue("id")
-		if body.QuickCommands != nil {
-			for alias, cmd := range *body.QuickCommands {
-				alias = strings.TrimSpace(alias)
-				cmd = strings.TrimSpace(cmd)
-				if alias == "" || cmd == "" {
-					err = errors.New("alias and command must be non-empty")
-					writeErr(w, http.StatusBadRequest, err.Error())
-					return
-				}
-				if !isValidAlias(alias) {
-					err = errors.New("invalid alias: " + alias)
-					writeErr(w, http.StatusBadRequest, err.Error())
-					return
-				}
+		if body.Shortcuts != nil {
+			if verr := validateShortcuts(*body.Shortcuts); verr != nil {
+				err = verr
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
 			}
 		}
 		err = d.State.Mutate(func(doc *state.Document) error {
@@ -134,16 +125,8 @@ func handlePatchProject(d Deps) http.HandlerFunc {
 			if !ok {
 				return project.ErrNotFound
 			}
-			if body.QuickCommands != nil {
-				// normalize: trim and validate already done
-				normalized := map[string]string{}
-				for k, v := range *body.QuickCommands {
-					normalized[strings.TrimSpace(k)] = strings.TrimSpace(v)
-				}
-				p.QuickCommands = normalized
-				if len(normalized) == 0 {
-					p.QuickCommands = nil
-				}
+			if body.Shortcuts != nil {
+				p.Shortcuts = normalizeShortcuts(*body.Shortcuts)
 			}
 			doc.Projects[id] = p
 			return nil
@@ -164,6 +147,53 @@ func handlePatchProject(d Deps) http.HandlerFunc {
 var aliasRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 func isValidAlias(s string) bool { return aliasRe.MatchString(s) }
+
+func validateShortcuts(rows []state.Shortcut) error {
+	seen := map[string]bool{}
+	for _, r := range rows {
+		a := strings.TrimSpace(r.Alias)
+		if a == "" {
+			return errors.New("alias must be non-empty")
+		}
+		if !isValidAlias(a) {
+			return errors.New("invalid alias: " + a)
+		}
+		if seen[a] {
+			return errors.New("duplicate alias: " + a)
+		}
+		seen[a] = true
+		switch r.Kind {
+		case "cmd":
+			if strings.TrimSpace(r.Command) == "" {
+				return errors.New("command must be non-empty")
+			}
+		case "keys":
+			if strings.TrimSpace(r.Keys) == "" {
+				return errors.New("keys must be non-empty")
+			}
+		default:
+			return errors.New("kind must be cmd or keys")
+		}
+	}
+	return nil
+}
+
+func normalizeShortcuts(rows []state.Shortcut) []state.Shortcut {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]state.Shortcut, 0, len(rows))
+	for _, r := range rows {
+		r.Alias = strings.TrimSpace(r.Alias)
+		r.Command = strings.TrimSpace(r.Command)
+		r.Keys = strings.TrimSpace(r.Keys)
+		if r.ID == "" {
+			r.ID = "s-" + r.Alias
+		}
+		out = append(out, r)
+	}
+	return out
+}
 
 // handleProjectOp serves POST /{id}/start|stop|restart.
 func handleProjectOp(d Deps, op string) http.HandlerFunc {

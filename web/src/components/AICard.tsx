@@ -1,10 +1,8 @@
 import { useState } from 'react'
-import { Check, FlaskConical, Sparkles } from 'lucide-react'
+import { FlaskConical } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { api, errMsg } from '@/lib/api'
 
 // AICard: the one global OpenAI-compatible credential (baseURL + key +
@@ -59,60 +57,23 @@ export function AICard() {
   }
 
   return (
-    <Card className="mt-4" data-testid="ai-card">
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <Sparkles className="size-4 text-muted-foreground" />
-          <CardTitle className="text-base">AI</CardTitle>
-          {tested && <Badge variant="secondary"><Check className="size-3" /> tested</Badge>}
-          {saved && <Badge variant="secondary"><Check className="size-3" /> saved</Badge>}
-        </div>
-        <CardDescription>One OpenAI-compatible key for codemaps. Test first, then save.</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        <Input
-          type="text"
-          placeholder="Base URL (https://api.openai.com/v1)"
-          value={baseURL}
-          onChange={(e) => { setBaseURL(e.target.value); markDirty() }}
-          data-testid="ai-base-url"
-        />
-        <Input
-          type="password"
-          placeholder="API key"
-          value={apiKey}
-          onChange={(e) => { setApiKey(e.target.value); markDirty() }}
-          data-testid="ai-api-key"
-        />
-        <Input
-          type="text"
-          placeholder="Model (gpt-4o)"
-          value={model}
-          onChange={(e) => { setModel(e.target.value); markDirty() }}
-          data-testid="ai-model"
-        />
-        {error && <p className="text-destructive max-h-24 overflow-auto break-all text-xs" data-testid="ai-error">{error}</p>}
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            className="flex-1"
-            disabled={busy !== null || !baseURL.trim() || !apiKey || !model.trim()}
-            onClick={() => void test()}
-            data-testid="ai-test"
-          >
-            <FlaskConical className="size-4" />
-            {busy === 'test' ? 'Testing…' : 'Test'}
-          </Button>
-          <Button
-            className="flex-1"
-            disabled={busy !== null || !tested}
-            onClick={() => void save()}
-            data-testid="ai-save"
-          >
-            {busy === 'save' ? 'Saving…' : 'Save'}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+    <div data-testid="ai-card" className="flex flex-col gap-2">
+      <p className="text-xs text-muted-foreground">One OpenAI-compatible key for codemaps. Test first, then save.
+        {tested && <span> tested</span>}
+        {saved && <span> saved</span>}
+      </p>
+      <Input type="text" placeholder="Base URL (https://api.openai.com/v1)" value={baseURL} onChange={(e) => { setBaseURL(e.target.value); markDirty() }} data-testid="ai-base-url" className="min-h-[44px]" />
+      <Input type="password" placeholder="API key" value={apiKey} onChange={(e) => { setApiKey(e.target.value); markDirty() }} data-testid="ai-api-key" className="min-h-[44px]" />
+      <Input type="text" placeholder="Model (gpt-4o)" value={model} onChange={(e) => { setModel(e.target.value); markDirty() }} data-testid="ai-model" className="min-h-[44px]" />
+      {error && <p className="text-destructive max-h-24 overflow-auto break-all text-xs" data-testid="ai-error">{error}</p>}
+      <div className="flex gap-2">
+        <Button variant="outline" className="min-h-[44px] flex-1" disabled={busy !== null || !baseURL.trim() || !apiKey || !model.trim()} onClick={() => void test()} data-testid="ai-test">
+          <FlaskConical className="size-4" />{busy === 'test' ? 'Testing...' : 'Test'}
+        </Button>
+        <Button className="min-h-[44px] flex-1" disabled={busy !== null || !tested} onClick={() => void save()} data-testid="ai-save">
+          {busy === 'save' ? 'Saving...' : 'Save'}
+        </Button>
+      </div>
+    </div>
   )
 }

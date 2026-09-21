@@ -1,4 +1,4 @@
-import { X } from 'lucide-react'
+import { X, Zap } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -14,7 +14,7 @@ export type FixedView = 'diff' | 'preview' | 'nerdy' | 'codemap'
 // removed), so the tab disappears permanently — like closing a browser tab.
 // On the last remaining session the ✕ is hidden: the UI cannot represent
 // zero sessions.
-export function TerminalTabs({ sessions, current, view, showCodemap, onSelectSession, onDeleteSession, onNewTab, onSelectView }: {
+export function TerminalTabs({ sessions, current, view, showCodemap, onSelectSession, onDeleteSession, onNewTab, onSelectView, onOpenShortcuts }: {
   sessions: { name: string }[]
   current: string
   view: 'terminal' | FixedView
@@ -23,6 +23,7 @@ export function TerminalTabs({ sessions, current, view, showCodemap, onSelectSes
   onDeleteSession: (name: string) => void
   onNewTab: () => void
   onSelectView: (view: FixedView) => void
+  onOpenShortcuts?: () => void
 }) {
   const fixed: { id: FixedView; label: string; testid: string }[] = [
     ...(showCodemap ? [{ id: 'codemap' as FixedView, label: 'Codemap', testid: 'tab-codemap' }] : []),
@@ -66,9 +67,15 @@ export function TerminalTabs({ sessions, current, view, showCodemap, onSelectSes
           </div>
         )
       })}
-      <Button variant="ghost" size="sm" onClick={onNewTab} data-testid="tab-new" className="shrink-0">
+      <Button variant="ghost" size="sm" onClick={onNewTab} data-testid="tab-new" className="min-h-[44px] shrink-0">
         + New Tab
       </Button>
+      {onOpenShortcuts && (
+        <Button variant="ghost" size="sm" onClick={onOpenShortcuts} data-testid="tab-shortcuts" className="min-h-[44px] shrink-0">
+          <Zap className="size-4" />
+          Shortcuts
+        </Button>
+      )}
       <Separator orientation="vertical" className="data-[orientation=vertical]:h-5 shrink-0" />
       {fixed.map((f) => (
         <Button
