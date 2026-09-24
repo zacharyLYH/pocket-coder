@@ -15,7 +15,7 @@ test.describe('preview user journey', () => {
     try {
       const projectID = await createPrecreatedProject(request)
       await page.goto('/')
-      await expect(page.getByText(projectID)).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByTestId(`project-card-${projectID}`)).toBeVisible({ timeout: 10_000 })
       await page.getByTestId(`project-card-${projectID}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
       // inject start commands via shortcuts (backend + vite)
@@ -79,7 +79,6 @@ test.describe('preview user journey', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createPrecreatedProject(request)
-      const token = await statusToken(request, projectID)
       await page.goto('/')
       await page.getByTestId(`project-card-${projectID}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
@@ -105,6 +104,8 @@ test.describe('preview user journey', () => {
       // canvas (surface connected) and for the app inside the sidecar,
       // otherwise the shot enshrines a gray "Loading" frame.
       await expect(previewPage2.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
+      // the worker (and its token) exists only once the preview is up
+      const token = await statusToken(request, projectID)
       await expect(async () => {
         const r = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
         expect(r.ok()).toBeTruthy()
@@ -128,7 +129,6 @@ test.describe('preview user journey', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createPrecreatedProject(request)
-      const token = await statusToken(request, projectID)
       await page.goto('/')
       await page.getByTestId(`project-card-${projectID}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
@@ -152,6 +152,8 @@ test.describe('preview user journey', () => {
       // screenshotting — otherwise the baseline enshrines a black
       // "Connecting" frame and flakes with sidecar startup speed.
       await expect(previewPage3.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
+      // the worker (and its token) exists only once the preview is up
+      const token = await statusToken(request, projectID)
       await expect(async () => {
         const r = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
         expect(r.ok()).toBeTruthy()

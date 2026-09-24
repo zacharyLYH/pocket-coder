@@ -20,7 +20,6 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
   const [picked, setPicked] = useState<Record<string, boolean>>({})
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [rowMsg, setRowMsg] = useState<Record<string, RowMsg | undefined>>({})
-  const [commandInput, setCommandInput] = useState('')
   const [addOpen, setAddOpen] = useState(false)
 
   function load() {
@@ -46,10 +45,10 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
       setPickerFor((cur) => (cur === key ? null : key))
       return
     }
-    // default to every project selected except those already installed for this harness
+    // default to every project selected except those already installed
     const all: Record<string, boolean> = {}
     for (const p of projects) {
-      if (key !== 'command' && isInstalled(p.id, key)) continue
+      if (isInstalled(p.id, key)) continue
       all[p.id] = true
     }
     setPicked(all)
@@ -83,20 +82,12 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
       })
       summarize(key, (data.results ?? []) as ExecResult[])
       setPickerFor(null)
-      if (key !== 'command') onInstalled?.()
+      onInstalled?.()
     } catch (err) {
       setRowMsg((m) => ({ ...m, [key]: { kind: 'error', text: errMsg(err) } }))
     } finally {
       setBusyKey(null)
     }
-  }
-
-  async function runCommand() {
-    if (!commandInput.trim()) return
-    // only a confirmed picker selection may drive exec — never ambient `picked`,
-    // which can be empty or stale once the picker is closed
-    if (pickerFor !== 'command') return
-    await applyToProjects('command', '/api/projects/exec', { command: commandInput.trim() })
   }
 
   const suggestions = harnesses.filter(isLaunchable)
@@ -106,18 +97,27 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
         {suggestions.length === 0 && (
           <p className="text-muted-foreground text-sm">No harnesses yet.</p>
         )}
-        {suggestions.map((h) => (
+        {suggestions.map((h) => {
+          // Installed everywhere shown → nothing left to do: no button.
+          // Otherwise the button stays so the remaining projects can be
+          // covered (the picker marks the installed ones).
+          const fullyInstalled = projects.length > 0 && projects.every((p) => isInstalled(p.id, h.id))
+          return (
           <div key={h.id} className="flex flex-col">
             <div className="flex items-center justify-between gap-2 text-sm">
               <div className="min-w-0">
                 <span>{h.name}</span>
-                {/* block + truncate keeps long install commands from
-                    stretching the card; the full text is on hover */}
-                <div className="truncate font-mono text-xs text-muted-foreground" title={h.install ?? h.command}>
+                {/* wrap instead of truncate so long install commands fit
+                    the width instead of clipping */}
+                <div className="font-mono text-xs text-muted-foreground break-words" title={h.install ?? h.command}>
                   {h.install ?? h.command}
                 </div>
               </div>
-              {h.install ? (
+              {!h.install ? (
+                <span className="shrink-0 text-muted-foreground text-xs">no download needed</span>
+              ) : fullyInstalled ? (
+                <span className="shrink-0 text-muted-foreground text-xs">Installed</span>
+              ) : (
                 <Button
                   size="sm"
                   variant={pickerFor === h.id ? 'secondary' : 'outline'}
@@ -127,8 +127,6 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
                 >
                   {busyKey === h.id ? 'Installing…' : 'Install…'}
                 </Button>
-              ) : (
-                <span className="shrink-0 text-muted-foreground text-xs">no download needed</span>
               )}
             </div>
             {pickerFor === h.id && (
@@ -145,47 +143,11 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
             )}
             {rowMsg[h.id] && <RowResult msg={rowMsg[h.id]!} />}
           </div>
-        ))}
+          )
+        })}
 
-        {/* Arbitrary commands: the same picker, any shell command — the place
-            to upgrade CLIs or run one-off maintenance across projects. */}
-        <div className="mt-2 border-t pt-3">
-          <p className="text-xs font-medium">Run a command in your projects</p>
-          <p className="text-muted-foreground text-xs">
-            Upgrades, maintenance, one-offs — runs synchronously in the selected projects.
-          </p>
-          <form onSubmit={(e) => { e.preventDefault(); void runCommand() }} className="mt-2 flex flex-col gap-2">
-            <Input
-              type="text"
-              placeholder="e.g. npm i -g opencode-ai@latest"
-              value={commandInput}
-              onChange={(e) => setCommandInput(e.target.value)}
-            />
-            {pickerFor === 'command' ? (
-              <ProjectPicker
-                projects={projects}
-                picked={picked}
-                onToggle={(id) => setPicked((p) => ({ ...p, [id]: !p[id] }))}
-                busy={busyKey !== null}
-                applyLabel={`Run in ${Object.values(picked).filter(Boolean).length} project(s)`}
-                onApply={() => void runCommand()}
-                onCancel={() => setPickerFor(null)}
-              />
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                className="self-start"
-                disabled={!commandInput.trim() || busyKey !== null || projects.length === 0}
-                onClick={() => openPicker('command')}
-              >
-                Choose projects…
-              </Button>
-            )}
-            {rowMsg.command && <RowResult msg={rowMsg.command} />}
-          </form>
-        </div>
-
+        {/* Arbitrary commands live on the home page's global Run card;
+            this dialog keeps installs only. */}
         <AddHarnessDialog
           open={addOpen}
           onOpenChange={setAddOpen}

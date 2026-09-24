@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { api, errMsg } from '@/lib/api'
 import { terminalPath } from '@/lib/paths'
@@ -14,7 +16,6 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, g
   sshKeyCount: number; gitConfigured?: boolean; navigate: (to: string) => void
 }) {
   const [repoUrl, setRepoUrl] = useState('')
-  const [branch, setBranch] = useState('')
   const [cloneMethod, setCloneMethod] = useState<'http' | 'ssh'>('http')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -22,8 +23,8 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, g
     e.preventDefault()
     setCreating(true); setCreateError(null)
     try {
-      await api('/api/projects', { method: 'POST', body: JSON.stringify({ repoUrl: repoUrl.trim(), branch: branch.trim(), cloneMethod }) })
-      setRepoUrl(''); setBranch(''); await refresh()
+      await api('/api/projects', { method: 'POST', body: JSON.stringify({ repoUrl: repoUrl.trim(), cloneMethod }) })
+      setRepoUrl(''); await refresh()
     } catch (err) { setCreateError(errMsg(err)) } finally { setCreating(false) }
   }
   return (
@@ -48,19 +49,21 @@ export function ProjectsCard({ projects, loading, error, refresh, sshKeyCount, g
         ))}
         <details className="mx-2 mt-1 rounded-xl bg-muted/50" {...(projects.length === 0 ? { open: true } : {})}>
           <summary className="min-h-[44px] cursor-pointer list-none px-3 py-3 text-sm font-medium active:opacity-70">Clone a repo</summary>
-          <form onSubmit={createProject} className="flex flex-col gap-2 p-3 pt-0">
-            <Input type="text" placeholder="GitHub Repo URL (e.g. https://github.com/owner/repo)" value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} className="min-h-[44px]" />
-            <Input type="text" placeholder="Branch (optional)" value={branch} onChange={(e) => setBranch(e.target.value)} className="min-h-[44px]" />
-            <div className="flex items-center gap-2 text-sm">
-              <label className="shrink-0 whitespace-nowrap text-muted-foreground">Clone via:</label>
-              <div className="flex shrink-0 rounded-md border text-xs" role="group" aria-label="Clone method">
-                <button type="button" aria-pressed={cloneMethod === 'http'} onClick={() => setCloneMethod('http')} className={`min-h-[44px] px-4 ${cloneMethod === 'http' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>HTTPS</button>
-                <button type="button" aria-pressed={cloneMethod === 'ssh'} onClick={() => setCloneMethod('ssh')} className={`min-h-[44px] px-4 ${cloneMethod === 'ssh' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>SSH</button>
+          <form onSubmit={createProject} className="flex flex-col gap-3 p-3 pt-0">
+            <Input type="text" placeholder="Git clone URL (e.g. https://github.com/owner/repo.git)" aria-label="Git clone URL" value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} className="min-h-[44px]" />
+            <RadioGroup value={cloneMethod} onValueChange={(v) => setCloneMethod(v as 'http' | 'ssh')} aria-label="Clone method" className="flex gap-4">
+              <div className="flex min-h-[44px] items-center gap-2">
+                <RadioGroupItem value="http" id="clone-http" />
+                <Label htmlFor="clone-http" className="cursor-pointer font-normal">HTTPS</Label>
               </div>
-              {cloneMethod === 'ssh' && sshKeyCount === 0 && <span className="text-xs text-destructive">No SSH keys — add one under Connections below.</span>}
-              {cloneMethod === 'ssh' && sshKeyCount > 0 && <span className="text-xs text-muted-foreground">{sshKeyCount} key(s) registered</span>}
-            </div>
-            {createError && <p className="max-h-24 overflow-auto break-all text-xs text-destructive">{createError}</p>}
+              <div className="flex min-h-[44px] items-center gap-2">
+                <RadioGroupItem value="ssh" id="clone-ssh" />
+                <Label htmlFor="clone-ssh" className="cursor-pointer font-normal">SSH</Label>
+              </div>
+            </RadioGroup>
+            {cloneMethod === 'ssh' && sshKeyCount === 0 && <p className="text-xs text-destructive">No SSH keys — add one under Connections below.</p>}
+            {cloneMethod === 'ssh' && sshKeyCount > 0 && <p className="text-xs text-muted-foreground">{sshKeyCount} key(s) registered</p>}
+            {createError && <p className="max-h-24 overflow-auto break-all text-xs text-destructive" data-testid="clone-error">{createError}</p>}
             {!gitConfigured && <p className="text-xs text-muted-foreground" data-testid="git-setup-hint">Set up Git in Setup to create projects.</p>}
             <Button type="submit" disabled={creating || !repoUrl.trim() || !gitConfigured} className="min-h-[44px]">{creating ? 'Creating…' : 'Clone project'}</Button>
           </form>

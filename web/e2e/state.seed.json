@@ -1,5 +1,10 @@
 {
   "user": {
     "email": "me@example.com"
+  },
+  "git": {
+    "name": "E2E",
+    "email": "me@example.com",
+    "token": "e2e-fake-token"
   }
 }

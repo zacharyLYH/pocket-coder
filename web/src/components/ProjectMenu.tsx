@@ -38,7 +38,7 @@ export function ProjectMenu({ project, projects, onChanged, navigate }: {
       </DropdownMenu>
       {shortcutsOpen && <ShortcutsModal projectId={project.id} open={shortcutsOpen} onOpenChange={setShortcutsOpen} onSaved={onChanged} />}
       <Dialog open={harnessOpen} onOpenChange={setHarnessOpen}>
-        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="max-h-[85dvh] overflow-y-auto rounded-xl sm:max-w-lg">
           <DialogHeader><DialogTitle>Harnesses for {project.id.split('/')[1] ?? project.id}</DialogTitle></DialogHeader>
           <HarnessesCard projects={projects} initialProjectId={project.id} onInstalled={onChanged} onBusyChange={setHarnessBusy} />
           {harnessBusy && <p className="text-sm text-muted-foreground">Working...</p>}

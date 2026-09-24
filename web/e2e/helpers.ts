@@ -127,15 +127,47 @@ function waitForPin(afterOffset: number): string {
   throw new Error(`no PIN found in ${SERVER_LOG} — does the console mailer print it?`)
 }
 
+// ensureCloneForm lands on home with the Clone disclosure open: the form
+// hides inside a closed <details> once a project exists, and inputs in a
+// closed disclosure are invisible to Playwright (fill would wait forever).
+// Fails fast when Git is not configured: the Clone button is permanently
+// disabled then (see ProjectsCard gitConfigured gating), so proceeding
+// would spin on an unclickable button until timeout. A stale state.json
+// without the git block is the usual cause — the e2e seeds carry one.
+async function ensureCloneForm(page: Page): Promise<void> {
+  if ((await page.getByPlaceholder(/clone URL/i).count()) === 0) {
+    await page.goto('/')
+  }
+  const input = page.getByPlaceholder(/clone URL/i)
+  if (!(await input.first().isVisible())) {
+    await page.locator('summary', { hasText: 'Clone a repo' }).click()
+  }
+  await expect(input.first()).toBeVisible({ timeout: 10_000 })
+  if ((await page.getByTestId('git-setup-hint').count()) > 0) {
+    throw new Error(
+      'Git not configured (git-setup-hint visible): Clone project is disabled. ' +
+        'The stack booted from a state.json without the git block — wipe the data dir and reboot from state.seed.json.',
+    )
+  }
+}
 // createProject clones a fixture repo via the API and returns its id
 // (owner/repo). The repo defaults to slot 1; tests holding several
 // projects at once pass distinct slots.
 export async function createProject(request: APIRequestContext, repoUrl = e2eRepo(1)): Promise<string> {
   let res = await request.post('/api/projects', { data: { repoUrl } })
   if (res.status() === 409) {
+    const body = await res.text().catch(() => '')
+    if (/git not configured/i.test(body)) {
+      throw new Error(
+        `createProject: backend reports git not configured — the stack booted from a state.json without the git block. Body: ${body}`,
+      )
+    }
+  }
+  for (let round = 0; res.status() === 409 && round < 3; round++) {
     // Same-id project leaked by an earlier cleanup failure (ids are this
     // run's fixture slots, so it is always ours): drop everything listed
-    // and retry once.
+    // and retry. Deletes can fail under engine load, so retry the whole
+    // recovery instead of assuming one pass worked.
     const probe = await request.get('/api/projects')
     const ids = ((await probe.json()) as { projects: { id: string }[] }).projects.map((p) => p.id)
     for (const id of ids) {
@@ -177,6 +209,19 @@ export async function createProjectViaUI(
   repoUrl: string,
   expectedID: string,
 ): Promise<string> {
+  // Fail fast on a stale backend: without the git seed every create 409s
+  // with "git not configured" and the UI leaves Clone disabled, which
+  // otherwise surfaces as a timeout clicking Clone project.
+  const gitRes = await request.get('/api/git/config')
+  if (gitRes.ok()) {
+    const gitBody = (await gitRes.json()) as { configured?: boolean }
+    if (gitBody.configured === false) {
+      throw new Error(
+        'Git not configured on the backend (/api/git/config configured=false): ' +
+          'the stack booted from a state.json without the git block — wipe the data dir and reboot from state.seed.json.',
+      )
+    }
+  }
   const countNamed = async (): Promise<number> => {
     const res = await request.get('/api/projects')
     if (!res.ok()) return 0
@@ -196,22 +241,20 @@ export async function createProjectViaUI(
   // Under CI load the Vite dev client can drop its websocket and reload the
   // page mid-submit, replacing the form ("element(s) not found") and losing
   // the create. A lost create is harmless — nothing was made — so resubmit
-  // until the project actually exists. Each POST is synchronous server-side
-  // and the count check runs before every resubmit, so a slow-but-successful
-  // create is never duplicated.
-  //
-  // The project count is the source of truth here, not the button: a
-  // SUCCESSFUL create clears the form, and the empty required repo field
-  // leaves the button disabled. Only a FAILED attempt re-enables it.
+  // The POST outcome is the source of truth here, not the list count:
+  // the server lists the record while provisioning is still in flight
+  // and silently rolls back on failure, so "listed" alone can exit the
+  // poll before the create resolves. A SUCCESSFUL create clears the form;
+  // a FAILED attempt keeps the values and shows the error. Both are plain
+  // DOM reads — unlike isEnabled neither blocks on actionability checks.
   for (let attempt = 0; attempt < 5 && (await countNamed()) <= before; attempt++) {
-    if ((await page.getByPlaceholder(/Repo URL/).count()) === 0) {
-      await page.goto('/')
-    }
-    await page.getByPlaceholder(/Repo URL/).fill(repoUrl)
+    await ensureCloneForm(page)
+    await page.getByPlaceholder(/clone URL/i).fill(repoUrl)
     await page.getByRole('button', { name: 'Clone project' }).click()
     await expect(async () => {
-      const created = (await countNamed()) > before
-      const failed = await page.getByRole('button', { name: 'Clone project' }).isEnabled()
+      const urlValue = await page.getByPlaceholder(/clone URL/i).inputValue()
+      const created = urlValue === '' && (await countNamed()) > before
+      const failed = urlValue !== '' && (await page.getByTestId('clone-error').count()) > 0
       expect(created || failed).toBe(true)
     }).toPass({ timeout: 120_000 })
   }
@@ -220,7 +263,7 @@ export async function createProjectViaUI(
   }
 
   await page.reload()
-  await expect(page.getByText(expectedID)).toHaveCount(before + 1, { timeout: 10_000 })
+  await expect(page.getByTestId(`project-card-${expectedID}`)).toHaveCount(before + 1, { timeout: 10_000 })
   const orderRes = await request.get('/api/projects')
   const orderBody = (await orderRes.json()) as { projects: { id: string }[] }
   const created = orderBody.projects.find((p) => p.id === expectedID)

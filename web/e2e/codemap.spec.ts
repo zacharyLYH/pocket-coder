@@ -61,9 +61,11 @@ test.describe('codemap desktop', () => {
 
   test('AI card renders on home', async ({ page }) => {
     await page.goto('/')
-    await expect(page.getByTestId('ai-card')).toBeVisible()
-    await expect(page.getByTestId('ai-test')).toBeVisible()
-    await expect(page.getByTestId('ai-save')).toBeDisabled()
+    await page.getByTestId('setup-ai').click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByTestId('ai-card')).toBeVisible()
+    await expect(dialog.getByTestId('ai-test')).toBeVisible()
+    await expect(dialog.getByTestId('ai-save')).toBeDisabled()
     await expect(page).toHaveScreenshot('codemap-ai-card.png', { fullPage: true })
   })
 

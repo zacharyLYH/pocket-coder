@@ -4,8 +4,10 @@ import { ProjectsCard } from '@/components/ProjectsCard'
 import { SetupRows } from '@/components/SetupRows'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { api, errMsg } from '@/lib/api'
 import type { ExecResult, GitConfigStatus, Project, SSHKey } from '@/lib/types'
 import { useAiConfig } from '@/hooks/useAiConfig'
@@ -26,7 +28,9 @@ export function Home({ email, onLogout, navigate }: {
   useEffect(() => { loadSshKeys() }, [])
   useEffect(() => { loadGit() }, [])
   useEffect(() => { void refreshAi() }, [refreshAi])
-  const needsAttention = !gitConfigured || sshKeys.length === 0 || !aiStatus?.configured
+  // SSH keys are optional (HTTPS clone needs none), so they never
+  // trigger the action-needed badge — Git and AI setup do.
+  const needsAttention = !gitConfigured || !aiStatus?.configured
   async function logout() {
     try { await api('/api/auth/logout', { method: 'POST' }) } catch { /* still sign out */ }
     onLogout()
@@ -60,21 +64,27 @@ export function Home({ email, onLogout, navigate }: {
             <SetupRows sshKeys={sshKeys} gitConfigured={gitConfigured} ai={aiStatus} onGit={loadGit} onKeys={loadSshKeys} />
           </CardContent>
         </Card>
-        <AdvancedBox projects={projects} busy={harnessBusy} onBusy={setHarnessBusy} />
+        <RunEverywhereCard projects={projects} busy={harnessBusy} onBusy={setHarnessBusy} />
       </main>
       {harnessBusy && <BusyOverlay />}
     </>
   )
 }
 
-// The global run-anywhere command box, demoted: uncommon, synchronous,
-// multi-project fan-out. Hidden until opened so nobody mistakes it for
-// the normal way to run things.
-function AdvancedBox({ projects, busy, onBusy }: { projects: Project[]; busy: boolean; onBusy: (b: boolean) => void }) {
+// Run everywhere: the global fan-out command box. It acts on every
+// checked project at once, so it stands alone as its own card — not
+// hidden inside a disclosure. Most work still happens in a terminal.
+function RunEverywhereCard({ projects, busy, onBusy }: { projects: Project[]; busy: boolean; onBusy: (b: boolean) => void }) {
   const [command, setCommand] = useState('')
   const [picked, setPicked] = useState<Record<string, boolean>>({})
-  const [open, setOpen] = useState(false)
   const [result, setResult] = useState<string | null>(null)
+  // Default to every project checked once the list loads.
+  useEffect(() => {
+    setPicked((p) => {
+      if (Object.keys(p).length > 0) return p
+      return Object.fromEntries(projects.map((pr) => [pr.id, true]))
+    })
+  }, [projects])
   function toggle(id: string) { setPicked((p) => ({ ...p, [id]: !p[id] })) }
   async function run() {
     const ids = Object.entries(picked).filter(([, on]) => on).map(([id]) => id)
@@ -87,26 +97,22 @@ function AdvancedBox({ projects, busy, onBusy }: { projects: Project[]; busy: bo
     } catch (e) { setResult(errMsg(e)) } finally { onBusy(false) }
   }
   return (
-    <details className="rounded-xl border bg-card shadow-sm" onToggle={(e) => {
-      const isOpen = (e.target as HTMLDetailsElement).open
-      setOpen(isOpen)
-      if (isOpen) setPicked(Object.fromEntries(projects.map((p) => [p.id, true])))
-    }}>
-      <summary className="min-h-[44px] cursor-pointer list-none px-4 py-3 text-[15px] font-medium text-muted-foreground active:opacity-70">Advanced: run a command everywhere</summary>
-      {open && (
-        <div className="flex flex-col gap-2 px-4 pb-4">
-          <p className="text-xs text-muted-foreground">Rarely needed. Most work happens inside a project's terminal. Runs now, synchronously, in each checked project.</p>
-          <Input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="e.g. npm i -g opencode-ai@latest" className="min-h-[44px] font-mono" />
-          {projects.map((p) => (
-            <label key={p.id} className="flex min-h-[44px] cursor-pointer items-center gap-2 text-sm active:opacity-70">
-              <input type="checkbox" checked={!!picked[p.id]} onChange={() => toggle(p.id)} className="size-4" />
-              <span className="truncate font-mono text-xs">{p.id}</span>
-            </label>
-          ))}
-          {result && <p className="max-h-24 overflow-auto break-all text-xs text-muted-foreground">{result}</p>}
-          <Button onClick={run} disabled={busy || !command.trim()} className="min-h-[44px]">{busy ? 'Running...' : 'Run in checked projects'}</Button>
-        </div>
-      )}
-    </details>
+    <Card className="gap-3 py-4">
+      <CardHeader className="px-4">
+        <CardTitle className="text-[17px] tracking-tight">Run a command</CardTitle>
+        <CardDescription>Runs now, synchronously, in every checked project.</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2 px-4">
+        <Input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="e.g. npm i -g opencode-ai@latest" aria-label="Command to run in checked projects" className="min-h-[44px] font-mono" />
+        {projects.map((p) => (
+          <div key={p.id} className="flex min-h-[44px] items-center gap-3">
+            <Checkbox id={`run-${p.id}`} checked={!!picked[p.id]} onCheckedChange={() => toggle(p.id)} aria-label={`Run in ${p.id}`} />
+            <Label htmlFor={`run-${p.id}`} className="cursor-pointer truncate font-mono text-xs font-normal">{p.id}</Label>
+          </div>
+        ))}
+        {result && <p className="max-h-24 overflow-auto break-all text-xs text-muted-foreground">{result}</p>}
+        <Button onClick={run} disabled={busy || !command.trim()} className="min-h-[44px]">{busy ? 'Running…' : 'Run in checked projects'}</Button>
+      </CardContent>
+    </Card>
   )
 }

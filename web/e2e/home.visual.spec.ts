@@ -52,9 +52,13 @@ test.describe('home screen', () => {
       })
       await page.reload()
 
-      await expect(page.getByText(e2eRepoID(1))).toBeVisible()
+      await expect(page.getByTestId(`project-card-${e2eRepoID(1)}`)).toBeVisible()
+      // key labels live in the SSH keys dialog; the row reports the count
+      await expect(page.getByTestId('setup-ssh')).toContainText('2 keys')
+      await page.getByTestId('setup-ssh').click()
       await expect(page.getByText('work-laptop')).toBeVisible()
       await expect(page.getByText('home')).toBeVisible()
+      await page.keyboard.press('Escape')
       await expect(page).toHaveScreenshot('home-with-projects-and-keys.png', { fullPage: true })
     } finally {
       await deleteAllProjects(page.request)
@@ -69,7 +73,8 @@ test.describe('home screen', () => {
     await page.goto('/')
 
     await expect(page.getByText('No projects yet.')).toBeVisible()
-    await expect(page.getByText('No keys registered.')).toBeVisible()
+    // SSH keys are optional: the row says so instead of warning
+    await expect(page.getByTestId('setup-ssh')).toContainText('optional')
     await expect(page).toHaveScreenshot('home-empty.png', { fullPage: true })
   })
 
@@ -77,14 +82,13 @@ test.describe('home screen', () => {
     await resetHarnessRegistry(page.request)
     await page.goto('/')
 
-    // the repo URL is required, so the clone-method toggle is always shown
-    await expect(page.getByText('Clone via:')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'HTTPS' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'SSH' })).toBeVisible()
+    // the clone URL is required, so the clone-method radios are always shown
+    await expect(page.getByRole('radio', { name: 'HTTPS' })).toBeVisible()
+    await expect(page.getByRole('radio', { name: 'SSH' })).toBeVisible()
 
-    // type a repo URL
-    await page.getByPlaceholder(/Repo URL/).fill('https://github.com/x/hello.git')
-    await expect(page.getByText('Clone via:')).toBeVisible()
+    // type a clone URL
+    await page.getByPlaceholder(/clone URL/i).fill('https://github.com/x/hello.git')
+    await expect(page.getByRole('radio', { name: 'HTTPS' })).toBeChecked()
     await expect(page).toHaveScreenshot('home-clone-toggle-visible.png', { fullPage: true })
   })
 
@@ -93,8 +97,8 @@ test.describe('home screen', () => {
     await resetHarnessRegistry(page.request)
     await page.goto('/')
 
-    await page.getByPlaceholder(/Repo URL/).fill('git@github.com:x/hello.git')
-    await page.getByRole('button', { name: 'SSH' }).click()
+    await page.getByPlaceholder(/clone URL/i).fill('git@github.com:x/hello.git')
+    await page.getByRole('radio', { name: 'SSH' }).click()
     await expect(page.getByText('No SSH keys')).toBeVisible()
     await expect(page).toHaveScreenshot('home-ssh-no-keys.png')
   })
@@ -105,22 +109,26 @@ test.describe('home screen', () => {
     await resetHarnessRegistry(page.request)
     try {
       await page.goto('/')
-      await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
+      const id = await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
 
+      // install from the project menu → Harnesses dialog
+      await page.getByTestId(`project-menu-${id}`).click()
+      await page.getByRole('menuitem', { name: /Harnesses/ }).click()
+      const dialog = page.getByRole('dialog')
       // suggestions include the seeded agent CLIs, OpenCode among them
-      await expect(page.getByText('OpenCode', { exact: true })).toBeVisible()
+      await expect(dialog.getByText('OpenCode', { exact: true })).toBeVisible()
 
       // an explicit install runs synchronously and surfaces the outcome here.
       // Crasher Demo is used because its "download" is a local script — fast,
       // while still exercising the real install+validate endpoint. The picker
       // defaults to every project checked; with one project that is a 1:1 run.
-      const row = page.locator('div.flex.items-center.justify-between', { hasText: 'Crasher Demo' })
+      const row = dialog.locator('div.flex.items-center.justify-between', { hasText: 'Crasher Demo' })
       await row.getByRole('button', { name: 'Install…' }).click()
       // the project picker is part of the feature's surface — capture it open
-      await expect(page.getByRole('button', { name: /Install in 1 project/ })).toBeVisible()
+      await expect(dialog.getByRole('button', { name: /Install in 1 project/ })).toBeVisible()
       await expect(page).toHaveScreenshot('harness-project-picker.png', { fullPage: true })
-      await page.getByRole('button', { name: /Install in 1 project/ }).click()
-      await expect(page.getByText('Applied to 1 project.')).toBeVisible({ timeout: 120_000 })
+      await dialog.getByRole('button', { name: /Install in 1 project/ }).click()
+      await expect(dialog.getByText('Applied to 1 project.')).toBeVisible({ timeout: 120_000 })
     } finally {
       await deleteAllProjects(page.request)
     }
@@ -136,14 +144,20 @@ test.describe('home screen', () => {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ results: [{ project: 'p1', status: 'ok' }] }) })
       })
       await page.goto('/')
-      await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
-      await expect(page.getByText('Crasher Demo')).toBeVisible()
+      const id = await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
+      await page.getByTestId(`project-menu-${id}`).click()
+      await page.getByRole('menuitem', { name: /Harnesses/ }).click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog.getByText('Crasher Demo')).toBeVisible()
 
-      const row = page.locator('div.flex.items-center.justify-between', { hasText: 'Crasher Demo' })
+      const row = dialog.locator('div.flex.items-center.justify-between', { hasText: 'Crasher Demo' })
       await row.getByRole('button', { name: 'Install…' }).click()
-      await page.getByRole('button', { name: /Install in 1 project/ }).click()
-
-      await expect(page.locator('p.text-muted-foreground').filter({ hasText: 'Working…' })).toBeVisible({ timeout: 5_000 })
+      // race the click against the visibility check: the mocked install
+      // resolves in 2s, so a sequential assert can miss the busy state
+      await Promise.all([
+        expect(dialog.locator('p.text-muted-foreground').filter({ hasText: 'Working' })).toBeVisible({ timeout: 10_000 }),
+        dialog.getByRole('button', { name: /Install in 1 project/ }).click(),
+      ])
       await expect(page).toHaveScreenshot('home-busy-installing.png')
     } finally {
       await deleteAllProjects(page.request)

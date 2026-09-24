@@ -47,10 +47,10 @@ describe('ProjectsCard', () => {
         : undefined))
     const { props } = renderCard()
 
-    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'https://github.com/x/y.git' } })
+    fireEvent.change(screen.getByPlaceholderText(/clone URL/i), { target: { value: 'https://github.com/x/y.git' } })
     fireEvent.click(screen.getByRole('button', { name: 'Clone project' }))
     expect(await screen.findByText(/project already exists/)).toHaveClass('text-destructive')
-    expect(screen.getByPlaceholderText(/Repo URL/)).toHaveValue('https://github.com/x/y.git')
+    expect(screen.getByPlaceholderText(/clone URL/i)).toHaveValue('https://github.com/x/y.git')
     expect(props.refresh).not.toHaveBeenCalled()
   })
 
@@ -68,11 +68,11 @@ describe('ProjectsCard', () => {
     vi.stubGlobal('fetch', fetchMock)
     const { props } = renderCard({ sshKeyCount: 2 })
 
-    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'https://github.com/x/y.git' } })
-    fireEvent.click(screen.getByRole('button', { name: 'SSH' }))
+    fireEvent.change(screen.getByPlaceholderText(/clone URL/i), { target: { value: 'https://github.com/x/y.git' } })
+    fireEvent.click(screen.getByRole('radio', { name: 'SSH' }))
     fireEvent.click(screen.getByRole('button', { name: 'Clone project' }))
     await waitFor(() => expect(props.refresh).toHaveBeenCalled())
-    expect(screen.getByPlaceholderText(/Repo URL/)).toHaveValue('')
+    expect(screen.getByPlaceholderText(/clone URL/i)).toHaveValue('')
 
     expect(screen.getByTestId('project-menu-x/alpha')).toBeInTheDocument()
     // delete is behind dropdown — tested in e2e; unit just checks trigger exists
@@ -80,21 +80,21 @@ describe('ProjectsCard', () => {
 
   it('clone-via hint counts registered SSH keys', () => {
     renderCard({ sshKeyCount: 2 })
-    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'git@github.com:x/y.git' } })
-    fireEvent.click(screen.getByRole('button', { name: 'SSH' }))
+    fireEvent.change(screen.getByPlaceholderText(/clone URL/i), { target: { value: 'git@github.com:x/y.git' } })
+    fireEvent.click(screen.getByRole('radio', { name: 'SSH' }))
     expect(screen.getByText('2 key(s) registered')).toBeInTheDocument()
   })
 
   it('disables clone while the repo URL is blank', () => {
     renderCard()
     expect(screen.getByRole('button', { name: 'Clone project' })).toBeDisabled()
-    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'https://github.com/x/y.git' } })
+    fireEvent.change(screen.getByPlaceholderText(/clone URL/i), { target: { value: 'https://github.com/x/y.git' } })
     expect(screen.getByRole('button', { name: 'Clone project' })).not.toBeDisabled()
   })
 
   it('disables create with a hint while git is unconfigured', () => {
     renderCard({ gitConfigured: false })
-    fireEvent.change(screen.getByPlaceholderText(/Repo URL/), { target: { value: 'https://github.com/x/y.git' } })
+    fireEvent.change(screen.getByPlaceholderText(/clone URL/i), { target: { value: 'https://github.com/x/y.git' } })
     expect(screen.getByRole('button', { name: 'Clone project' })).toBeDisabled()
     expect(screen.getByTestId('git-setup-hint')).toBeInTheDocument()
   })

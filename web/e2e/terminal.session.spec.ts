@@ -7,10 +7,11 @@ import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp } f
 
 async function createProjectAndOpenTerminal(page: Page) {
   await page.goto('/')
-  await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
+  const id = await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
   await page.getByRole('button', { name: 'Terminal' }).click()
   await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+  return id
 }
 
 test.describe('session switcher', () => {
@@ -62,14 +63,19 @@ test.describe('session switcher', () => {
   })
 
   test('after installing, the harness appears in the new-tab picker', async ({ page }) => {
-    await createProjectAndOpenTerminal(page)
+    const id = await createProjectAndOpenTerminal(page)
 
-    // install opencode into the project from the home card
+    // install opencode into the project from the project menu → Harnesses dialog
     await page.goto('/')
-    const row = page.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
+    await page.getByTestId(`project-menu-${id}`).click()
+    await page.getByRole('menuitem', { name: /Harnesses/ }).click()
+    const hdialog = page.getByRole('dialog')
+    const row = hdialog.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
     await row.getByRole('button', { name: 'Install…' }).click()
-    await page.getByRole('button', { name: /Install in 1 project/ }).click()
-    await expect(page.getByText('Applied to 1 project.')).toBeVisible({ timeout: 300_000 })
+    await hdialog.getByRole('button', { name: /Install in 1 project/ }).click()
+    await expect(hdialog.getByText('Applied to 1 project.')).toBeVisible({ timeout: 300_000 })
+    await page.keyboard.press('Escape')
+    await expect(hdialog).not.toBeVisible({ timeout: 5_000 })
     await page.getByRole('button', { name: 'Terminal' }).click()
     await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
 

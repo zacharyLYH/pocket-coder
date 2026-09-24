@@ -53,12 +53,17 @@ test.describe('mobile typing (opencode TUI)', () => {
   test('tap focuses and typed text reaches the opencode prompt', async ({ page }) => {
     test.setTimeout(600_000)
     await page.goto('/')
-    await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
+    const id = await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
 
-    const row = page.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
+    await page.getByTestId(`project-menu-${id}`).click()
+    await page.getByRole('menuitem', { name: /Harnesses/ }).click()
+    const hdialog = page.getByRole('dialog')
+    const row = hdialog.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
     await row.getByRole('button', { name: 'Install…' }).click()
-    await page.getByRole('button', { name: /Install in 1 project/ }).click()
-    await expect(page.getByText('Applied to 1 project.')).toBeVisible({ timeout: 300_000 })
+    await hdialog.getByRole('button', { name: /Install in 1 project/ }).click()
+    await expect(hdialog.getByText('Applied to 1 project.')).toBeVisible({ timeout: 300_000 })
+    await page.keyboard.press('Escape')
+    await expect(hdialog).not.toBeVisible({ timeout: 5_000 })
 
     await page.getByRole('button', { name: 'Terminal' }).click()
     await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })

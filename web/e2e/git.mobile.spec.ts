@@ -137,23 +137,30 @@ test.describe('git branches (mobile)', () => {
   })
 })
 
-test.describe('quick keys (mobile)', () => {
+test.describe('terminal keys (mobile)', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
 
-  test('strip shows on the terminal tab with a sticky Ctrl', async ({ page }) => {
+  test('keys live in the shortcuts modal', async ({ page }) => {
     resetGitState()
     await mockGit(page)
+    await page.route('**/api/projects/demo%2Fgit', (r) =>
+      r.fulfill({
+        json: {
+          shortcuts: [
+            { id: 'default-esc', alias: 'Esc', kind: 'keys', keys: 'Esc' },
+            { id: 'default-ctrl-c', alias: 'Ctrl-C', kind: 'keys', keys: 'Ctrl-C' },
+          ],
+        },
+      }))
     await page.goto(terminalUrl(PROJECT, 'main'))
-    await expect(page.getByTestId('quick-keys')).toBeVisible({ timeout: 10_000 })
-    await expect(page.getByTestId('qk-esc')).toBeVisible()
-    await expect(page.getByTestId('qk-ctrl-c')).toBeVisible()
+    await page.getByTestId('tab-shortcuts').click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByTestId('sc-run-Esc')).toBeVisible()
+    await expect(dialog.getByTestId('sc-run-Ctrl-C')).toBeVisible()
+    await expect(dialog).toHaveScreenshot('git-mobile-shortcuts.png')
 
-    await page.getByTestId('qk-ctrl').click()
-    await expect(page.getByTestId('qk-ctrl')).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.getByTestId('quick-keys')).toHaveScreenshot('git-mobile-quick-keys.png')
-
-    // Hidden on the Git tab — the strip drives PTY input only.
-    await page.getByTestId('tab-diff').click()
-    await expect(page.getByTestId('quick-keys')).toBeHidden()
+    // running a key sends terminal input without any network: the modal closes
+    await dialog.getByTestId('sc-run-Ctrl-C').click()
+    await expect(dialog).not.toBeVisible()
   })
 })

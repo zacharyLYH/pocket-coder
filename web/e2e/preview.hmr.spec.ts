@@ -18,7 +18,7 @@ test.describe('preview HMR', () => {
       // ── Step 1: Create a real full-stack project ──
       const projectID = await createReactProject(request)
       await page.goto('/')
-      await expect(page.getByText(projectID)).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId(`project-card-${projectID}`)).toBeVisible({ timeout: 30_000 })
 
       // ── Step 2: Open preview via terminal → Preview tab → Open (new tab) ──
       const previewPage = await openPreviewFromTerminal(page, projectID)

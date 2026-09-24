@@ -505,12 +505,18 @@ export async function createVueProject(request: APIRequestContext): Promise<stri
 
 // -- preview token helpers (preview-token-rfc section 6) --
 // The surface page mints a per-sidecar token; every tools call carries it.
+// The worker starts asynchronously after project creation, so poll until
+// the status endpoint reports a token instead of single-shotting it.
 export async function statusToken(request: APIRequestContext, id: string): Promise<string> {
-  const res = await request.get(`/api/projects/${projectURL(id)}/preview`)
-  expect(res.ok()).toBeTruthy()
-  const body = (await res.json()) as { token?: string }
-  expect(body.token).toBeTruthy()
-  return body.token as string
+  let token = ''
+  await expect(async () => {
+    const res = await request.get(`/api/projects/${projectURL(id)}/preview`)
+    expect(res.ok()).toBeTruthy()
+    const body = (await res.json()) as { token?: string }
+    expect(body.token).toBeTruthy()
+    token = body.token as string
+  }).toPass({ timeout: 60_000 })
+  return token
 }
 
 export function tokenHeaders(token: string): { headers: Record<string, string> } {

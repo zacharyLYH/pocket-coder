@@ -47,9 +47,9 @@ test.describe('harness installs are desired state', () => {
       const idBeta = await createProjectViaUI(page, request, e2eRepo(2), e2eRepoID(2))
       const third = await createProjectViaUI(page, request, e2eRepo(3), e2eRepoID(3))
 
-      await expect(page.getByText(e2eRepoID(1))).toBeVisible()
-      await expect(page.getByText(e2eRepoID(2))).toBeVisible()
-      await expect(page.getByText(e2eRepoID(3))).toBeVisible()
+      await expect(page.getByTestId(`project-card-${e2eRepoID(1)}`)).toBeVisible()
+      await expect(page.getByTestId(`project-card-${e2eRepoID(2)}`)).toBeVisible()
+      await expect(page.getByTestId(`project-card-${e2eRepoID(3)}`)).toBeVisible()
       await gateShot(page, 'gate0-home-no-harnesses')
 
       const getOrder = async () => {
@@ -63,21 +63,29 @@ test.describe('harness installs are desired state', () => {
       const idxBeta = order.indexOf(idBeta)
       const idxThird = order.indexOf(third)
 
+      // installs run from the project menu → Harnesses dialog now (not a
+      // home card). Opened from alpha's menu, each picker starts scoped to
+      // alpha; check beta for the 2-project installs.
+      await page.getByTestId(`project-menu-${idAlpha}`).click()
+      await page.getByRole('menuitem', { name: /Harnesses/ }).click()
+      const hdialog = page.getByRole('dialog')
+      await expect(hdialog.getByText('Crasher Demo')).toBeVisible()
+
       for (const harnessName of ['Crasher Demo', 'Helper']) {
-        const row = page.locator('div.flex.items-center.justify-between', { hasText: harnessName })
+        const row = hdialog.locator('div.flex.items-center.justify-between', { hasText: harnessName })
         await expect(row).toBeVisible()
         await row.getByRole('button', { name: 'Install…' }).click()
-        const picker = page.locator('div.mt-1.rounded-md').first()
+        const picker = hdialog.locator('div.mt-1.flex.flex-col')
         await expect(picker).toBeVisible()
-        await picker.locator('label').nth(idxThird).locator('input').uncheck()
+        await picker.locator('label').nth(idxBeta).locator('input').check()
         await expect(picker.getByRole('button', { name: /Install in 2 project/ })).toBeVisible()
         await picker.getByRole('button', { name: /Install in 2 project/ }).click()
-        await expect(page.getByText('Applied to 2 projects.')).toBeVisible({ timeout: 60_000 })
+        await expect(hdialog.getByText('Applied to 2 projects.')).toBeVisible({ timeout: 60_000 })
       }
 
-      const rowCheck = page.locator('div.flex.items-center.justify-between', { hasText: 'Crasher Demo' })
+      const rowCheck = hdialog.locator('div.flex.items-center.justify-between', { hasText: 'Crasher Demo' })
       await rowCheck.getByRole('button', { name: 'Install…' }).click()
-      const pickerCheck = page.locator('div.mt-1.rounded-md').first()
+      const pickerCheck = hdialog.locator('div.mt-1.flex.flex-col')
       await expect(pickerCheck).toBeVisible()
       await expect(pickerCheck.getByText('Installed')).toHaveCount(2)
       await expect(pickerCheck.locator('label').nth(idxAlpha).locator('input')).toBeDisabled()
@@ -86,13 +94,15 @@ test.describe('harness installs are desired state', () => {
       await gateShot(page, 'gate1-installed')
       await pickerCheck.getByRole('button', { name: 'Cancel' }).click()
 
-      const helperRow = page.locator('div.flex.items-center.justify-between', { hasText: 'Helper' })
+      const helperRow = hdialog.locator('div.flex.items-center.justify-between', { hasText: 'Helper' })
       await helperRow.getByRole('button', { name: 'Install…' }).click()
-      const helperPicker = page.locator('div.mt-1.rounded-md').first()
+      const helperPicker = hdialog.locator('div.mt-1.flex.flex-col')
       await expect(helperPicker).toBeVisible()
       await expect(helperPicker.getByText('Installed')).toHaveCount(2)
       await expect(helperPicker.locator('label').nth(idxThird).locator('input')).toBeEnabled()
       await helperPicker.getByRole('button', { name: 'Cancel' }).click()
+      await page.keyboard.press('Escape')
+      await expect(hdialog).not.toBeVisible({ timeout: 5_000 })
 
       const state1 = await fetchState(request)
       expect(state1.projects[idAlpha].harnesses).toEqual(['crasher-demo', 'helper'])

@@ -19,7 +19,7 @@ test.describe('preview basic', () => {
 
       // ── Step 2: Verify project appears on home screen ──
       await page.goto('/')
-      await expect(page.getByText(projectID)).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId(`project-card-${projectID}`)).toBeVisible({ timeout: 30_000 })
 
       // ── Step 3: Open preview via terminal → Preview tab → Open (new tab) ──
       const previewPage = await openPreviewFromTerminal(page, projectID)

@@ -13,7 +13,7 @@ test.describe('shortcuts', () => {
     try {
       const id = await createProject(request)
       await page.goto('/')
-      await expect(page.getByText(id)).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByTestId(`project-card-${id}`)).toBeVisible({ timeout: 10_000 })
       const menu = page.getByTestId(`project-menu-${id}`)
       await expect(menu).toBeVisible()
       await menu.click()
@@ -26,7 +26,7 @@ test.describe('shortcuts', () => {
       await expect(dialog).toHaveScreenshot('shortcuts-modal.png')
       await dialog.getByTestId('sc-save').click()
       // Instant save: the row appears, the dialog stays open.
-      await expect(dialog.getByText('dev')).toBeVisible()
+      await expect(dialog.getByText('dev', { exact: true })).toBeVisible()
       await dialog.press('Escape')
       await expect(dialog).not.toBeVisible({ timeout: 5_000 })
       const get = await request.get(`/api/projects/${projectURL(id)}`)
@@ -49,7 +49,7 @@ test.describe('shortcuts', () => {
       const id = await createProject(request)
       await request.patch(`/api/projects/${projectURL(id)}`, { data: { shortcuts: [{ id: 's-hello', alias: 'hello', kind: 'cmd', command: 'echo hello-quick' }] } })
       await page.goto('/')
-      await expect(page.getByText(id)).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByTestId(`project-card-${id}`)).toBeVisible({ timeout: 10_000 })
       await page.getByTestId(`project-card-${id}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
       await page.getByTestId('tab-shortcuts').click()

@@ -14,12 +14,14 @@ export function SetupRows({ sshKeys, gitConfigured, ai, onGit, onKeys }: {
 }) {
   const [open, setOpen] = useState<'git' | 'ssh' | 'ai' | null>(null)
   const gitLabel = gitConfigured ? 'set' : 'not set'
-  const sshLabel = sshKeys.length === 0 ? 'none' : `${sshKeys.length} key${sshKeys.length === 1 ? '' : 's'}`
+  // SSH keys are optional (HTTPS clone needs none): the row reports the
+  // count but never warns — no amber dot for having zero keys.
+  const sshLabel = sshKeys.length === 0 ? 'optional' : `${sshKeys.length} key${sshKeys.length === 1 ? '' : 's'}`
   const aiLabel = ai?.configured ? (ai.model || 'set') : 'not set'
   return (
     <div className="flex flex-col gap-1" data-testid="setup-rows">
       <SetupRow label="Git" status={gitLabel} done={gitConfigured} testid="setup-git" onOpen={() => setOpen('git')} />
-      <SetupRow label="SSH keys" status={sshLabel} done={sshKeys.length > 0} testid="setup-ssh" onOpen={() => setOpen('ssh')} />
+      <SetupRow label="SSH keys" status={sshLabel} done testid="setup-ssh" onOpen={() => setOpen('ssh')} />
       <SetupRow label="AI" status={aiLabel} done={!!ai?.configured} testid="setup-ai" onOpen={() => setOpen('ai')} />
       <Dialog open={open === 'git'} onOpenChange={(o) => { if (!o) setOpen(null) }}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md">
