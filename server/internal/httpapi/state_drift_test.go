@@ -236,8 +236,8 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 
 	// ─── final: the file is EXACTLY the sum of every successful call ────
 	statetest.AssertEqual(t, st.Path(), map[string]any{
-		"user": map[string]any{"email": "me@example.com"},
-		"git":  map[string]any{"name": "Test", "email": "test@example.com", "token": "test-token"},
+		"user":           map[string]any{"email": "me@example.com"},
+		"git_identities": []any{map[string]any{"id": "default", "label": "Default", "name": "Test", "email": "test@example.com", "token": "test-token"}},
 		"harnesses": map[string]any{
 			"fake":      wantFakeHarnessEntry,
 			"cfg-agent": map[string]any{"id": "cfg-agent", "name": "Cfg Agent", "command": "cfg-agent", "install": "pip install cfg-agent"},

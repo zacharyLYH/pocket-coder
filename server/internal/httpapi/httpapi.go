@@ -139,12 +139,18 @@ func New(d Deps) http.Handler {
 	}
 
 	if d.State != nil {
-		authed("GET", "/api/ai/config", handleGetAIConfig)
-		authed("POST", "/api/ai/test", handleTestAI)
-		authed("POST", "/api/ai/config", handleSaveAIConfig)
-		authed("GET", "/api/git/config", handleGetGitConfig)
-		authed("POST", "/api/git/test", handleTestGit)
-		authed("POST", "/api/git/config", handleSaveGitConfig)
+		authed("GET", "/api/ai/models", handleListAIModels)
+		authed("POST", "/api/ai/models", handleCreateAIModel)
+		authed("POST", "/api/ai/models/test", handleTestAIModelBody)
+		authed("PUT", "/api/ai/models/{id}", handleUpdateAIModel)
+		authed("DELETE", "/api/ai/models/{id}", handleDeleteAIModel)
+		authed("POST", "/api/ai/models/{id}/test", handleTestAIModel)
+		authed("GET", "/api/git/identities", handleListGitIDs)
+		authed("POST", "/api/git/identities", handleCreateGitID)
+		authed("POST", "/api/git/identities/test", handleTestGitBody)
+		authed("PUT", "/api/git/identities/{id}", handleUpdateGitID)
+		authed("DELETE", "/api/git/identities/{id}", handleDeleteGitID)
+		authed("POST", "/api/git/identities/{id}/test", handleTestGitID)
 	}
 
 	if d.Preview != nil {
@@ -177,6 +183,8 @@ func New(d Deps) http.Handler {
 	if d.SSHKeys != nil {
 		authed("GET", "/api/ssh-keys", handleListSSHKeys)
 		authed("POST", "/api/ssh-keys", handleAddSSHKey)
+		authed("POST", "/api/ssh-keys/test", handleTestSSHKey)
+		authed("PUT", "/api/ssh-keys/{fingerprint}", handleUpdateSSHKey)
 		authed("DELETE", "/api/ssh-keys/{fingerprint}", handleDeleteSSHKey)
 	}
 

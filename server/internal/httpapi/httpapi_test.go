@@ -147,7 +147,7 @@ func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer,
 	// test on the happy path; the service's git provider stays nil so
 	// no container writes happen.
 	if err := st.Mutate(func(doc *state.Document) error {
-		doc.Git = &state.GitConfig{Name: "Test", Email: "test@example.com", Token: "test-token"}
+		doc.GitIDs = []state.GitIdentity{{ID: "default", Label: "Default", Name: "Test", Email: "test@example.com", Token: "test-token"}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)

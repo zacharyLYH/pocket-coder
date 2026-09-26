@@ -9,7 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api, errMsg } from '@/lib/api'
-import type { ExecResult, GitConfigStatus, Project, SSHKey } from '@/lib/types'
+import type { ExecResult, GitIdentity, Project, SSHKey } from '@/lib/types'
 import { useAiConfig } from '@/hooks/useAiConfig'
 import { useProjects } from '@/hooks/useProjects'
 
@@ -24,7 +24,8 @@ export function Home({ email, onLogout, navigate }: {
   const [gitConfigured, setGitConfigured] = useState(true)
   const { status: aiStatus, refresh: refreshAi } = useAiConfig()
   const loadSshKeys = () => api<{ keys: SSHKey[] }>('/api/ssh-keys').then((d) => setSshKeys(d.keys)).catch(() => {})
-  const loadGit = () => api<GitConfigStatus>('/api/git/config').then((d) => setGitConfigured(d.configured)).catch(() => {})
+  const loadGit = () => api<{ identities: GitIdentity[] }>('/api/git/identities').then((d) => setGitConfigured((d.identities ?? []).length > 0)).catch(() => {})
+  const loadAi = () => { void refreshAi() }
   useEffect(() => { loadSshKeys() }, [])
   useEffect(() => { loadGit() }, [])
   useEffect(() => { void refreshAi() }, [refreshAi])
@@ -61,7 +62,7 @@ export function Home({ email, onLogout, navigate }: {
             </div>
           </CardHeader>
           <CardContent className="px-2">
-            <SetupRows sshKeys={sshKeys} gitConfigured={gitConfigured} ai={aiStatus} onGit={loadGit} onKeys={loadSshKeys} />
+            <SetupRows sshKeys={sshKeys} gitConfigured={gitConfigured} ai={aiStatus} onGit={loadGit} onKeys={loadSshKeys} onAi={loadAi} />
           </CardContent>
         </Card>
         <RunEverywhereCard projects={projects} busy={harnessBusy} onBusy={setHarnessBusy} />

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestNormalizeBaseURL(t *testing.T) {
@@ -57,6 +58,43 @@ func TestConnectionMapsWeakEndpoints(t *testing.T) {
 	err := TestConnection(context.Background(), Config{BaseURL: srv.URL, APIKey: "k", Model: "m"})
 	if err == nil || !strings.Contains(err.Error(), "does not support tools") {
 		t.Fatalf("err = %v, want tools-support error", err)
+	}
+}
+
+func TestConnectionNoRetry(t *testing.T) {
+	// A 429 must surface at once: the SDK sleeps uncancellable backoffs
+	// between attempts (honoring Retry-After), which once held a probe
+	// for minutes past its ctx deadline on a rate-limited free tier.
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "58")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"message": "rate limited"},
+			})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "chatcmpl-test", "object": "chat.completion", "created": 1, "model": "fake",
+			"choices": []map[string]any{{"index": 0, "finish_reason": "stop",
+				"message": map[string]any{"role": "assistant", "content": `{"ok":true}`}}},
+		})
+	}))
+	defer srv.Close()
+	start := time.Now()
+	err := TestConnection(context.Background(), Config{BaseURL: srv.URL, APIKey: "k", Model: "m"})
+	if err == nil {
+		t.Fatalf("429 probe must fail, not retry into success")
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want exactly 1 (no retry)", calls)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("probe took %v, want fast fail without Retry-After sleep", time.Since(start))
 	}
 }
 

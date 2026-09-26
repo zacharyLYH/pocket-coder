@@ -7,7 +7,7 @@ import { terminalUrl } from './helpers'
 //
 // The project id is fake on purpose — session endpoints are route-mocked
 // so the terminal pane never dials, and the codemap APIs are route-mocked
-// for the model half. The no-key test uses the REAL /api/ai/config (the
+// for the model half. The no-key test uses the REAL /api/ai/models (the
 // seed state carries no key), proving key-less backends hide the tab.
 const FAKE_ID = 'e2e/codemap-fake'
 
@@ -45,11 +45,11 @@ async function mockSessions(page: Page) {
 }
 
 async function mockConfigured(page: Page) {
-  await page.route('**/api/ai/config', async (route) => {
+  await page.route('**/api/ai/models', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ baseURL: 'https://api.openai.com/v1', model: 'gpt-4o', configured: true }),
+      body: JSON.stringify({ models: [{ id: 'm1', label: 'test', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o', hasKey: true }] }),
     })
   })
 }
@@ -72,7 +72,7 @@ test.describe('codemap desktop', () => {
   test('codemap tab hidden without a key', async ({ page }) => {
     await mockSessions(page)
     await page.goto(terminalUrl(FAKE_ID, 'main'))
-    // real /api/ai/config: the seed state has no key
+    // real /api/ai/models: the seed state has no key
     await expect(page.getByTestId('tab-diff')).toBeVisible()
     await expect(page.getByTestId('tab-codemap')).toHaveCount(0)
     await expect(page).toHaveScreenshot('codemap-tab-hidden.png')

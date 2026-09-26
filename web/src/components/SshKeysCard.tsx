@@ -45,12 +45,29 @@ export function SshKeysCard({ keys, onChanged }: {
     }
   }
 
+  async function saveLabel(fp: string, label: string) {
+    try {
+      await api(`/api/ssh-keys/${fp}`, { method: 'PUT', body: JSON.stringify({ label }) })
+      onChanged()
+    } catch (err) {
+      setError(errMsg(err))
+    }
+  }
+
   return (
     <div className="flex flex-col gap-2">
       {keys.length === 0 && <p className="text-sm text-muted-foreground">No keys registered.</p>}
       {keys.map((k) => (
         <div key={k.fingerprint} className="flex min-h-[44px] items-center justify-between gap-2 text-sm">
-          <span className="truncate font-mono text-xs" title={k.publicKey}>{k.label || k.fingerprint}</span>
+          <Input
+            type="text"
+            defaultValue={k.label}
+            placeholder="Label"
+            aria-label={`Label for ${k.fingerprint}`}
+            className="min-h-[44px] max-w-32 font-mono text-xs"
+            onBlur={(e) => { if (e.target.value !== k.label) void saveLabel(k.fingerprint, e.target.value) }}
+          />
+          <span className="truncate font-mono text-xs" title={k.publicKey}>{k.fingerprint}</span>
           <Button size="sm" variant="ghost" className="min-h-[44px] text-destructive" onClick={() => deleteKey(k.fingerprint)}>Delete</Button>
         </div>
       ))}

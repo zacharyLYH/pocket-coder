@@ -231,12 +231,12 @@ export async function createProjectViaUI(
   // Fail fast on a stale backend: without the git seed every create 409s
   // with "git not configured" and the UI leaves Clone disabled, which
   // otherwise surfaces as a timeout clicking Clone project.
-  const gitRes = await request.get('/api/git/config')
+  const gitRes = await request.get('/api/git/identities')
   if (gitRes.ok()) {
-    const gitBody = (await gitRes.json()) as { configured?: boolean }
-    if (gitBody.configured === false) {
+    const gitBody = (await gitRes.json()) as { identities?: unknown[] }
+    if ((gitBody.identities ?? []).length === 0) {
       throw new Error(
-        'Git not configured on the backend (/api/git/config configured=false): ' +
+        'Git not configured on the backend (/api/git/identities empty): ' +
           'the stack booted from a state.json without the git block — wipe the data dir and reboot from state.seed.json.',
       )
     }

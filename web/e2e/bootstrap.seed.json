@@ -2,11 +2,15 @@
   "user": {
     "email": "me@example.com"
   },
-  "git": {
-    "name": "E2E",
-    "email": "me@example.com",
-    "token": "e2e-fake-token"
-  },
+  "git_identities": [
+    {
+      "id": "default",
+      "label": "Default",
+      "name": "E2E",
+      "email": "me@example.com",
+      "token": "e2e-fake-token"
+    }
+  ],
   "projects": {
     "e2eboost": {
       "repo": "",

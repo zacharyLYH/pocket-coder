@@ -100,8 +100,8 @@ func main() {
 	svc.SetGit(func() (string, string, string) {
 		var name, email, token string
 		st.View(func(doc *state.Document) {
-			if doc.Git != nil {
-				name, email, token = doc.Git.Name, doc.Git.Email, doc.Git.Token
+			if g := state.FirstGit(doc); g != nil {
+				name, email, token = g.Name, g.Email, g.Token
 			}
 		})
 		return name, email, token
@@ -215,13 +215,13 @@ func smtpFromConfig(cfg *config.Config) *state.SMTP {
 	return &state.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, User: cfg.SMTPUser, Password: cfg.SMTPPass, From: cfg.SMTPFrom}
 }
 
-// aiFromConfig seeds the single global model credential from env. Any part
+// aiFromConfig seeds the shared model list from env. Any part
 // missing means no seed: the settings form fills it later.
-func aiFromConfig(cfg *config.Config) *state.AIConfig {
+func aiFromConfig(cfg *config.Config) *state.AIModel {
 	if cfg.AIBaseURL == "" || cfg.AIAPIKey == "" || cfg.AIModel == "" {
 		return nil
 	}
-	return &state.AIConfig{BaseURL: cfg.AIBaseURL, APIKey: cfg.AIAPIKey, Model: cfg.AIModel}
+	return &state.AIModel{ID: "default", Label: "Default", BaseURL: cfg.AIBaseURL, APIKey: cfg.AIAPIKey, Model: cfg.AIModel}
 }
 
 // newAuthService builds the auth service from state (email + SMTP creds,

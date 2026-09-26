@@ -9,8 +9,8 @@ import type { AIConfigStatus, SSHKey } from '@/lib/types'
 // configured thing never looks missing, and each opens its own dialog
 // so the rows never imply one combined flow. AI status is passed down
 // from Home (single owner) so the row never renders stale.
-export function SetupRows({ sshKeys, gitConfigured, ai, onGit, onKeys }: {
-  sshKeys: SSHKey[]; gitConfigured: boolean; ai: AIConfigStatus | null; onGit: () => void; onKeys: () => void
+export function SetupRows({ sshKeys, gitConfigured, ai, onGit, onKeys, onAi }: {
+  sshKeys: SSHKey[]; gitConfigured: boolean; ai: AIConfigStatus | null; onGit: () => void; onKeys: () => void; onAi: () => void
 }) {
   const [open, setOpen] = useState<'git' | 'ssh' | 'ai' | null>(null)
   const gitLabel = gitConfigured ? 'set' : 'not set'
@@ -38,7 +38,7 @@ export function SetupRows({ sshKeys, gitConfigured, ai, onGit, onKeys }: {
       <Dialog open={open === 'ai'} onOpenChange={(o) => { if (!o) setOpen(null) }}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md">
           <DialogHeader><DialogTitle>AI</DialogTitle></DialogHeader>
-          <AICard />
+          <AICard onChanged={onAi} />
         </DialogContent>
       </Dialog>
     </div>

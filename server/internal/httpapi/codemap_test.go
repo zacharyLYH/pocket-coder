@@ -36,21 +36,23 @@ func readStateFileT(t *testing.T, st *state.Store) []byte {
 	return raw
 }
 
-func TestAIConfigGetEmpty(t *testing.T) {
+func TestAIModelsListEmpty(t *testing.T) {
 	d, pinOut := newTestDeps(t)
 	d.State = mustOpenState(t)
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := authedGet(t, h, cookie, "/api/ai/config")
+	rec := authedGet(t, h, cookie, "/api/ai/models")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get: got %d %q, want 200", rec.Code, rec.Body)
 	}
-	var body map[string]any
+	var body struct {
+		Models []any `json:"models"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["configured"] != false {
-		t.Fatalf("configured = %v, want false", body["configured"])
+	if len(body.Models) != 0 {
+		t.Fatalf("models = %v, want empty", body.Models)
 	}
 }
 
@@ -64,7 +66,7 @@ func TestAISaveRejectsMissingFields(t *testing.T) {
 		`{"baseURL":"","apiKey":"k","model":"m"}`,
 		`not json`,
 	} {
-		rec := authedPost(t, h, cookie, "/api/ai/config", body)
+		rec := authedPost(t, h, cookie, "/api/ai/models", body)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("body %q: got %d %q, want 400", body, rec.Code, rec.Body)
 		}
@@ -81,20 +83,20 @@ func TestAISaveTestsBeforeSaving(t *testing.T) {
 	})
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := authedPost(t, h, cookie, "/api/ai/config",
+	rec := authedPost(t, h, cookie, "/api/ai/models",
 		`{"baseURL":`+strconv.Quote(f.srv.URL)+`,"apiKey":"k","model":"m"}`)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("save: got %d %q, want 502", rec.Code, rec.Body)
 	}
 	var cfg struct {
-		AI *struct{} `json:"ai"`
+		Models []any `json:"ai_models"`
 	}
 	raw := readStateFileT(t, st)
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.AI != nil {
-		t.Fatalf("failed save persisted AI config")
+	if len(cfg.Models) != 0 {
+		t.Fatalf("failed save persisted AI models")
 	}
 }
 
@@ -116,18 +118,23 @@ func TestAISaveSuccess(t *testing.T) {
 	})
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := authedPost(t, h, cookie, "/api/ai/config",
-		`{"baseURL":`+strconv.Quote(f.srv.URL)+`,"apiKey":"k","model":"m"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("save: got %d %q, want 200", rec.Code, rec.Body)
+	rec := authedPost(t, h, cookie, "/api/ai/models",
+		`{"label":"main","baseURL":`+strconv.Quote(f.srv.URL)+`,"apiKey":"k","model":"m"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("save: got %d %q, want 201", rec.Code, rec.Body)
 	}
-	rec = authedGet(t, h, cookie, "/api/ai/config")
-	var body map[string]any
+	rec = authedGet(t, h, cookie, "/api/ai/models")
+	var body struct {
+		Models []struct {
+			Model  string `json:"model"`
+			HasKey bool   `json:"hasKey"`
+		} `json:"models"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["configured"] != true || body["model"] != "m" {
-		t.Fatalf("config after save = %v, want configured=true model=m", body)
+	if len(body.Models) != 1 || !body.Models[0].HasKey || body.Models[0].Model != "m" {
+		t.Fatalf("models after save = %+v, want one redacted m", body.Models)
 	}
 	if ev := lastEvent(t, d); ev.Type != "ai.configured" {
 		t.Fatalf("last event = %q, want ai.configured", ev.Type)
@@ -137,20 +144,32 @@ func TestAISaveSuccess(t *testing.T) {
 func TestAITestEndpointShapes(t *testing.T) {
 	d, pinOut := newTestDeps(t)
 	d.State = mustOpenState(t)
+	f := newFakeModel(t, func(w http.ResponseWriter, body map[string]any) {
+		writeCompletion(w, "stop", `{"ok":true}`, nil)
+	})
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	// Missing fields fall back to empty store: 400, not a model call.
-	rec := authedPost(t, h, cookie, "/api/ai/test", `{"baseURL":"http://x"}`)
+	rec := authedPost(t, h, cookie, "/api/ai/models",
+		`{"label":"m","baseURL":`+strconv.Quote(f.srv.URL)+`,"apiKey":"k","model":"m"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("seed: got %d %q", rec.Code, rec.Body)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	// Partial body on a stored id is a 400, not a model call.
+	rec = authedPost(t, h, cookie, "/api/ai/models/"+created.ID+"/test", `{"baseURL":"http://x"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("partial body: got %d, want 400", rec.Code)
 	}
 	// Provider failure maps to 502 with the detail inline. 400 on purpose:
 	// the SDK retries 503s, which would triple-call the fake.
-	f := newFakeModel(t, func(w http.ResponseWriter, _ map[string]any) {
+	g := newFakeModel(t, func(w http.ResponseWriter, _ map[string]any) {
 		http.Error(w, `{"error":{"message":"overloaded"}}`, http.StatusBadRequest)
 	})
-	rec = authedPost(t, h, cookie, "/api/ai/test",
-		`{"baseURL":`+strconv.Quote(f.srv.URL)+`,"apiKey":"k","model":"m"}`)
+	rec = authedPost(t, h, cookie, "/api/ai/models/"+created.ID+"/test",
+		`{"baseURL":`+strconv.Quote(g.srv.URL)+`,"apiKey":"k","model":"m"}`)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("provider failure: got %d, want 502", rec.Code)
 	}

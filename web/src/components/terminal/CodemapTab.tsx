@@ -15,8 +15,7 @@ import { Avatar } from '@/components/ui/avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Separator } from '@/components/ui/separator'
 import { ApiError, api, errMsg, projectPath } from '@/lib/api'
-import type { CodemapSection, CodemapThread, CodemapThreadSummary, CodemapToolCall, CodemapTurn } from '@/lib/types'
-import { useAiConfig } from '@/hooks/useAiConfig'
+import type { AIConfigStatus, CodemapSection, CodemapThread, CodemapThreadSummary, CodemapToolCall, CodemapTurn } from '@/lib/types'
 import { FileOverlay } from '@/components/terminal/FileOverlay'
 import { CodeBlock } from '@/components/CodeBlock'
 import { Markdown } from '@/components/Markdown'
@@ -106,8 +105,7 @@ function optimisticTitle(q: string): string {
 // per project — listed in the history menu. New chats stay local-only
 // until the first send; the server rebuilds context from the persisted
 // turns on every send.
-export function CodemapTab({ projectId }: { projectId: string }) {
-  const { status: ai } = useAiConfig()
+export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigStatus | null }) {
   const [threads, setThreads] = useState<CodemapThreadSummary[]>([])
   // No localStorage: the server is the source of truth. Mount opens the
   // newest thread (or the running one when remounting into a run); the

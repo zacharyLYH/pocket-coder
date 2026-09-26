@@ -97,6 +97,42 @@ func (s *Store) Delete(email, fingerprint string) error {
 	})
 }
 
+// Update changes a key label. Blind by design: handlers 404 unknown
+// fingerprints via Exists first, so this only ever touches a live row.
+func (s *Store) Update(email, fingerprint, label string) error {
+	return s.st.Mutate(func(doc *state.Document) error {
+		for i, k := range doc.SSHKeys {
+			if k.Email == email && k.Fingerprint == fingerprint {
+				doc.SSHKeys[i].Label = label
+			}
+		}
+		return nil
+	})
+}
+
+// Exists reports whether the fingerprint is registered for email, so
+// handlers can 404 honest misses instead of silently succeeding.
+func (s *Store) Exists(email, fingerprint string) bool {
+	var ok bool
+	s.st.View(func(doc *state.Document) {
+		for _, k := range doc.SSHKeys {
+			if k.Email == email && k.Fingerprint == fingerprint {
+				ok = true
+			}
+		}
+	})
+	return ok
+}
+
+// Check validates a key without saving, returning its fingerprint.
+func Check(publicKey string) (string, error) {
+	publicKey = strings.TrimSpace(publicKey)
+	if publicKey == "" || !looksLikeSSHPubKey(publicKey) {
+		return "", ErrInvalidKey
+	}
+	return fingerprint(publicKey), nil
+}
+
 // AllAuthorizedKeys returns every registered key regardless of owner — the
 // injection set for containers (single-user deployment: one key set).
 func (s *Store) AllAuthorizedKeys() ([]byte, error) {

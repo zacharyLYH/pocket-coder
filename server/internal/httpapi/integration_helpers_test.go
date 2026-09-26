@@ -75,7 +75,7 @@ func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docke
 	}
 	// Creation gate: live tests exercise the pipeline, not setup.
 	if err := st.Mutate(func(doc *state.Document) error {
-		doc.Git = &state.GitConfig{Name: "Test", Email: "test@example.com", Token: "test-token"}
+		doc.GitIDs = []state.GitIdentity{{ID: "default", Label: "Default", Name: "Test", Email: "test@example.com", Token: "test-token"}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)

@@ -60,8 +60,8 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 	// the source of truth on disk is exactly this project — repo only
 	// (branch empty → omitted), nothing else in the document
 	statetest.AssertEqual(t, st.Path(), map[string]any{
-		"user": map[string]any{"email": ""},
-		"git":  map[string]any{"name": "Test", "email": "test@example.com", "token": "test-token"},
+		"user":           map[string]any{"email": ""},
+		"git_identities": []any{map[string]any{"id": "default", "label": "Default", "name": "Test", "email": "test@example.com", "token": "test-token"}},
 		"projects": map[string]any{
 			created.ID: map[string]any{"repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
 		},

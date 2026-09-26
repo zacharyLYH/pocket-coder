@@ -12,6 +12,24 @@ export function projectPath(id: string, suffix = ''): string {
   return `/api/projects/${encodeURIComponent(id)}${suffix}`
 }
 
+// PROBE_TIMEOUT_MS bounds provider probes client-side: the server allows
+// 60s per live check, so this only fires when the answer is already lost
+// and the button would otherwise sit on Testing... forever.
+export const PROBE_TIMEOUT_MS = 90_000
+
+// probeSignal bounds provider probes client-side.
+export function probeSignal(): AbortSignal {
+  return AbortSignal.timeout(PROBE_TIMEOUT_MS)
+}
+
+// probeErr maps a failed probe to a message: stalls surface as a timeout
+// hint instead of a bare DOM error.
+export function probeErr(err: unknown): string {
+  if (err instanceof DOMException && err.name === 'TimeoutError') {
+    return `Timed out after ${PROBE_TIMEOUT_MS / 1000}s. The provider may be slow or unreachable.`
+  }
+  return errMsg(err)
+}
 // ApiError carries the HTTP status and parsed body of a failed call, so
 // callers can recover server-provided identity (e.g. a codemap threadId
 // on a failed turn) instead of only seeing the message.

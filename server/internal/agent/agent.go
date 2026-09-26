@@ -50,10 +50,13 @@ type Tool struct {
 }
 
 // NewClient builds an OpenAI client against any compatible base URL.
-func NewClient(cfg Config) openai.Client {
+// Extra opts override the defaults (the probe passes WithMaxRetries(0)).
+func NewClient(cfg Config, opts ...option.RequestOption) openai.Client {
 	return openai.NewClient(
-		option.WithBaseURL(NormalizeBaseURL(cfg.BaseURL)),
-		option.WithAPIKey(cfg.APIKey),
+		append([]option.RequestOption{
+			option.WithBaseURL(NormalizeBaseURL(cfg.BaseURL)),
+			option.WithAPIKey(cfg.APIKey),
+		}, opts...)...,
 	)
 }
 
@@ -91,7 +94,11 @@ func TestConnection(ctx context.Context, cfg Config) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	client := NewClient(cfg)
+	// No retries: the SDK sleeps uncancellable backoffs between attempts
+	// (honoring Retry-After, e.g. 58s on a 429), so one slow provider can
+	// hold the probe for minutes past this ctx deadline. A 429 surfaces
+	// immediately instead, and the loop keeps retries for real turns.
+	client := NewClient(cfg, option.WithMaxRetries(0))
 	_, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 		Model: cfg.Model,
 		Messages: []openai.ChatCompletionMessageParamUnion{{

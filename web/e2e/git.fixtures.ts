@@ -80,8 +80,8 @@ export async function mockGit(page: Page, opts: { identityEmpty?: boolean; noUps
     return STATE.committed ? { ...base, upstream, files: [] } : { ...base, upstream }
   }
 
-  await page.route('**/api/ai/config', (r) =>
-    r.fulfill({ json: { baseURL: 'https://api.openai.com/v1', model: 'gpt-4o', configured: true } }))
+  await page.route('**/api/ai/models', (r) =>
+    r.fulfill({ json: { models: [{ id: 'm1', label: 'test', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o', hasKey: true }] } }))
   await page.route('**/api/projects/*/sessions*', (r) =>
     r.fulfill({ json: r.request().method() === 'GET' ? { sessions: [{ name: 'main' }] } : { name: 'main' } }))
   await page.route('**/api/projects/*/harnesses', (r) => r.fulfill({ json: { harnesses: [] } }))

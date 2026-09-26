@@ -258,7 +258,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
       )}
       {tab === 'codemap' && (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">
-          <CodemapTab projectId={projectId} />
+          <CodemapTab projectId={projectId} ai={aiStatus} />
         </div>
       )}
       {tab === 'diff' && (

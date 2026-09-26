@@ -67,7 +67,7 @@ Limits lists what the feature cannot do yet, so the butler answers "not availabl
 
 Ordered. Each lands with tests. No big bang. Phase 2 stays out.
 
-1. Lists for models, git, keys. `ai` becomes `ai_models`, `git` becomes `git_identities`, `sshKeys` gains update plus test. Old `GET /api/ai/config` goes away for `/api/ai/models` CRUD plus `/api/ai/models/{id}/test`. Git and SSH match that shape. Keys never render in full. Test runs a live check before save. Example: picker stays disabled when the list is empty. Unit: state migrate plus redaction. Smoke: `go -C server test ./internal/httpapi -run TestAiModels`. E2e: picker bound to same list in codemap and butler.
+1. Lists for models, git, keys. `ai` becomes `ai_models`, `git` becomes `git_identities`, `sshKeys` gains update plus test. Old `GET /api/ai/config` goes away for `/api/ai/models` CRUD plus `/api/ai/models/{id}/test`. Git and SSH match that shape. Keys never render in full. Test runs a live check before save. Example: an empty list disables codemaps until the first model is saved. Unit: lists CRUD plus redaction. Smoke: `go -C server test ./internal/httpapi -run TestAIModels`. E2e: saving the first model enables the codemap tab. The per-feature model picker lands in checkpoint 10, not here.
 
 2. Transcript store. Server stores under `data/butler/<threadID>/` with `manifest.json` plus `N.json` turn files. List sorts by creation time. Delete removes the folder. No cap. No search or export. Example: thread `a1b2` holds `manifest.json` plus `1.json`. Unit: create, get, list order, delete idempotent. Smoke: `go -C server test ./internal/butler -run TestStore`.
 
@@ -84,6 +84,8 @@ Ordered. Each lands with tests. No big bang. Phase 2 stays out.
 8. Sensitive writes. `delete_project`, `create_harness`, `install_harness`, `delete_harness`, `fanout_exec`, `propose_env_fix` with masked field, `switch_model` with one line diff, `save_shortcut`, `save_git_identity`, `add_ssh_key`. Example: "update opencode everywhere" runs `npm i -g opencode-ai@latest` in each picked project only after Confirm. Unit: scope check plus masked value never logs. Smoke: destructive tool needs explicit confirm id. E2e: delete flow shows blast radius before Confirm.
 
 9. Visibility, limits, image, issue. Turn shows collapsed "N steps" row with tool name, args, result summary. Confirm cards stay expanded. Limits answer stays one line, such as "Preview automation is not available." One image per turn, stored beside the thread, deleted with it, vision-less model refuses plainly. Wall case offers a one line issue draft and asks "File this on GitHub?" then one sync create returns the URL. Example: blank preview shot checks `preview_state` before answering. Unit: step row redacts full output, second image rejects, no silent filing. Smoke: image delete cleans folder. E2e: attach button flow plus issue confirm flow.
+
+10. Model picker. The codemap composer and the butler each carry a picker bound to the shared list. No fallback exists. Last picked model wins per feature, or the feature stays disabled when the list is empty. The turn request carries the picked id. Example: codemaps runs gpt-4o for grounding while the butler runs a cheap mini model for briefings. Unit: picker renders from a mocked list. E2e: picking the second model sends its id.
 
 ## Phase 2
 

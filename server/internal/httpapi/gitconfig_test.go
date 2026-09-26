@@ -33,7 +33,7 @@ func fakeGitHub(t *testing.T) {
 func clearGit(t *testing.T, st *state.Store) {
 	t.Helper()
 	if err := st.Mutate(func(doc *state.Document) error {
-		doc.Git = nil
+		doc.GitIDs = nil
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -47,52 +47,27 @@ func TestGitConfigTestThenSave(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	// GET omits the secret and reports unconfigured.
-	rec := authedGet(t, h, cookie, "/api/git/config")
-	var got map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &got)
-	if rec.Code != http.StatusOK || got["configured"] != false || got["hasToken"] != false {
-		t.Fatalf("get unconfigured: %d %v", rec.Code, got)
-	}
-
 	// Bad token: 502, nothing saved.
-	rec = authedPost(t, h, cookie, "/api/git/test", `{"name":"N","email":"n@e.com","token":"bad-token"}`)
+	rec := authedPost(t, h, cookie, "/api/git/identities", `{"label":"w","name":"N","email":"n@e.com","token":"bad-token"}`)
 	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("test bad token: %d %q, want 502", rec.Code, rec.Body)
-	}
-	rec = authedGet(t, h, cookie, "/api/git/config")
-	_ = json.Unmarshal(rec.Body.Bytes(), &got)
-	if got["configured"] != false {
-		t.Fatalf("bad token must not save: %v", got)
+		t.Fatalf("bad token: %d %q, want 502", rec.Code, rec.Body)
 	}
 
-	// Good token tests, then saves.
-	rec = authedPost(t, h, cookie, "/api/git/test", `{"name":"N","email":"n@e.com","token":"good-token"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("test good token: %d %q", rec.Code, rec.Body)
-	}
-	rec = authedPost(t, h, cookie, "/api/git/config", `{"name":"N","email":"n@e.com","token":"good-token"}`)
-	if rec.Code != http.StatusOK {
+	// Good token saves, and the stored secret never renders.
+	rec = authedPost(t, h, cookie, "/api/git/identities", `{"label":"w","name":"N","email":"n@e.com","token":"good-token"}`)
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("save: %d %q", rec.Code, rec.Body)
 	}
-	rec = authedGet(t, h, cookie, "/api/git/config")
+	rec = authedGet(t, h, cookie, "/api/git/identities")
+	var got struct {
+		Identities []map[string]any `json:"identities"`
+	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &got)
-	if got["configured"] != true || got["name"] != "N" || got["hasToken"] != true {
+	if len(got.Identities) != 1 || got.Identities[0]["name"] != "N" || got.Identities[0]["hasToken"] != true {
 		t.Fatalf("get configured: %d %v", rec.Code, got)
 	}
 	if strings.Contains(rec.Body.String(), "good-token") {
 		t.Fatalf("GET must never leak the token: %q", rec.Body)
-	}
-	var name string
-	st.View(func(doc *state.Document) { name = doc.Git.Name })
-	if name != "N" {
-		t.Fatalf("token not persisted, name=%q", name)
-	}
-
-	// Missing fields are a 400, not a live check.
-	rec = authedPost(t, h, cookie, "/api/git/test", `{"name":"N"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("test incomplete: %d, want 400", rec.Code)
 	}
 }
 

@@ -29,7 +29,7 @@ describe('Home run card', () => {
   function renderHome(execBody: unknown) {
     const fetchMock = mockFetch((url) => {
       if (url === '/api/ssh-keys') return { status: 200, body: { keys: [] } }
-      if (url === '/api/git/config') return { status: 200, body: { configured: true } }
+      if (url === '/api/git/identities') return { status: 200, body: { identities: [{ id: 'g1' }] } }
       if (url === '/api/projects/exec') return { status: 200, body: execBody }
       return undefined
     })

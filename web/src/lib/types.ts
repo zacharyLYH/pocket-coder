@@ -32,8 +32,9 @@ export type GitDiffResponse = {
   binary: boolean
 }
 
-export type AIConfigStatus = { baseURL: string; model: string; configured: boolean }
-export type GitConfigStatus = { name: string; email: string; hasToken: boolean; configured: boolean }
+export type AIConfigStatus = { model: string; configured: boolean }
+export type AIModel = { id: string; label: string; baseURL: string; model: string; hasKey: boolean }
+export type GitIdentity = { id: string; label: string; name: string; email: string; hasToken: boolean }
 export type CodemapRef = { path: string; startLine: number; endLine: number; snippet: string; function?: string }
 export type CodemapSection = { title: string; summary: string; refs: CodemapRef[] }
 export type CodemapToolCall = { tool: string; args: string; output?: string; error?: string }

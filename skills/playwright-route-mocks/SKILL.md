@@ -17,7 +17,7 @@ Symptom of the bug: the tail works but stats/errors show live-backend values.
 ## Pattern
 ```ts
 // e2e/<area>.fixtures.ts: canned logs + mock installer
-await page.route('**/api/ai/config', (r) => r.fulfill({ json: { configured: false } }))
+await page.route('**/api/ai/models', (r) => r.fulfill({ json: { models: [] } }))
 await page.route('**/api/projects/*/sessions*', (r) => r.fulfill({ json: { sessions: [{ name: 'main' }] } }))
 await page.route('**/api/projects/*/observe**', (r) => {
   const u = new URL(r.request().url()) // NOTE: r.request().url(), not r.url()

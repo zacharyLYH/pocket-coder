@@ -13,6 +13,8 @@
 package state
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -24,8 +26,8 @@ import (
 type Document struct {
 	User      User               `json:"user"`
 	SMTP      *SMTP              `json:"smtp,omitempty"`
-	AI        *AIConfig          `json:"ai,omitempty"`
-	Git       *GitConfig         `json:"git,omitempty"`
+	AIModels  []AIModel          `json:"ai_models,omitempty"`
+	GitIDs    []GitIdentity      `json:"git_identities,omitempty"`
 	Projects  map[string]Project `json:"projects,omitempty"`  // keyed by project id
 	Harnesses map[string]Harness `json:"harnesses,omitempty"` // keyed by harness slug id
 	SSHKeys   []SSHKey           `json:"sshKeys,omitempty"`
@@ -91,26 +93,49 @@ type Harness struct {
 	Config     json.RawMessage `json:"config,omitempty"`
 }
 
-// AIConfig is the single global OpenAI-compatible credential used by the
-// codemap agent loop. One key only: when it is absent the codemap feature
-// is disabled in both the frontend and the backend.
-type AIConfig struct {
+// AIModel is one entry in the shared model list. API keys never leave
+// the server in full: list responses carry hasKey only.
+type AIModel struct {
+	ID      string `json:"id"`
+	Label   string `json:"label,omitempty"`
 	BaseURL string `json:"baseURL"`
 	APIKey  string `json:"apiKey"`
 	Model   string `json:"model"`
 }
 
-// GitConfig is the single global git identity + HTTPS token (GitHub PAT,
-// repo scope) provisioned into every container. Token never leaves the
-// server: APIs omit it, state.json holds it at 0600 like the AI key.
-type GitConfig struct {
+// GitIdentity is one entry in the shared git list. Tokens never render.
+type GitIdentity struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
 	Name  string `json:"name"`
 	Email string `json:"email"`
 	Token string `json:"token"`
 }
 
-// Valid reports whether the config is complete enough to gate on.
-func (g *GitConfig) Valid() bool { return g != nil && g.Name != "" && g.Email != "" && g.Token != "" }
+// MintID mints a hex id for list entries.
+func MintID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// FirstAIModel returns the head of the shared model list, or nil when empty.
+func FirstAIModel(doc *Document) *AIModel {
+	if len(doc.AIModels) > 0 {
+		return &doc.AIModels[0]
+	}
+	return nil
+}
+
+// FirstGit returns the head of the shared git list, or nil when empty.
+func FirstGit(doc *Document) *GitIdentity {
+	if len(doc.GitIDs) > 0 {
+		return &doc.GitIDs[0]
+	}
+	return nil
+}
 
 // SSHKey is a registered public key, injected into projects for
 // git SSH clones. Fingerprint is derived from PublicKey content.
@@ -126,7 +151,7 @@ type SSHKey struct {
 type Bootstrap struct {
 	LoginEmail string
 	SMTP       *SMTP
-	AI         *AIConfig
+	AI         *AIModel
 }
 
 // Store is the in-memory handle over state.json. All reads go through
@@ -179,8 +204,9 @@ func (s *Store) View(fn func(doc *Document)) {
 }
 
 // Mutate runs fn over a copy of the document under a write lock; when fn
-// succeeds the copy becomes current and is persisted atomically. A failed
-// fn changes nothing on disk or in memory.
+// succeeds the copy is persisted and only then becomes current. A failed
+// fn — or a failed persist — changes nothing on disk or in memory, so a
+// 500 never leaves the two disagreeing about what exists.
 func (s *Store) Mutate(fn func(doc *Document) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -192,8 +218,11 @@ func (s *Store) Mutate(fn func(doc *Document) error) error {
 	if err := fn(&clone); err != nil {
 		return err
 	}
+	if err := s.saveDoc(clone); err != nil {
+		return err
+	}
 	s.doc = clone
-	return s.save()
+	return nil
 }
 
 // normalize guarantees the keyed collections are non-nil for mutation fns,
@@ -221,7 +250,11 @@ func deepcopy(doc Document) (Document, error) {
 }
 
 func (s *Store) save() error {
-	raw, err := json.MarshalIndent(s.doc, "", "  ")
+	return s.saveDoc(s.doc)
+}
+
+func (s *Store) saveDoc(doc Document) error {
+	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -242,7 +275,7 @@ func (s *Store) seed(b Bootstrap) {
 	if b.SMTP != nil && s.doc.SMTP == nil {
 		s.doc.SMTP = b.SMTP
 	}
-	if b.AI != nil && s.doc.AI == nil {
-		s.doc.AI = b.AI
+	if b.AI != nil && len(s.doc.AIModels) == 0 {
+		s.doc.AIModels = []AIModel{*b.AI}
 	}
 }

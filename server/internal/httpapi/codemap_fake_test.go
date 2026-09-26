@@ -76,7 +76,7 @@ func toolCall(id, name, args string) map[string]any {
 func seedAI(t *testing.T, st *state.Store, baseURL string) {
 	t.Helper()
 	if err := st.Mutate(func(doc *state.Document) error {
-		doc.AI = &state.AIConfig{BaseURL: baseURL, APIKey: "k", Model: "m"}
+		doc.AIModels = []state.AIModel{{ID: "default", Label: "Default", BaseURL: baseURL, APIKey: "k", Model: "m"}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)

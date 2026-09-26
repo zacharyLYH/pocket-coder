@@ -66,7 +66,7 @@ export const ERROR_GROUPS = {
 // observe fixture server-side like the Go handler (level/source/type/trace/q
 // + after/before/limit cursors). Initial tail is the last 10 so Load older shows.
 export async function mockNerdy(page: Page) {
-  await page.route('**/api/ai/config', (r) => r.fulfill({ json: { configured: false } }))
+  await page.route('**/api/ai/models', (r) => r.fulfill({ json: { models: [] } }))
   await page.route('**/api/projects/*/sessions*', (r) =>
     r.fulfill({ json: r.request().method() === 'GET' ? { sessions: [{ name: 'main' }] } : { name: 'main' } }))
   await page.route('**/api/projects/*/harnesses', (r) => r.fulfill({ json: { harnesses: [] } }))

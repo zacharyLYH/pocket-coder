@@ -1,6 +1,5 @@
-// Git setup endpoints: the single global git identity + HTTPS token
-// (GitHub PAT, repo scope). Test-then-save, mirroring the AI config
-// pattern. The token never leaves the server: GET omits it.
+// Git identity helpers: validation plus the live token check against the
+// GitHub API. List CRUD lives in lists.go; every save tests first.
 package httpapi
 
 import (
@@ -27,7 +26,11 @@ var gitHTTP = &http.Client{Timeout: 10 * time.Second}
 func gitConfigured(d Deps) bool {
 	var ok bool
 	if d.State != nil {
-		d.State.View(func(doc *state.Document) { ok = doc.Git.Valid() })
+		d.State.View(func(doc *state.Document) {
+			if g := state.FirstGit(doc); g != nil {
+				ok = g.Name != "" && g.Email != "" && g.Token != ""
+			}
+		})
 	}
 	return ok
 }
@@ -79,58 +82,5 @@ func testGitToken(r *http.Request, token string) error {
 		return fmt.Errorf("GitHub rejected the token")
 	default:
 		return fmt.Errorf("GitHub check failed: HTTP %d", res.StatusCode)
-	}
-}
-
-func handleGetGitConfig(d Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var g state.GitConfig
-		if d.State != nil {
-			d.State.View(func(doc *state.Document) {
-				if doc.Git != nil {
-					g = *doc.Git
-				}
-			})
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"name": g.Name, "email": g.Email,
-			"hasToken": g.Token != "", "configured": (&g).Valid(),
-		})
-	}
-}
-
-func handleTestGit(d Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		body, ok := decodeGitBody(w, r)
-		if !ok {
-			return
-		}
-		if err := testGitToken(r, body.Token); err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	}
-}
-
-func handleSaveGitConfig(d Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		body, ok := decodeGitBody(w, r)
-		if !ok {
-			return
-		}
-		if err := testGitToken(r, body.Token); err != nil {
-			writeErr(w, http.StatusBadGateway, "test call failed: "+err.Error())
-			return
-		}
-		if err := d.State.Mutate(func(doc *state.Document) error {
-			doc.Git = &state.GitConfig{Name: body.Name, Email: body.Email, Token: body.Token}
-			return nil
-		}); err != nil {
-			writeInternalErr(w, "save git config", err)
-			return
-		}
-		_, _ = d.Events.Append("git.configured", map[string]any{"name": body.Name, "email": body.Email})
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }

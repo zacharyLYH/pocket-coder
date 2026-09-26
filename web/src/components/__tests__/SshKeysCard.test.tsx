@@ -18,7 +18,7 @@ describe('SshKeysCard', () => {
     expect(screen.getByText('No keys registered.')).toBeInTheDocument()
 
     rerender(<SshKeysCard keys={KEYS} onChanged={() => {}} />)
-    expect(screen.getByText('laptop')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('laptop')).toBeInTheDocument()
     expect(screen.queryByText('No keys registered.')).not.toBeInTheDocument()
   })
 
@@ -57,6 +57,23 @@ describe('SshKeysCard', () => {
     const onChanged = vi.fn()
     render(<SshKeysCard keys={KEYS} onChanged={onChanged} />)
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(onChanged).toHaveBeenCalled())
+  })
+
+  it('saves the label on blur and refreshes', async () => {
+    const fetchMock = mockFetch((url, init) => {
+      if (url === '/api/ssh-keys/sha256-abc' && init?.method === 'PUT') {
+        expect(JSON.parse(String(init.body))).toEqual({ label: 'work' })
+        return { status: 200, body: { ok: true } }
+      }
+      return undefined
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const onChanged = vi.fn()
+    render(<SshKeysCard keys={KEYS} onChanged={onChanged} />)
+    const input = screen.getByLabelText('Label for sha256-abc')
+    fireEvent.change(input, { target: { value: 'work' } })
+    fireEvent.blur(input)
     await waitFor(() => expect(onChanged).toHaveBeenCalled())
   })
 })
