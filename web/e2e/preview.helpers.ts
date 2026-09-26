@@ -266,7 +266,7 @@ export async function openPreviewFromTerminal(page: Page, projectId: string, por
   return previewPage
 }
 
-export async function waitForPreview(page: Page) {
+async function waitForPreview(page: Page) {
   const frame = page.locator('iframe[title="Remote project preview"]')
   await expect(frame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
   const connectBtn = frame.contentFrame().locator('text=Connect')

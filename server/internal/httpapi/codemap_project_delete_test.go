@@ -53,17 +53,7 @@ func TestCodemapDeletedWithProject(t *testing.T) {
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
-	f := newFakeModel(t,
-		func(w http.ResponseWriter, _ map[string]any) {
-			writeCompletion(w, "stop", finalCodemapJSON(), nil)
-		},
-		func(w http.ResponseWriter, _ map[string]any) {
-			writeCompletion(w, "stop", finalCodemapJSON(), nil)
-		},
-		func(w http.ResponseWriter, _ map[string]any) {
-			writeCompletion(w, "stop", finalCodemapJSON(), nil)
-		},
-	)
+	f := newFakeModel(t, respondCodemap, respondCodemap, respondCodemap)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)

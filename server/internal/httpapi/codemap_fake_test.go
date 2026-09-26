@@ -102,6 +102,12 @@ func mockOrientation(md *dockermocks.MockClient, out string) {
 		Return(docker.ExecResult{ExitCode: 0, Output: out}, nil)
 }
 
+// respondCodemap is a fake-model responder that always answers with the
+// final codemap JSON. Pass it N times for an N-attempt script.
+func respondCodemap(w http.ResponseWriter, _ map[string]any) {
+	writeCompletion(w, "stop", finalCodemapJSON(), nil)
+}
+
 // mockHydrate stubs the exact-line reads hydrateRef runs for every
 // returned ref (sed -n). Any fake whose final JSON carries refs needs it.
 func mockHydrate(md *dockermocks.MockClient, out string) {

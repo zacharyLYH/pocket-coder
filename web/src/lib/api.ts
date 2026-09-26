@@ -35,8 +35,8 @@ export function probeErr(err: unknown): string {
 // on a failed turn) instead of only seeing the message.
 export class ApiError extends Error {
   status: number
-  body: any
-  constructor(status: number, body: any, message: string) {
+  body: Record<string, unknown> | null
+  constructor(status: number, body: Record<string, unknown> | null, message: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
@@ -53,10 +53,10 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
   })
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
-    let body: any = null
+    let body: Record<string, unknown> | null = null
     try {
-      body = await res.json()
-      if (body?.error) detail = body.error
+      body = (await res.json()) as Record<string, unknown> | null
+      if (body?.error) detail = String(body.error)
     } catch {
       // non-JSON error body — keep the status
     }

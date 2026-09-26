@@ -1,14 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
 
+import { mockConfigured, mockProject, mockSessions } from './mocks'
 import { terminalUrl } from './helpers'
 
 // Codemap e2e against the real backend with the model mocked at the
 // browser edge: no engine, no API key, no network model needed.
 //
-// The project id is fake on purpose — session endpoints are route-mocked
-// so the terminal pane never dials, and the codemap APIs are route-mocked
-// for the model half. The no-key test uses the REAL /api/ai/models (the
-// seed state carries no key), proving key-less backends hide the tab.
+// The no-key test uses the REAL /api/ai/models (the seed state carries no
+// key), proving key-less backends hide the tab.
 const FAKE_ID = 'e2e/codemap-fake'
 
 const TURN = {
@@ -29,29 +28,6 @@ const FILE_BODY = {
   binary: false,
   moved: false,
   sha: 'abc123',
-}
-
-// mockSessions keeps the terminal pane quiet on a project that does not
-// exist: list + ensure succeed, the WS dial then dies silently (no error
-// banner), and the tab strip renders normally.
-async function mockSessions(page: Page) {
-  await page.route('**/api/projects/*/sessions', async (route) => {
-    if (route.request().method() === 'POST') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ name: 'main' }) })
-    } else {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ name: 'main' }] }) })
-    }
-  })
-}
-
-async function mockConfigured(page: Page) {
-  await page.route('**/api/ai/models', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ models: [{ id: 'm1', label: 'test', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o', hasKey: true }] }),
-    })
-  })
 }
 
 test.describe('codemap desktop', () => {
@@ -79,9 +55,7 @@ test.describe('codemap desktop', () => {
   })
 
   test('codemap prompt renders with a key', async ({ page }) => {
-    await mockSessions(page)
-    await mockConfigured(page)
-    await page.goto(terminalUrl(FAKE_ID, 'main'))
+    await mockProject(page, FAKE_ID)
     await expect(page.getByTestId('tab-codemap')).toBeVisible()
     await page.getByTestId('tab-codemap').click()
     await expect(page.getByTestId('codemap-prompt')).toBeVisible()
@@ -212,10 +186,8 @@ test.describe('codemap desktop', () => {
   }
 
   test('previous chats list renders', async ({ page }) => {
-    await mockSessions(page)
-    await mockConfigured(page)
+    await mockProject(page, FAKE_ID)
     await mockThreads(page)
-    await page.goto(terminalUrl(FAKE_ID, 'main'))
     await page.getByTestId('tab-codemap').click()
     // Mount auto-opens the newest chat; the drawer lists every chat.
     await expect(page.getByTestId('codemap-turn')).toBeVisible()
@@ -228,10 +200,8 @@ test.describe('codemap desktop', () => {
   })
 
   test('reopened previous chat renders its turns', async ({ page }) => {
-    await mockSessions(page)
-    await mockConfigured(page)
+    await mockProject(page, FAKE_ID)
     await mockThreads(page)
-    await page.goto(terminalUrl(FAKE_ID, 'main'))
     await page.getByTestId('tab-codemap').click()
     await expect(page.getByTestId('codemap-turn')).toBeVisible()
     await page.getByTestId('codemap-history-toggle').click()
@@ -246,10 +216,8 @@ test.describe('codemap desktop', () => {
   })
 
   test('delete chat removes it from the menu', async ({ page }) => {
-    await mockSessions(page)
-    await mockConfigured(page)
+    await mockProject(page, FAKE_ID)
     await mockThreads(page)
-    await page.goto(terminalUrl(FAKE_ID, 'main'))
     await page.getByTestId('tab-codemap').click()
     // Newest chat auto-opens; delete it from the menu.
     await expect(page.getByTestId('codemap-turn')).toBeVisible()
@@ -384,7 +352,8 @@ test.describe('codemap desktop', () => {
     await expect(page.getByTestId('codemap-prompt')).toBeEnabled({ timeout: 20000 })
   })
 
-  test('crashed placeholder renders failed with enabled retry', async ({ page }) => {    await mockSessions(page)
+  test('crashed placeholder renders failed with enabled retry', async ({ page }) => {
+    await mockSessions(page)
     await mockConfigured(page)
     const TID = 'ab12cd34ef56ab78cd90ef13'
     const SUMMARY = {
@@ -446,9 +415,7 @@ test.describe('codemap phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
 
   test('codemap prompt renders on phone', async ({ page }) => {
-    await mockSessions(page)
-    await mockConfigured(page)
-    await page.goto(terminalUrl(FAKE_ID, 'main'))
+    await mockProject(page, FAKE_ID)
     await page.getByTestId('tab-codemap').click()
     await expect(page.getByTestId('codemap-prompt')).toBeVisible()
     await expect(page).toHaveScreenshot('codemap-prompt-phone.png', { fullPage: true })

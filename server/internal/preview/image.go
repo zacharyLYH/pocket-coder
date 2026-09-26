@@ -1,8 +1,6 @@
 package preview
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	_ "embed"
 	"errors"
@@ -32,20 +30,8 @@ func ensureBrowserImage(ctx context.Context, d imageRuntime, image string) error
 }
 
 func browserContext() io.Reader {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	files := []struct {
-		name string
-		mode int64
-		data []byte
-	}{
-		{"Dockerfile", 0o644, browserDockerfile},
-		{"start-browser", 0o755, browserStartScript},
-	}
-	for _, file := range files {
-		_ = tw.WriteHeader(&tar.Header{Name: file.name, Mode: file.mode, Size: int64(len(file.data))})
-		_, _ = tw.Write(file.data)
-	}
-	_ = tw.Close()
-	return &buf
+	return docker.TarFiles(
+		docker.TarFile{Name: "Dockerfile", Mode: 0o644, Data: browserDockerfile},
+		docker.TarFile{Name: "start-browser", Mode: 0o755, Data: browserStartScript},
+	)
 }

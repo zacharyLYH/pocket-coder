@@ -20,7 +20,7 @@ func butlerPost(t *testing.T, h http.Handler, cookie *http.Cookie, body string, 
 
 // Full turn round-trip with the model faked at HTTP: POST streams SSE
 // status lines then the final JSON; the transcript persists globally.
-// Framing order is pinned via splitSSEBody (shared contract in sse.go).
+// Framing order is pinned via splitSSEBody (shared contract in sse_test.go).
 func TestButlerTurnRoundTrip(t *testing.T) {
 	d, _, pinOut, st := newSessionDeps(t)
 	f := newFakeModel(t,

@@ -60,14 +60,6 @@ type Group struct {
 	SampleMsg   string    `json:"sampleMsg"`
 }
 
-// CpuPercent mirrors the docker calc so it is unit-testable without an engine.
-func CpuPercent(cpuDelta, sysDelta float64, cpus int) float64 {
-	if sysDelta <= 0 || cpus <= 0 {
-		return 0
-	}
-	return cpuDelta / sysDelta * float64(cpus) * 100
-}
-
 // Template strips volatile tokens so equal failures group together.
 func Template(msg string) string {
 	s := ipRe.ReplaceAllString(msg, "<ip>")

@@ -280,8 +280,12 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
       )
       await adoptResult(sendThreadId, d)
     } catch (e) {
-      if (e instanceof ApiError && e.body?.threadId) {
-        await adoptResult(sendThreadId, { threadId: e.body.threadId, threadTitle: e.body.threadTitle })
+      const failed = e instanceof ApiError ? e.body : null
+      if (failed && typeof failed.threadId === 'string') {
+        await adoptResult(sendThreadId, {
+          threadId: failed.threadId,
+          threadTitle: typeof failed.threadTitle === 'string' ? failed.threadTitle : undefined,
+        })
       }
       if (e instanceof ApiError && e.status === 409) {
         void loadThreads()

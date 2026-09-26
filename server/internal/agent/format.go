@@ -39,6 +39,7 @@ func formatResult(ctx context.Context, client openai.Client, cfg Config, schemaN
 	if lin != nil {
 		lin.PrunedTier1Data = snapshot
 	}
+	snapRaw, _ := jsonOf(snapshot)
 	fparams := openai.ChatCompletionNewParams{
 		Model: cfg.Model,
 		Messages: []openai.ChatCompletionMessageParamUnion{{
@@ -47,7 +48,7 @@ func formatResult(ctx context.Context, client openai.Client, cfg Config, schemaN
 			},
 		}, {
 			OfUser: &openai.ChatCompletionUserMessageParam{
-				Content: openai.ChatCompletionUserMessageParamContentUnion{OfString: openai.String(mustJSON(snapshot))},
+				Content: openai.ChatCompletionUserMessageParamContentUnion{OfString: openai.String(string(snapRaw))},
 			},
 		}},
 		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
@@ -101,9 +102,4 @@ func formatResult(ctx context.Context, client openai.Client, cfg Config, schemaN
 		ev.Payload = payloadOf(responseRaw)
 	})
 	return formatted, nil
-}
-
-func mustJSON(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
 }

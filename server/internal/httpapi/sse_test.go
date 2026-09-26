@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -72,4 +73,40 @@ func TestSSESplitCRLF(t *testing.T) {
 	if len(statuses) != 1 || final["answer"] != "hi" {
 		t.Fatalf("crlf: statuses=%v final=%v", statuses, final)
 	}
+}
+
+// splitSSEBody is the test contract: every "data:" line parses as a status,
+// exactly one trailing bare-JSON line parses as the final. Used by handler
+// tests to pin order, not just substring presence.
+func splitSSEBody(t interface {
+	Helper()
+	Fatalf(string, ...any)
+}, body string) (statuses []map[string]any, final map[string]any) {
+	t.Helper()
+	var finals []string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "data:") {
+			var s map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))), &s); err != nil {
+				t.Fatalf("bad status line %q: %v", line, err)
+			}
+			statuses = append(statuses, s)
+			continue
+		}
+		var v map[string]any
+		if err := json.Unmarshal([]byte(trimmed), &v); err != nil {
+			t.Fatalf("bad final line %q: %v", line, err)
+		}
+		finals = append(finals, trimmed)
+		// Keep the last parseable object; error bodies also parse.
+		final = v
+	}
+	if len(finals) != 1 {
+		t.Fatalf("want exactly 1 final line, got %d in %q", len(finals), body)
+	}
+	return statuses, final
 }

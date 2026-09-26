@@ -12,10 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/mock"
-
-	authmocks "pcoder/mocks/auth"
 )
 
 const testSecret = "0123456789abcdef0123456789abcdef"
@@ -216,14 +212,25 @@ func TestMiddleware(t *testing.T) {
 	}
 }
 
-// TestMailerMocked proves the mockery mock substitutes for a real mailer.
+// TestMailerMocked proves any Mailer substitutes for a real one: one
+// method, so a hand struct beats the generated mock.
 func TestMailerMocked(t *testing.T) {
-	m := authmocks.NewMockMailer(t)
-	m.EXPECT().SendPIN(context.Background(), "me@example.com", mock.Anything).Return(nil)
+	m := mailerFunc(func(_ context.Context, email, pin string) error {
+		if email != "me@example.com" || pin == "" {
+			t.Errorf("SendPIN(%q, %q)", email, pin)
+		}
+		return nil
+	})
 	svc := New("me@example.com", []byte(testSecret), m)
 	if err := svc.RequestPIN(context.Background(), "me@example.com"); err != nil {
 		t.Fatalf("request pin: %v", err)
 	}
+}
+
+type mailerFunc func(ctx context.Context, email, pin string) error
+
+func (f mailerFunc) SendPIN(ctx context.Context, email, pin string) error {
+	return f(ctx, email, pin)
 }
 
 // SetCookie must mark the session cookie Secure whenever the request arrived

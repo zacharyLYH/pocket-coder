@@ -45,7 +45,6 @@ export function ThemeToggle() {
       size="sm"
       onClick={() => setDark(!dark)}
       aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
-      data-testid="theme-toggle"
     >
       {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
     </Button>

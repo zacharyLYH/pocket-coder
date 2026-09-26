@@ -381,7 +381,7 @@ func parseListeningPorts(output string) []map[string]any {
 				p, err := strconv.Atoi(field[i+1:])
 				if err == nil && p > 0 && p < 65536 && !seen[p] && !sidecarPorts[p] {
 					seen[p] = true
-					slots = append(slots, map[string]any{"port": p, "status": "live"})
+					slots = append(slots, map[string]any{"port": p})
 				}
 			}
 		}

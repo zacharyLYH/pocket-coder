@@ -78,7 +78,7 @@ func AssertSection(t *testing.T, path, section string, want any) {
 	wantNorm := normalizeValue(t, want)
 	if !reflect.DeepEqual(gotSection, wantNorm) {
 		t.Fatalf("state.json %q section does not match\n--- got ---\n%s\n--- want ---\n%s",
-			section, prettyValue(gotSection), prettyValue(wantNorm))
+			section, pretty(gotSection), pretty(wantNorm))
 	}
 }
 
@@ -125,5 +125,3 @@ func pretty(v any) string {
 	}
 	return string(raw)
 }
-
-func prettyValue(v any) string { return pretty(v) }

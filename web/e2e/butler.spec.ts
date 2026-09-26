@@ -1,32 +1,12 @@
 import { expect, test, type Page } from '@playwright/test'
 
-import { terminalUrl } from './helpers'
+import { mockProject } from './mocks'
 
 // Butler e2e with the model mocked at the browser edge (same shape as
 // codemap.spec.ts): the project id is fake, sessions + ai/models +
 // butler routes are mocked, SSE turn body streams status then final JSON.
 const FAKE_ID = 'e2e/butler-fake'
 const TID = 'ab12cd34ef56ab78cd90ef13'
-
-async function mockSessions(page: Page) {
-  await page.route('**/api/projects/*/sessions', async (route) => {
-    if (route.request().method() === 'POST') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ name: 'main' }) })
-    } else {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ name: 'main' }] }) })
-    }
-  })
-}
-
-async function mockConfigured(page: Page) {
-  await page.route('**/api/ai/models', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ models: [{ id: 'm1', label: 'test', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o', hasKey: true }] }),
-    })
-  })
-}
 
 async function mockButler(page: Page, opts?: { answer?: string; turnDelayMs?: number }) {
   const answer = opts?.answer ?? 'All three projects are healthy.'
@@ -91,10 +71,8 @@ test.describe('butler desktop', () => {
   })
 
   test('project hint chip shows and clears', async ({ page }) => {
-    await mockSessions(page)
-    await mockConfigured(page)
+    await mockProject(page, FAKE_ID)
     await mockButler(page)
-    await page.goto(terminalUrl(FAKE_ID, 'main'))
     await page.getByTestId('butler-fab').click()
     await expect(page.getByTestId('butler-hint')).toContainText(`looking at: ${FAKE_ID}`)
     await page.getByTestId('butler-hint-clear').click()
@@ -102,10 +80,8 @@ test.describe('butler desktop', () => {
   })
 
   test('turn round-trip renders answer', async ({ page }) => {
-    await mockSessions(page)
-    await mockConfigured(page)
+    await mockProject(page, FAKE_ID)
     await mockButler(page, { answer: 'All three projects are healthy.', turnDelayMs: 800 })
-    await page.goto(terminalUrl(FAKE_ID, 'main'))
     await page.getByTestId('butler-fab').click()
     await page.getByTestId('butler-prompt').fill('Brief me')
     await page.getByTestId('butler-send').click()

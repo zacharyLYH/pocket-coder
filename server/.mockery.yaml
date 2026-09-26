@@ -8,9 +8,6 @@ issue-845-fix: true
 dir: "mocks/{{.PackageName}}"
 outpkg: "mocks"
 packages:
-  pcoder/internal/auth:
-    interfaces:
-      Mailer:
   pcoder/internal/docker:
     interfaces:
       Client:

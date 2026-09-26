@@ -237,7 +237,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           would detach from the session and dispose xterm, so returning
           would re-ensure, redial, and lose scrollback. */}
       {tab === 'terminal' && shortcutError && (
-        <p className="mx-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs break-all text-destructive" data-testid="sc-inject-error">{shortcutError}</p>
+        <p className="mx-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs break-all text-destructive">{shortcutError}</p>
       )}
       <ShortcutsModal projectId={projectId} open={shortcutsOpen} onOpenChange={setShortcutsOpen} onRun={(s) => void runShortcut(s)} />
       <div className={`min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl touch-manipulation ${tab === 'terminal' ? '' : 'hidden'}`}>

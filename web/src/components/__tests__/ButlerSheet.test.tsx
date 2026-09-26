@@ -5,6 +5,12 @@ import { mockFetch } from '@/test/mockFetch'
 
 const THREAD = 'ab12cd34ef56ab78cd90ef13'
 
+// sseTurn builds one streamed turn body: status lines, then the final JSON.
+function sseTurn(statuses: string[]): string {
+  return statuses.map((s) => `data: ${s}\n\n`).join('') +
+    `{"threadId":"${THREAD}","threadTitle":"Brief me","turnId":"t1","answer":"All healthy.","steps":[],"time":"2026-09-02T10:00:00Z"}\n`
+}
+
 function mockAll(sseBody: string) {
   const fetchMock = mockFetch((url, init) => {
     if (url === '/api/butler/threads' && (!init?.method || init.method === 'GET'))
@@ -35,7 +41,7 @@ describe('ButlerSheet', () => {
   })
 
   it('sends a turn, streams status, and renders the answer', async () => {
-    mockAll('data: {"tool":"model","status":"running"}\n\n{"threadId":"' + THREAD + '","threadTitle":"Brief me","turnId":"t1","answer":"All healthy.","steps":[],"time":"2026-09-02T10:00:00Z"}\n')
+    mockAll(sseTurn(['{"tool":"model","status":"running"}']))
     render(<ButlerSheet projectHint={null} onClearHint={vi.fn()} onClose={vi.fn()} />)
     await screen.findByTestId('butler-sheet')
     fireEvent.change(screen.getByTestId('butler-prompt'), { target: { value: 'Brief me' } })
@@ -61,7 +67,7 @@ describe('ButlerSheet', () => {
     // The stream hasn't resolved: optimistic prompt + pending skeleton show.
     await waitFor(() => expect(screen.getByTestId('butler-pending')).toBeInTheDocument())
     resolveTurn(new Response(
-      'data: {"tool":"model","status":"running"}\n\ndata: {"tool":"done","status":"answered"}\n\n{"threadId":"' + THREAD + '","threadTitle":"Brief me","turnId":"t1","answer":"All healthy.","steps":[],"time":"2026-09-02T10:00:00Z"}\n',
+      sseTurn(['{"tool":"model","status":"running"}', '{"tool":"done","status":"answered"}']),
       { status: 200 },
     ))
     await waitFor(() => expect(screen.getByTestId('butler-answer')).toHaveTextContent('All healthy.'))

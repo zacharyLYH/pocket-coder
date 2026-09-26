@@ -29,18 +29,10 @@ type Reader interface {
 
 // Log appends events to a JSONL file. Safe for concurrent use.
 type Log struct {
-	mu       sync.Mutex
-	path     string
-	file     *os.File
-	id       int64 // last written id
-	onAppend func(typ string, data map[string]any)
-}
-
-// SetOnAppend registers a callback that fires on every appended event.
-func (l *Log) SetOnAppend(fn func(typ string, data map[string]any)) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.onAppend = fn
+	mu   sync.Mutex
+	path string
+	file *os.File
+	id   int64 // last written id
 }
 
 // Open opens the log for appending, creating it if needed. The next id
@@ -77,9 +69,6 @@ func (l *Log) Append(typ string, data map[string]any) (Event, error) {
 	}
 	if _, err := l.file.Write(append(line, '\n')); err != nil {
 		return Event{}, fmt.Errorf("append event: %w", err)
-	}
-	if l.onAppend != nil {
-		l.onAppend(typ, data)
 	}
 	return e, nil
 }

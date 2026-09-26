@@ -191,15 +191,6 @@ func TestSourceFacet(t *testing.T) {
 	}
 }
 
-func TestCpuDelta(t *testing.T) {
-	if got := CpuPercent(200, 1000, 4); got != 80 {
-		t.Fatalf("cpu = %v, want 80", got)
-	}
-	if CpuPercent(1, 0, 4) != 0 || CpuPercent(1, 1, 0) != 0 {
-		t.Fatal("zero guards failed")
-	}
-}
-
 func TestTraceMiddleware(t *testing.T) {
 	var got string
 	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

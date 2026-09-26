@@ -136,7 +136,3 @@ export async function mockGit(page: Page, opts: { identityEmpty?: boolean; noUps
   await page.route('**/api/projects/*/git/explain', (r) =>
     r.fulfill({ json: { threadId: 'thre-1234', threadTitle: 'Changes walkthrough' } }))
 }
-
-export function terminalUrl(id: string, session: string): string {
-  return `/projects/${encodeURIComponent(id)}/terminal/${encodeURIComponent(session)}`
-}

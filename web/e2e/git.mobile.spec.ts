@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
-import { mockGit, resetGitState, terminalUrl, PROJECT } from './git.fixtures'
+import { mockGit, resetGitState, PROJECT } from './git.fixtures'
+import { terminalUrl } from './helpers'
 
 // Mobile Git tab (390x844): route-mocked, no engine. Review → context
 // expansion → commit → push → AI description, plus push-failure,

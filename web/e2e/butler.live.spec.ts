@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 
+import { mockSessions } from './mocks'
 import { terminalUrl } from './helpers'
 
 // Butler LIVE-backend e2e: everything is real — Go server, transcript
@@ -32,18 +33,6 @@ const ANSWER =
   '- worker has 0 sessions and no open previews; disk free 41 GB, uptime 6 days.\n' +
   '\n' +
   'Suggested next step: open api and run git pull, then restart its preview.'
-
-// mockSessions keeps the terminal pane quiet on a project that does not
-// exist (same as butler.spec.ts): UI scaffolding only, not the feature.
-async function mockSessions(page: Page) {
-  await page.route('**/api/projects/*/sessions', async (route) => {
-    if (route.request().method() === 'POST') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ name: 'main' }) })
-    } else {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ name: 'main' }] }) })
-    }
-  })
-}
 
 type ToolCall = { id: string; type: string; function: { name: string; arguments: string } }
 

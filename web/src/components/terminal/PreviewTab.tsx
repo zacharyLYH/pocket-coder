@@ -6,14 +6,14 @@ import { Separator } from '@/components/ui/separator'
 import { api, errMsg, projectPath } from '@/lib/api'
 
 export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; onOpenPreview: () => void }) {
-  const [ports, setPorts] = useState<{ port: number; status: string }[]>([])
+  const [ports, setPorts] = useState<{ port: number }[]>([])
   const [loadingPort, setLoadingPort] = useState<number | null>(null)
   const [readyPort, setReadyPort] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
-      const d = await api<{ ports: { port: number; status: string }[] }>(projectPath(projectId, '/preview/ports'))
+      const d = await api<{ ports: { port: number }[] }>(projectPath(projectId, '/preview/ports'))
       setPorts(d.ports ?? [])
     } catch {
       // Keep the last-known list: a transient probe failure shouldn't
