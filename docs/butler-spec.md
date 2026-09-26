@@ -63,6 +63,28 @@ This file follows the feature template: Goal, Bounds, Tools, UI, Limits, Tests. 
 
 Limits lists what the feature cannot do yet, so the butler answers "not available" instead of guessing. The guide carries the list. Current entries: no token streaming, one image per turn, no vision fallback, no preview automation, no log tail ingestion, no transcript search or export, no undo for applied writes. When a user hits one, the butler names the limit in one line.
 
+## Phase 1 checkpoints
+
+Ordered. Each lands with tests. No big bang. Phase 2 stays out.
+
+1. Lists for models, git, keys. `ai` becomes `ai_models`, `git` becomes `git_identities`, `sshKeys` gains update plus test. Old `GET /api/ai/config` goes away for `/api/ai/models` CRUD plus `/api/ai/models/{id}/test`. Git and SSH match that shape. Keys never render in full. Test runs a live check before save. Example: picker stays disabled when the list is empty. Unit: state migrate plus redaction. Smoke: `go -C server test ./internal/httpapi -run TestAiModels`. E2e: picker bound to same list in codemap and butler.
+
+2. Transcript store. Server stores under `data/butler/<threadID>/` with `manifest.json` plus `N.json` turn files. List sorts by creation time. Delete removes the folder. No cap. No search or export. Example: thread `a1b2` holds `manifest.json` plus `1.json`. Unit: create, get, list order, delete idempotent. Smoke: `go -C server test ./internal/butler -run TestStore`.
+
+3. Sheet shell. One `ButlerSheet` serves Home and project. Bot button floats bottom right. Bottom sheet on mobile, right drawer on desktop. Global thread list, project hint chip such as "looking at: api" with clear, empty chips "Wire my key", "Brief me", "New shortcut", composer at bottom. No backend yet, mocked fetch. Example: tap "Brief me" fills the composer. Unit: vitest render with mockFetch. E2e: `web/e2e/butler.shell.spec.ts` checks button opens sheet on Home and project.
+
+4. Turn round trip. `POST /api/butler/turns` returns one 200 with the final answer. SSE streams one line per tool start and finish while the turn runs. Loop caps at 6 steps. No action without a user message. No background work. Example: "brief me" streams "checked 3 projects" then returns a summary. Unit: loop cap plus SSE order. Smoke: POST with fake model returns 200. E2e: pending turn shows status lines under it.
+
+5. Read tools. `list_projects`, `project_detail`, `list_sessions`, `preview_state`, `git_meta`, `events_tail`, `health`, `harness_inventory`, `env_names`, `config_status`. Names and counts only, no paths, no hunks, no secret values. Example: "brief me" chains `list_projects` plus `events_tail` then stops. Unit: each tool against fakes. Smoke: `go -C server test ./internal/butler -run TestReadTools`. E2e: mocked read flow renders one summary.
+
+6. Bounds wall. No `/workspace/repo`, no file content, no diff hunks, no `tmux capture-pane`, no `tmux load-buffer`, no app source, no secret values. Repo path in a tool call fails. Code ask refuses and points at Codemap. Example: "read main.go" gets "I cannot read code. Open the Codemap tab." Unit: denied path fails. Smoke: test pins the refusal string. E2e: chat shows refusal plus redirect.
+
+7. Confirm card and safe writes. Writes need a Confirm tap, no typed confirm. Card states blast radius. This checkpoint covers `create_project`, `start`, `stop`, `restart`, `session_create`, `session_kill`, `session_restart`, `session_rename`, `preview_start`, `preview_close`, `git_pull`, `git_push`, `git_switch`. Example: "Delete project api? This removes the container and 3 sessions. Volumes stay." Unit: write without confirm never runs. Smoke: confirm then apply, discard does nothing. E2e: card shows old and new value with Confirm and Discard.
+
+8. Sensitive writes. `delete_project`, `create_harness`, `install_harness`, `delete_harness`, `fanout_exec`, `propose_env_fix` with masked field, `switch_model` with one line diff, `save_shortcut`, `save_git_identity`, `add_ssh_key`. Example: "update opencode everywhere" runs `npm i -g opencode-ai@latest` in each picked project only after Confirm. Unit: scope check plus masked value never logs. Smoke: destructive tool needs explicit confirm id. E2e: delete flow shows blast radius before Confirm.
+
+9. Visibility, limits, image, issue. Turn shows collapsed "N steps" row with tool name, args, result summary. Confirm cards stay expanded. Limits answer stays one line, such as "Preview automation is not available." One image per turn, stored beside the thread, deleted with it, vision-less model refuses plainly. Wall case offers a one line issue draft and asks "File this on GitHub?" then one sync create returns the URL. Example: blank preview shot checks `preview_state` before answering. Unit: step row redacts full output, second image rejects, no silent filing. Smoke: image delete cleans folder. E2e: attach button flow plus issue confirm flow.
+
 ## Phase 2
 
 Usage stats land on the nerdy stuff page, not in the butler sheet. Inference time split by codemaps and butler, time per harness from session age, token counts where the provider reports them, lines changed over time from diff numstat. Reads come from the event log plus harness-native records. No new collection exists. The butler reads the same numbers when asked "how much am I using?"
