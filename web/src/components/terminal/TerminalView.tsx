@@ -35,6 +35,34 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   const [tab, setTab] = useState<'terminal' | FixedView>('terminal')
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [shortcutError, setShortcutError] = useState<string | null>(null)
+  // Terminal zoom: persisted per device, 10–20px. Smaller fits more.
+  const [fontSize, setFontSize] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem('pcoder-term-fontsize'))
+      if (Number.isFinite(saved) && saved >= 10 && saved <= 20) return saved
+    } catch {
+      // storage unavailable — fall through to default
+    }
+    return 14
+  })
+  function saveFontSize(next: number) {
+    try {
+      localStorage.setItem('pcoder-term-fontsize', String(next))
+    } catch {
+      // storage unavailable — zoom still applies for this session
+    }
+  }
+  function zoom(delta: number) {
+    setFontSize((n) => {
+      const next = Math.min(20, Math.max(10, n + delta))
+      saveFontSize(next)
+      return next
+    })
+  }
+  function zoomReset() {
+    saveFontSize(14)
+    setFontSize(14)
+  }
   const hostRef = useRef<HTMLDivElement>(null)
   // The Codemap tab only exists once a model key is configured. Hidden
   // until the config loads so key-less backends never show it.
@@ -175,10 +203,14 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           current={current}
           status={status}
           view={tab}
+          fontSize={fontSize}
           onBack={onBack}
           onRestart={restart}
           onRename={rename}
           onKill={kill}
+          onZoomIn={() => zoom(1)}
+          onZoomOut={() => zoom(-1)}
+          onZoomReset={zoomReset}
         />
       </div>
       <TerminalTabs
@@ -213,6 +245,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           projectId={projectId}
           session={current}
           redial={redial}
+          fontSize={fontSize}
           hostRef={hostRef}
           onStatus={setStatus}
           onError={setError}

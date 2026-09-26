@@ -149,22 +149,17 @@ func Slug(name string) string {
 // Where each records usage in its container's home volume (harvested by the
 // observability page, read by the secretary later): opencode → its storage
 // dir under ~/.local/share/opencode; cline → ~/.clinerules/ history; freebuff
-// freebuff → its own state dir under ~. Terminal/bash records nothing.
+// freebuff → its own state dir under ~; codex → ~/.codex; claude → ~/.claude;
+// pi → ~/.pi; kiro → ~/.kiro. Terminal/bash records nothing.
 // Credentials live in each CLI's native config file: users paste their
 // config (configPath + config on the plugin, or edit it later) once.
-//
-// The two demo plugins exist so the platform's stories are visible from the
-// "+ New Session" picker with zero setup: Vi Demo is a real full-screen TUI;
-// Crasher Demo installs a CLI that validates fine, then exits 9 two seconds
-// in — showing the `[crasher exited: 9]` failure line.
 var builtins = []Harness{
 	{Name: "Terminal", Command: "bash"},
 	{Name: "OpenCode", Command: "opencode", Install: "npm i -g opencode-ai"},
+	{Name: "Codex", Command: "codex", Install: "npm i -g @openai/codex"},
+	{Name: "Claude", Command: "claude", Install: "npm i -g @anthropic-ai/claude-code"},
 	{Name: "Freebuff", Command: "freebuff", Install: "npm i -g freebuff && freebuff --version || true"},
 	{Name: "Cline", Command: "cline", Install: "npm i -g cline"},
-	{Name: "Vi Demo", Command: "vi notes.txt"},
-	{Name: "Crasher Demo", Command: "crasher", Install: demoCrasherInstall},
+	{Name: "Pi", Command: "pi", Install: "npm install -g --ignore-scripts @earendil-works/pi-coding-agent"},
+	{Name: "Kiro", Command: "kiro-cli", Install: "curl -fsSL https://cli.kiro.dev/install | bash"},
 }
-
-// demoCrasherInstall writes the fake CLI the Crasher Demo harness runs.
-const demoCrasherInstall = `printf '#!/bin/sh\nif [ $# -gt 0 ]; then echo "crasher 1.0"; exit 0; fi\necho "about to crash"\nsleep 2\nexit 9\n' > /usr/local/bin/crasher && chmod +x /usr/local/bin/crasher`

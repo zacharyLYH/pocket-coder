@@ -15,7 +15,7 @@ const HARNESS_RESPONSE = {
   harnesses: [
     { id: 'terminal', name: 'Terminal', command: 'bash' },
     { id: 'opencode', name: 'OpenCode', command: 'opencode', install: 'npm i -g opencode-ai' },
-    { id: 'vi-demo', name: 'Vi Demo', command: 'vi notes.txt' },
+    { id: 'localtool', name: 'Local Tool', command: 'localtool' },
   ],
 }
 
@@ -137,6 +137,43 @@ describe('HarnessesCard', () => {
     fireEvent.change(within(dialog).getByPlaceholderText('Command (e.g. my-agent)'), { target: { value: 'mine' } })
     fireEvent.click(dialogSubmit())
     expect(await screen.findByText('Mine')).toBeInTheDocument()
+  })
+
+  it('shows an Update button when the check finds a newer version', async () => {
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/harnesses') return { status: 200, body: HARNESS_RESPONSE }
+      if (url === '/api/harnesses/opencode/update-check') {
+        return { status: 200, body: { current: '0.9.0', latest: '0.10.0', updateAvailable: true } }
+      }
+      if (url === '/api/harnesses/opencode/install') {
+        return { status: 200, body: { results: [{ project: 'x/alpha', status: 'ok' }] } }
+      }
+      return undefined
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<HarnessesCard projects={[{ id: 'x/alpha', harnesses: ['opencode'] }]} />)
+
+    // badge shows the upgrade path, Update opens the picker pre-checked
+    expect(await screen.findByTestId('harness-update-badge-opencode')).toHaveTextContent('0.9.0 → 0.10.0')
+    fireEvent.click(screen.getByTestId('harness-update-opencode'))
+    fireEvent.click(screen.getByRole('button', { name: /Update in 1 project/ }))
+
+    await screen.findByText('Applied to 1 project.')
+    const call = fetchMock.mock.calls.find(([u]) => String(u).includes('/install'))
+    expect(JSON.parse(String(call![1]?.body)).projectIds).toEqual(['x/alpha'])
+  })
+
+  it('stays silent when the check is unavailable', async () => {
+    vi.stubGlobal('fetch', mockFetch((url) => {
+      if (url === '/api/harnesses') return { status: 200, body: HARNESS_RESPONSE }
+      if (url.includes('/update-check')) return { status: 409, body: { error: 'start a project first' } }
+      return undefined
+    }))
+    render(<HarnessesCard projects={[{ id: 'x/alpha', harnesses: ['opencode'] }]} />)
+
+    await screen.findByText('OpenCode')
+    await waitFor(() => expect(screen.getByText('Installed')).toBeInTheDocument())
+    expect(screen.queryByTestId('harness-update-opencode')).not.toBeInTheDocument()
   })
 })
 

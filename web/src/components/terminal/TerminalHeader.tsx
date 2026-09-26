@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Moon, Sun, ZoomIn, ZoomOut } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,9 +16,15 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ThemeToggle } from '@/components/ThemeToggle'
+import { useTheme } from '@/components/ThemeToggle'
 import type { ConnStatus } from '@/components/terminal/TerminalPane'
 
 // The terminal header: back to projects, connection status, the current
@@ -31,15 +38,19 @@ import type { ConnStatus } from '@/components/terminal/TerminalPane'
 // which is not visible while transported into a fixed view.
 const FIXED_LABELS: Record<string, string> = { codemap: 'Codemap', diff: 'Git', preview: 'Preview', nerdy: 'Nerdy Stuff' }
 
-export function TerminalHeader({ projectId, current, status, view, onBack, onRestart, onRename, onKill }: {
+export function TerminalHeader({ projectId, current, status, view, fontSize, onBack, onRestart, onRename, onKill, onZoomIn, onZoomOut, onZoomReset }: {
   projectId: string
   current: string
   status: ConnStatus
   view: 'terminal' | 'diff' | 'preview' | 'nerdy' | 'codemap'
+  fontSize: number
   onBack: () => void
   onRestart: () => void
   onRename: (newName: string) => Promise<void> | void
   onKill: () => void
+  onZoomIn: () => void
+  onZoomOut: () => void
+  onZoomReset: () => void
 }) {
   const isFixedView = view !== 'terminal'
   const fixedLabel = isFixedView ? (FIXED_LABELS[view] ?? view) : ''
@@ -47,6 +58,7 @@ export function TerminalHeader({ projectId, current, status, view, onBack, onRes
   const [renameValue, setRenameValue] = useState('')
   const [renameBusy, setRenameBusy] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
+  const [dark, setDark] = useTheme()
 
   const statusMeta = {
     connecting: { label: 'Connecting…', dot: 'bg-amber-500' },
@@ -102,8 +114,6 @@ export function TerminalHeader({ projectId, current, status, view, onBack, onRes
         )}
         <span className="flex-1" />
 
-        <ThemeToggle />
-
         {!isFixedView && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -113,6 +123,34 @@ export function TerminalHeader({ projectId, current, status, view, onBack, onRes
               <DropdownMenuItem onSelect={onRestart} data-testid="terminal-action-restart">Restart</DropdownMenuItem>
               <DropdownMenuItem onSelect={openRename} data-testid="terminal-action-rename">Rename</DropdownMenuItem>
               <DropdownMenuItem onSelect={onKill} data-testid="terminal-action-kill" className="text-destructive">Kill</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger data-testid="terminal-action-zoom">Text size</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-40">
+                  <DropdownMenuItem onSelect={onZoomIn} disabled={fontSize >= 20} data-testid="term-zoom-in">
+                    <ZoomIn className="size-4" /> Zoom in
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={onZoomOut} disabled={fontSize <= 10} data-testid="term-zoom-out">
+                    <ZoomOut className="size-4" /> Zoom out
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={onZoomReset} disabled={fontSize === 14} data-testid="term-zoom-reset">
+                    Reset
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger data-testid="terminal-action-theme">Appearance</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-40">
+                  <DropdownMenuRadioGroup value={dark ? 'dark' : 'light'} onValueChange={(v) => setDark(v === 'dark')}>
+                    <DropdownMenuRadioItem value="light" data-testid="terminal-theme-light">
+                      <Sun className="size-4" /> Light
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="dark" data-testid="terminal-theme-dark">
+                      <Moon className="size-4" /> Dark
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
             </DropdownMenuContent>
           </DropdownMenu>
         )}

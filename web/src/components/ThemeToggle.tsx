@@ -16,10 +16,9 @@ function initialDark(): boolean {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
 }
 
-// ThemeToggle flips the `dark` class shadcn's dark variant keys off
-// (see index.css). Persists to localStorage; an inline script in index.html
-// applies the saved class before paint to avoid a flash.
-export function ThemeToggle() {
+// useTheme owns the dark class + persistence so menus can flip the theme
+// without mounting the toggle button.
+export function useTheme(): [boolean, (dark: boolean) => void] {
   const [dark, setDark] = useState(initialDark)
 
   useEffect(() => {
@@ -31,11 +30,20 @@ export function ThemeToggle() {
     }
   }, [dark])
 
+  return [dark, setDark]
+}
+
+// ThemeToggle flips the `dark` class shadcn's dark variant keys off
+// (see index.css). Persists to localStorage; an inline script in index.html
+// applies the saved class before paint to avoid a flash.
+export function ThemeToggle() {
+  const [dark, setDark] = useTheme()
+
   return (
     <Button
       variant="ghost"
       size="sm"
-      onClick={() => setDark((d) => !d)}
+      onClick={() => setDark(!dark)}
       aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
       data-testid="theme-toggle"
     >

@@ -1,5 +1,5 @@
 import { expect, type APIRequestContext, type Page, test } from '@playwright/test'
-import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp, resetHarnessRegistry, projectURL } from './helpers'
+import { FAKE_HARNESS_ID, FAKE_HARNESS_NAME, createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp, ensureFakeHarness, resetHarnessRegistry, projectURL } from './helpers'
 
 async function fetchState(request: APIRequestContext) {
   const res = await request.get('/api/state')
@@ -32,6 +32,7 @@ test.describe('harness installs are desired state', () => {
     }
     await deleteAllProjects(request)
     await resetHarnessRegistry(request)
+    await ensureFakeHarness(request)
 
     const helperInstall =
       `printf '#!/bin/sh\\nif [ $# -gt 0 ]; then echo "helper 1.0"; exit 0; fi\\nexec bash\\n' > /usr/local/bin/helper && chmod +x /usr/local/bin/helper`
@@ -69,9 +70,9 @@ test.describe('harness installs are desired state', () => {
       await page.getByTestId(`project-menu-${idAlpha}`).click()
       await page.getByRole('menuitem', { name: /Harnesses/ }).click()
       const hdialog = page.getByRole('dialog')
-      await expect(hdialog.getByText('Crasher Demo')).toBeVisible()
+      await expect(hdialog.getByText(FAKE_HARNESS_NAME)).toBeVisible()
 
-      for (const harnessName of ['Crasher Demo', 'Helper']) {
+      for (const harnessName of [FAKE_HARNESS_NAME, 'Helper']) {
         const row = hdialog.locator('div.flex.items-center.justify-between', { hasText: harnessName })
         await expect(row).toBeVisible()
         await row.getByRole('button', { name: 'Install…' }).click()
@@ -83,7 +84,7 @@ test.describe('harness installs are desired state', () => {
         await expect(hdialog.getByText('Applied to 2 projects.')).toBeVisible({ timeout: 60_000 })
       }
 
-      const rowCheck = hdialog.locator('div.flex.items-center.justify-between', { hasText: 'Crasher Demo' })
+      const rowCheck = hdialog.locator('div.flex.items-center.justify-between', { hasText: FAKE_HARNESS_NAME })
       await rowCheck.getByRole('button', { name: 'Install…' }).click()
       const pickerCheck = hdialog.locator('div.mt-1.flex.flex-col')
       await expect(pickerCheck).toBeVisible()
@@ -105,8 +106,8 @@ test.describe('harness installs are desired state', () => {
       await expect(hdialog).not.toBeVisible({ timeout: 5_000 })
 
       const state1 = await fetchState(request)
-      expect(state1.projects[idAlpha].harnesses).toEqual(['crasher-demo', 'helper'])
-      expect(state1.projects[idBeta].harnesses).toEqual(['crasher-demo', 'helper'])
+      expect(state1.projects[idAlpha].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])
+      expect(state1.projects[idBeta].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])
       expect(state1.projects[third].harnesses ?? []).toEqual([])
       expect(state1.harnesses['helper']).toBeTruthy()
 
@@ -125,10 +126,10 @@ test.describe('harness installs are desired state', () => {
       const select = dialog.locator('select')
       const options = await select.locator('option').allTextContents()
       expect(options).toContain('Shell (bash)')
-      expect(options.some((t) => t.includes('Crasher Demo'))).toBeTruthy()
+      expect(options.some((t) => t.includes(FAKE_HARNESS_NAME))).toBeTruthy()
       expect(options.some((t) => t.includes('Helper'))).toBeTruthy()
       expect(options.some((t) => t.includes('OpenCode'))).toBeFalsy()
-      await select.selectOption('crasher-demo')
+      await select.selectOption(FAKE_HARNESS_ID)
       await expect(dialog.getByRole('button', { name: 'Create & Attach' })).toBeDisabled()
       await expect(dialog).toHaveScreenshot('harness-dialog-requires-name-desktop.png')
       await page.setViewportSize({ width: 390, height: 844 })
@@ -154,17 +155,17 @@ test.describe('harness installs are desired state', () => {
       await page.getByTestId('tab-new').click()
       const d2 = page.getByRole('dialog')
       await d2.getByPlaceholder(/Tab name/).fill('shared-name')
-      await d2.locator('select').selectOption('crasher-demo')
+      await d2.locator('select').selectOption(FAKE_HARNESS_ID)
       await d2.getByRole('button', { name: 'Create & Attach' }).click()
       await expect(d2.getByText(/already exists|duplicate/i)).toBeVisible({ timeout: 10_000 })
       await expect(d2).toBeVisible()
-      await d2.getByPlaceholder(/Tab name/).fill('my-crasher')
+      await d2.getByPlaceholder(/Tab name/).fill('my-fake')
       const createBtn = d2.getByRole('button', { name: 'Create & Attach' })
       await createBtn.click()
-      await expect(d2.getByText('Launching my-crasher')).toBeVisible({ timeout: 5_000 })
+      await expect(d2.getByText('Launching my-fake')).toBeVisible({ timeout: 5_000 })
       await expect(d2.getByText('Installing harness')).not.toBeVisible()
       await expect(d2).not.toBeVisible({ timeout: 15_000 })
-      await expect(page.getByTestId('tab-session-my-crasher')).toContainText('my-crasher', { timeout: 10_000 })
+      await expect(page.getByTestId('tab-session-my-fake')).toContainText('my-fake', { timeout: 10_000 })
       await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
       await gateShot(page, 'gate3-harness-session')
 
@@ -192,7 +193,7 @@ test.describe('harness installs are desired state', () => {
       await expect(page.getByTestId('tab-session-renamed')).toContainText('renamed')
       await expect(page).toHaveURL(/\/terminal\/renamed/)
       await expect(page.getByTestId('tab-session-renamed')).toBeVisible()
-      await expect(page.getByTestId('tab-session-my-crasher')).toBeVisible()
+      await expect(page.getByTestId('tab-session-my-fake')).toBeVisible()
       await expect(page.getByTestId('tab-session-shared-name')).toBeVisible()
       await gateShot(page, 'gate4-renamed')
       await page.getByTestId('tab-session-renamed').click()
@@ -207,8 +208,8 @@ test.describe('harness installs are desired state', () => {
         .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 15_000 })
         .toContain('after-rename')
       const state2 = await fetchState(request)
-      expect(state2.projects[idAlpha].harnesses).toEqual(['crasher-demo', 'helper'])
-      expect(state2.projects[idBeta].harnesses).toEqual(['crasher-demo', 'helper'])
+      expect(state2.projects[idAlpha].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])
+      expect(state2.projects[idBeta].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])
       expect(state2.projects[third].harnesses ?? []).toEqual([])
 
       await page.getByTestId('terminal-actions-trigger').click()
@@ -228,7 +229,7 @@ test.describe('harness installs are desired state', () => {
       const bSessions4 = await request.get(`/api/projects/${projectURL(idBeta)}/sessions`)
       const bBody4 = (await bSessions4.json()) as { sessions: { name: string }[] }
       expect(bBody4.sessions.map((s) => s.name)).not.toContain('renamed')
-      expect(bBody4.sessions.map((s) => s.name)).not.toContain('my-crasher')
+      expect(bBody4.sessions.map((s) => s.name)).not.toContain('my-fake')
       const thirdSessions = await request.get(`/api/projects/${projectURL(third)}/sessions`)
       const thirdSessBody = (await thirdSessions.json()) as { sessions: { name: string }[] }
       expect(thirdSessBody.sessions.map((s) => s.name)).not.toContain('renamed')
@@ -236,14 +237,14 @@ test.describe('harness installs are desired state', () => {
       await page.getByTestId('tab-new').click()
       const d3 = page.getByRole('dialog')
       await d3.getByPlaceholder(/Tab name/).fill('renamed')
-      await d3.locator('select').selectOption('crasher-demo')
+      await d3.locator('select').selectOption(FAKE_HARNESS_ID)
       await d3.getByRole('button', { name: 'Create & Attach' }).click()
       await expect(d3.getByText(/already exists|duplicate/i)).toBeVisible()
       await d3.getByRole('button', { name: 'Cancel' }).click()
 
       const finalState = await fetchState(request)
-      expect(finalState.projects[idAlpha].harnesses).toEqual(['crasher-demo', 'helper'])
-      expect(finalState.projects[idBeta].harnesses).toEqual(['crasher-demo', 'helper'])
+      expect(finalState.projects[idAlpha].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])
+      expect(finalState.projects[idBeta].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])
       expect(finalState.projects[third].harnesses ?? []).toEqual([])
     } finally {
       await deleteAllProjects(request)

@@ -110,6 +110,7 @@ func New(d Deps) http.Handler {
 	if d.Harnesses != nil && d.Projects != nil {
 		authedProject("GET", "/api/projects/{id}/harnesses", handleProjectHarnesses)
 		authed("POST", "/api/harnesses/{id}/install", handleInstallHarness)
+		authed("POST", "/api/harnesses/{id}/update-check", handleHarnessUpdateCheck)
 	}
 
 	if d.Projects != nil && d.Sessions != nil {

@@ -140,8 +140,8 @@ func TestEnsureBuiltinsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if len(first) != 6 {
-		t.Fatalf("seeded %d, want 6: %v", len(first), first)
+	if len(first) != 8 {
+		t.Fatalf("seeded %d, want 8: %v", len(first), first)
 	}
 
 	second, err := l.EnsureBuiltins()
@@ -156,20 +156,22 @@ func TestEnsureBuiltinsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list seeded: %v", err)
 	}
-	if len(got) != 6 {
-		t.Fatalf("loaded %d, want 6: %+v", len(got), got)
+	if len(got) != 8 {
+		t.Fatalf("loaded %d, want 8: %+v", len(got), got)
 	}
 
-	// the seeded document is exactly the six builtins, field for field
+	// the seeded document is exactly the eight builtins, field for field
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": ""},
 		"harnesses": map[string]any{
-			"cline":        map[string]any{"id": "cline", "name": "Cline", "command": "cline", "install": "npm i -g cline"},
-			"crasher-demo": map[string]any{"id": "crasher-demo", "name": "Crasher Demo", "command": "crasher", "install": `printf '#!/bin/sh\nif [ $# -gt 0 ]; then echo "crasher 1.0"; exit 0; fi\necho "about to crash"\nsleep 2\nexit 9\n' > /usr/local/bin/crasher && chmod +x /usr/local/bin/crasher`},
-			"freebuff":     map[string]any{"id": "freebuff", "name": "Freebuff", "command": "freebuff", "install": "npm i -g freebuff && freebuff --version || true"},
-			"opencode":     map[string]any{"id": "opencode", "name": "OpenCode", "command": "opencode", "install": "npm i -g opencode-ai"},
-			"terminal":     map[string]any{"id": "terminal", "name": "Terminal", "command": "bash"},
-			"vi-demo":      map[string]any{"id": "vi-demo", "name": "Vi Demo", "command": "vi notes.txt"},
+			"claude":   map[string]any{"id": "claude", "name": "Claude", "command": "claude", "install": "npm i -g @anthropic-ai/claude-code"},
+			"cline":    map[string]any{"id": "cline", "name": "Cline", "command": "cline", "install": "npm i -g cline"},
+			"codex":    map[string]any{"id": "codex", "name": "Codex", "command": "codex", "install": "npm i -g @openai/codex"},
+			"freebuff": map[string]any{"id": "freebuff", "name": "Freebuff", "command": "freebuff", "install": "npm i -g freebuff && freebuff --version || true"},
+			"kiro":     map[string]any{"id": "kiro", "name": "Kiro", "command": "kiro-cli", "install": "curl -fsSL https://cli.kiro.dev/install | bash"},
+			"opencode": map[string]any{"id": "opencode", "name": "OpenCode", "command": "opencode", "install": "npm i -g opencode-ai"},
+			"pi":       map[string]any{"id": "pi", "name": "Pi", "command": "pi", "install": "npm install -g --ignore-scripts @earendil-works/pi-coding-agent"},
+			"terminal": map[string]any{"id": "terminal", "name": "Terminal", "command": "bash"},
 		},
 	})
 }
@@ -189,14 +191,16 @@ func TestEnsureBuiltinsDoesNotOverwriteUserEdits(t *testing.T) {
 	if h.Command != "zsh" {
 		t.Fatalf("seed overwrote user edit: %+v", h)
 	}
-	// the user edit is what's on disk — seeding added the other five around it
+	// the user edit is what's on disk — seeding added the other seven around it
 	statetest.AssertSection(t, st.Path(), "harnesses", map[string]any{
-		"terminal":     map[string]any{"id": "terminal", "name": "Terminal", "command": "zsh"},
-		"opencode":     map[string]any{"id": "opencode", "name": "OpenCode", "command": "opencode", "install": "npm i -g opencode-ai"},
-		"freebuff":     map[string]any{"id": "freebuff", "name": "Freebuff", "command": "freebuff", "install": "npm i -g freebuff && freebuff --version || true"},
-		"cline":        map[string]any{"id": "cline", "name": "Cline", "command": "cline", "install": "npm i -g cline"},
-		"vi-demo":      map[string]any{"id": "vi-demo", "name": "Vi Demo", "command": "vi notes.txt"},
-		"crasher-demo": map[string]any{"id": "crasher-demo", "name": "Crasher Demo", "command": "crasher", "install": `printf '#!/bin/sh\nif [ $# -gt 0 ]; then echo "crasher 1.0"; exit 0; fi\necho "about to crash"\nsleep 2\nexit 9\n' > /usr/local/bin/crasher && chmod +x /usr/local/bin/crasher`},
+		"terminal": map[string]any{"id": "terminal", "name": "Terminal", "command": "zsh"},
+		"opencode": map[string]any{"id": "opencode", "name": "OpenCode", "command": "opencode", "install": "npm i -g opencode-ai"},
+		"codex":    map[string]any{"id": "codex", "name": "Codex", "command": "codex", "install": "npm i -g @openai/codex"},
+		"claude":   map[string]any{"id": "claude", "name": "Claude", "command": "claude", "install": "npm i -g @anthropic-ai/claude-code"},
+		"freebuff": map[string]any{"id": "freebuff", "name": "Freebuff", "command": "freebuff", "install": "npm i -g freebuff && freebuff --version || true"},
+		"cline":    map[string]any{"id": "cline", "name": "Cline", "command": "cline", "install": "npm i -g cline"},
+		"pi":       map[string]any{"id": "pi", "name": "Pi", "command": "pi", "install": "npm install -g --ignore-scripts @earendil-works/pi-coding-agent"},
+		"kiro":     map[string]any{"id": "kiro", "name": "Kiro", "command": "kiro-cli", "install": "curl -fsSL https://cli.kiro.dev/install | bash"},
 	})
 }
 

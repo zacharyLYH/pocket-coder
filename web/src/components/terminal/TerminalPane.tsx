@@ -42,16 +42,19 @@ const TERM_THEME = {
 // in — the server owns the protocol (internal/httpapi/terminal.go).
 // Re-dials whenever session or redial changes; the host element is owned by
 // the parent view.
-export function TerminalPane({ projectId, session, redial, hostRef, onStatus, onError }: {
+export function TerminalPane({ projectId, session, redial, fontSize, hostRef, onStatus, onError }: {
   projectId: string
   session: string
   redial: number
+  fontSize: number
   hostRef: RefObject<HTMLDivElement | null>
   onStatus: (status: ConnStatus) => void
   onError: (message: string) => void
 }) {
   // Live socket for synthetic input (shortcuts modal's key buttons).
   const wsRef = useRef<WebSocket | null>(null)
+  const termRef = useRef<Terminal | null>(null)
+  const fitRef = useRef<FitAddon | null>(null)
   useEffect(() => {
     const onInput = (e: Event) => {
       const ws = wsRef.current
@@ -72,7 +75,7 @@ export function TerminalPane({ projectId, session, redial, hostRef, onStatus, on
       cursorBlink: true,
       cursorStyle: 'bar',
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, "Cascadia Code", "Fira Code", monospace',
-      fontSize: 14,
+      fontSize,
       lineHeight: 1.3,
       letterSpacing: 0.3,
       theme: TERM_THEME,
@@ -80,6 +83,8 @@ export function TerminalPane({ projectId, session, redial, hostRef, onStatus, on
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    termRef.current = term
+    fitRef.current = fit
 
     const observer = new ResizeObserver(() => {
       if (!opened || !ws) return
@@ -151,10 +156,24 @@ export function TerminalPane({ projectId, session, redial, hostRef, onStatus, on
       observer.disconnect()
       ws?.close()
       if (wsRef.current === ws) wsRef.current = null
+      termRef.current = null
+      fitRef.current = null
       term.dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, session, redial])
+
+  // Zoom: apply without redialing — setOption reflows, fit recomputes
+  // dimensions, and the new size goes to tmux like any resize.
+  useEffect(() => {
+    const term = termRef.current
+    const fit = fitRef.current
+    if (!term || !fit) return
+    term.options.fontSize = fontSize
+    fit.fit()
+    const ws = wsRef.current
+    if (ws) sendResize(ws, fit)
+  }, [fontSize])
 
   return null
 }

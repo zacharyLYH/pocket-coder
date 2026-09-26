@@ -82,9 +82,9 @@ export async function deleteAllProjects(request: APIRequestContext): Promise<voi
 
 // resetHarnessRegistry removes every non-builtin harness. The registry is
 // global and specs may add plugins (e.g. orchestration's combo agent), so
-// visual tests that capture the harness card pin it back to the six
+// visual tests that capture the harness card pin it back to the eight
 // builtins first — otherwise full-page home shots shift with registry state.
-const BUILTINS = ['terminal', 'opencode', 'freebuff', 'cline', 'vi-demo', 'crasher-demo']
+const BUILTINS = ['terminal', 'opencode', 'codex', 'claude', 'freebuff', 'cline', 'pi', 'kiro']
 
 export async function resetHarnessRegistry(request: APIRequestContext): Promise<void> {
   const res = await request.get('/api/harnesses')
@@ -94,6 +94,25 @@ export async function resetHarnessRegistry(request: APIRequestContext): Promise<
       await request.delete(`/api/harnesses/${h.id}`)
     }
   }
+}
+
+// ensureFakeHarness registers the instant fake CLI e2e uses as its install
+// vehicle: a local printf script, so installs exercise the real pipeline
+// with no network. Delete-then-create keeps it idempotent across specs
+// sharing one backend.
+export const FAKE_HARNESS_ID = 'e2e-fake'
+export const FAKE_HARNESS_NAME = 'E2E Fake'
+
+export async function ensureFakeHarness(request: APIRequestContext): Promise<void> {
+  await request.delete(`/api/harnesses/${FAKE_HARNESS_ID}`)
+  const res = await request.post('/api/harnesses', {
+    data: {
+      name: FAKE_HARNESS_NAME,
+      command: 'e2efake',
+      install: `printf '#!/bin/sh\\nif [ $# -gt 0 ]; then echo "e2efake 1.0"; exit 0; fi\\nexec bash\\n' > /usr/local/bin/e2efake && chmod +x /usr/local/bin/e2efake`,
+    },
+  })
+  if (res.status() !== 201) throw new Error(`ensureFakeHarness failed: ${res.status()}`)
 }
 
 // deleteAllSSHKeys likewise empties the key registry.

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { createProjectViaUI, deleteAllProjects, deleteAllSSHKeys, e2eRepo, e2eRepoID, resetHarnessRegistry, engineUp } from './helpers'
+import { FAKE_HARNESS_NAME, createProjectViaUI, deleteAllProjects, deleteAllSSHKeys, e2eRepo, e2eRepoID, ensureFakeHarness, resetHarnessRegistry, engineUp } from './helpers'
 
 // Visual + behavioral tests for the home screen against the real backend:
 // login form, project list, SSH keys card, clone method toggle.
@@ -107,6 +107,7 @@ test.describe('home screen', () => {
     test.skip(!(await engineUp(page.request)), 'Docker engine unavailable')
     await deleteAllProjects(page.request)
     await resetHarnessRegistry(page.request)
+    await ensureFakeHarness(page.request)
     try {
       await page.goto('/')
       const id = await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
@@ -119,10 +120,10 @@ test.describe('home screen', () => {
       await expect(dialog.getByText('OpenCode', { exact: true })).toBeVisible()
 
       // an explicit install runs synchronously and surfaces the outcome here.
-      // Crasher Demo is used because its "download" is a local script — fast,
+      // E2E Fake is used because its "download" is a local script — fast,
       // while still exercising the real install+validate endpoint. The picker
       // defaults to every project checked; with one project that is a 1:1 run.
-      const row = dialog.locator('div.flex.items-center.justify-between', { hasText: 'Crasher Demo' })
+      const row = dialog.locator('div.flex.items-center.justify-between', { hasText: FAKE_HARNESS_NAME })
       await row.getByRole('button', { name: 'Install…' }).click()
       // the project picker is part of the feature's surface — capture it open
       await expect(dialog.getByRole('button', { name: /Install in 1 project/ })).toBeVisible()
@@ -138,8 +139,9 @@ test.describe('home screen', () => {
     test.skip(!(await engineUp(request)), 'Docker engine unavailable')
     await deleteAllProjects(page.request)
     await resetHarnessRegistry(page.request)
+    await ensureFakeHarness(page.request)
     try {
-      await page.route('/api/harnesses/crasher-demo/install', async (route) => {
+      await page.route('/api/harnesses/e2e-fake/install', async (route) => {
         await new Promise((r) => setTimeout(r, 2000))
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ results: [{ project: 'p1', status: 'ok' }] }) })
       })
@@ -148,9 +150,9 @@ test.describe('home screen', () => {
       await page.getByTestId(`project-menu-${id}`).click()
       await page.getByRole('menuitem', { name: /Harnesses/ }).click()
       const dialog = page.getByRole('dialog')
-      await expect(dialog.getByText('Crasher Demo')).toBeVisible()
+      await expect(dialog.getByText(FAKE_HARNESS_NAME)).toBeVisible()
 
-      const row = dialog.locator('div.flex.items-center.justify-between', { hasText: 'Crasher Demo' })
+      const row = dialog.locator('div.flex.items-center.justify-between', { hasText: FAKE_HARNESS_NAME })
       await row.getByRole('button', { name: 'Install…' }).click()
       // race the click against the visibility check: the mocked install
       // resolves in 2s, so a sequential assert can miss the busy state

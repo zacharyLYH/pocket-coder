@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,14 +21,53 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [rowMsg, setRowMsg] = useState<Record<string, RowMsg | undefined>>({})
   const [addOpen, setAddOpen] = useState(false)
+  const [updates, setUpdates] = useState<Record<string, { current: string; latest: string }>>({})
+  const [pickerMode, setPickerMode] = useState<'install' | 'update'>('install')
+
+  function installedIn(harnessId: string) {
+    return projects.filter((p) => isInstalled(p.id, harnessId)).map((p) => p.id)
+  }
 
   function load() {
     api<{ harnesses: Harness[] }>('/api/harnesses')
-      .then((data) => setHarnesses(data.harnesses))
+      .then((data) => {
+        setHarnesses(data.harnesses)
+      })
       .catch(() => {})
   }
 
+  // Update checks run against installed harnesses only: one probe per
+  // harness inside a running container, all in parallel. The map is rebuilt
+  // whole each run so cleared conditions drop their badge. Anything
+  // unavailable (no npm package, nothing running) stays silent.
+  async function checkUpdates(list: Harness[]) {
+    const settled = await Promise.allSettled(list.map(async (h) => {
+      if (!h.install) return null
+      const ids = installedIn(h.id)
+      if (ids.length === 0) return null
+      const d = await api<{ current?: string; latest?: string; updateAvailable?: boolean }>(
+        `/api/harnesses/${h.id}/update-check`,
+        { method: 'POST', body: JSON.stringify({ projectIds: ids }) },
+      )
+      return d.updateAvailable && d.current && d.latest ? { id: h.id, current: d.current, latest: d.latest } : null
+    }))
+    const fresh: Record<string, { current: string; latest: string }> = {}
+    for (const r of settled) {
+      if (r.status === 'fulfilled' && r.value) fresh[r.value.id] = { current: r.value.current, latest: r.value.latest }
+    }
+    setUpdates(fresh)
+  }
+
   useEffect(() => { load() }, [])
+
+  const checkedKey = useRef('')
+  useEffect(() => {
+    if (harnesses.length === 0 || projects.length === 0) return
+    const key = harnesses.map((h) => `${h.id}:${installedIn(h.id).join('+')}`).join(',')
+    if (checkedKey.current === key) return
+    checkedKey.current = key
+    void checkUpdates(harnesses)
+  })
 
   useEffect(() => { onBusyChange?.(busyKey !== null) }, [busyKey, onBusyChange])
 
@@ -38,6 +77,7 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
   }
 
   function openPicker(key: string) {
+    setPickerMode('install')
     // from a project menu the run is scoped to that project; the picker can widen it
     if (initialProjectId) {
       setPicked({ [initialProjectId]: true })
@@ -54,6 +94,16 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
     setPicked(all)
     setRowMsg((m) => ({ ...m, [key]: undefined }))
     setPickerFor((cur) => (cur === key ? null : key))
+  }
+
+  // Update path: the check found a newer registry version, so the picker
+  // opens with the installed projects checked — Update re-runs install.
+  function openUpdatePicker(h: Harness) {
+    setPickerMode('update')
+    const ids = installedIn(h.id)
+    setPicked(Object.fromEntries(ids.map((id) => [id, true])))
+    setRowMsg((m) => ({ ...m, [h.id]: undefined }))
+    setPickerFor(h.id)
   }
 
   function summarize(key: string, results: ExecResult[]) {
@@ -82,6 +132,12 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
       })
       summarize(key, (data.results ?? []) as ExecResult[])
       setPickerFor(null)
+      setUpdates((u) => {
+        if (!(key in u)) return u
+        const next = { ...u }
+        delete next[key]
+        return next
+      })
       onInstalled?.()
     } catch (err) {
       setRowMsg((m) => ({ ...m, [key]: { kind: 'error', text: errMsg(err) } }))
@@ -116,7 +172,25 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
               {!h.install ? (
                 <span className="shrink-0 text-muted-foreground text-xs">no download needed</span>
               ) : fullyInstalled ? (
-                <span className="shrink-0 text-muted-foreground text-xs">Installed</span>
+                updates[h.id] ? (
+                  <span className="flex shrink-0 items-center gap-2">
+                    <span className="text-xs text-muted-foreground" data-testid={`harness-update-badge-${h.id}`}>
+                      {updates[h.id].current} → {updates[h.id].latest}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0"
+                      disabled={busyKey !== null}
+                      onClick={() => openUpdatePicker(h)}
+                      data-testid={`harness-update-${h.id}`}
+                    >
+                      {busyKey === h.id ? 'Updating…' : 'Update'}
+                    </Button>
+                  </span>
+                ) : (
+                  <span className="shrink-0 text-muted-foreground text-xs">Installed</span>
+                )
               ) : (
                 <Button
                   size="sm"
@@ -136,7 +210,7 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
                 onToggle={(id) => setPicked((p) => ({ ...p, [id]: !p[id] }))}
                 busy={busyKey !== null}
                 installed={Object.fromEntries(projects.map((p) => [p.id, isInstalled(p.id, h.id)]))}
-                applyLabel={`Install in ${Object.values(picked).filter(Boolean).length} project(s)`}
+                applyLabel={`${pickerMode === 'update' ? 'Update' : 'Install'} in ${Object.values(picked).filter(Boolean).length} project(s)`}
                 onApply={() => applyToProjects(h.id, `/api/harnesses/${h.id}/install`, {})}
                 onCancel={() => setPickerFor(null)}
               />
