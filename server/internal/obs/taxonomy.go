@@ -79,6 +79,11 @@ const (
 	CodemapThread            = "codemap.thread"
 	CodemapThreadDeleted     = "codemap.thread_deleted"
 
+	// Butler turns + threads (global history, no project scope).
+	ButlerTurn          = "butler.turn"
+	ButlerAsk           = "butler.ask"
+	ButlerThreadDeleted = "butler.thread_deleted"
+
 	// Preview worker + tools.
 	PreviewStart      = "preview.start"
 	PreviewClose      = "preview.close"

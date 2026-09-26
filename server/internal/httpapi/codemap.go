@@ -60,10 +60,10 @@ func codemapSet(id, threadID string) {
 	}
 }
 
-// writeCodemapErr answers a failed turn with the thread identity intact,
+// writeTurnErr answers a failed turn with the thread identity intact,
 // so the client can open the failed placeholder turn and retry instead
-// of losing it.
-func writeCodemapErr(w http.ResponseWriter, status int, msg, threadID, threadTitle string) {
+// of losing it. Shared by codemap and butler turns.
+func writeTurnErr(w http.ResponseWriter, status int, msg, threadID, threadTitle string) {
 	body := map[string]any{"error": msg}
 	if threadID != "" {
 		body["threadId"] = threadID
@@ -171,7 +171,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 					return
 				}
 				obs.Error(r.Context(), obs.CodemapTurn, "turn reserve failed: "+rerr.Error(), map[string]any{"stage": "reserve_turn", "error": rerr.Error()})
-				writeCodemapErr(w, http.StatusInternalServerError, "reserve turn: "+rerr.Error(), threadID, threadTitle)
+				writeTurnErr(w, http.StatusInternalServerError, "reserve turn: "+rerr.Error(), threadID, threadTitle)
 				return
 			}
 			turnN, turnID = n, tid
@@ -267,7 +267,7 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 				return
 			}
 			obs.Error(r.Context(), obs.CodemapTurn, "retry reserve failed: "+rerr.Error(), map[string]any{"stage": "retry_reserve", "error": rerr.Error()})
-			writeCodemapErr(w, http.StatusInternalServerError, "retry reserve: "+rerr.Error(), tid, th.Title)
+			writeTurnErr(w, http.StatusInternalServerError, "retry reserve: "+rerr.Error(), tid, th.Title)
 			return
 		}
 		obs.Info(r.Context(), obs.CodemapRetryReserved, fmt.Sprintf("[%s] turn %d rewritten for retry", turnID, n), map[string]any{"turnId": turnID, "threadId": tid, "turn": n, "stage": "retry_reserve"})
@@ -355,9 +355,9 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 			obs.Info(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] failed turn persisted with error", turnID), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "fail_turn"})
 		}
 		if ctx.Err() != nil {
-			writeCodemapErr(w, http.StatusGatewayTimeout, "codemap timed out", threadID, threadTitle)
+			writeTurnErr(w, http.StatusGatewayTimeout, "codemap timed out", threadID, threadTitle)
 		} else {
-			writeCodemapErr(w, http.StatusBadGateway, err.Error(), threadID, threadTitle)
+			writeTurnErr(w, http.StatusBadGateway, err.Error(), threadID, threadTitle)
 		}
 		return
 	}
@@ -367,13 +367,13 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 	sectionsRaw, merr := json.Marshal(res.Sections)
 	if merr != nil {
 		obs.Error(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] sections marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_sections", "error": merr.Error()})
-		writeCodemapErr(w, http.StatusInternalServerError, "marshal codemap sections: "+merr.Error(), threadID, threadTitle)
+		writeTurnErr(w, http.StatusInternalServerError, "marshal codemap sections: "+merr.Error(), threadID, threadTitle)
 		return
 	}
 	toolsRaw, merr := json.Marshal(rounds)
 	if merr != nil {
 		obs.Error(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] tools marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_tools", "error": merr.Error()})
-		writeCodemapErr(w, http.StatusInternalServerError, "marshal codemap tools: "+merr.Error(), threadID, threadTitle)
+		writeTurnErr(w, http.StatusInternalServerError, "marshal codemap tools: "+merr.Error(), threadID, threadTitle)
 		return
 	}
 	now := time.Now().UTC()
@@ -384,10 +384,10 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 	}, lineageRaw); cerr != nil {
 		obs.Error(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] turn complete failed: %s", turnID, cerr), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "complete_turn", "error": cerr.Error()})
 		if cerr.Error() == "unknown thread" {
-			writeCodemapErr(w, http.StatusNotFound, "unknown thread", threadID, threadTitle)
+			writeTurnErr(w, http.StatusNotFound, "unknown thread", threadID, threadTitle)
 			return
 		}
-		writeCodemapErr(w, http.StatusInternalServerError, "complete turn: "+cerr.Error(), threadID, threadTitle)
+		writeTurnErr(w, http.StatusInternalServerError, "complete turn: "+cerr.Error(), threadID, threadTitle)
 		return
 	}
 	obs.Info(r.Context(), obs.CodemapTurnSaved, fmt.Sprintf("[%s] thread turn persisted: title=%q sections=%d rounds=%d", turnID, threadTitle, len(res.Sections), len(rounds)), map[string]any{"turnId": turnID, "threadId": threadID, "title": threadTitle, "sections": len(res.Sections), "rounds": len(rounds), "stage": "complete_turn"})

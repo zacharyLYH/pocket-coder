@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"pcoder/internal/auth"
+	"pcoder/internal/butlerthreads"
 	"pcoder/internal/codemapthreads"
 	"pcoder/internal/events"
 	"pcoder/internal/harness"
@@ -153,6 +154,7 @@ func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer,
 		t.Fatal(err)
 	}
 	d.Projects = project.NewService(project.Open(st), md)
+	d.Butler = butlerthreads.New(t.TempDir())
 	// Same store instance the handlers use, mirroring main.go's wiring:
 	// project deletion must cascade into the codemap files.
 	d.Projects.SetCodemaps(d.Codemaps)

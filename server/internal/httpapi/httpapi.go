@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"pcoder/internal/auth"
+	"pcoder/internal/butlerthreads"
 	"pcoder/internal/codemapthreads"
 	"pcoder/internal/docker"
 	"pcoder/internal/events"
@@ -46,6 +47,7 @@ type Deps struct {
 	SSHKeys   *sshkeys.Store
 	State     *state.Store
 	Codemaps  *codemapthreads.Store
+	Butler    *butlerthreads.Store
 }
 
 // New returns the HTTP handler for the whole server. Login/PIN routes are
@@ -190,6 +192,15 @@ func New(d Deps) http.Handler {
 
 	if d.State != nil {
 		authed("GET", "/api/state", handleGetState)
+	}
+
+	// Butler: one global history (no project scope). The turn POST streams
+	// SSE status lines while the loop runs, then the final JSON answer.
+	if d.Butler != nil {
+		authed("GET", "/api/butler/threads", handleButlerThreads)
+		authed("GET", "/api/butler/threads/{tid}", handleButlerThreadGet)
+		authed("DELETE", "/api/butler/threads/{tid}", handleButlerThreadDelete)
+		authed("POST", "/api/butler/turn", handleButlerTurn)
 	}
 	return obs.Middleware(mux)
 }

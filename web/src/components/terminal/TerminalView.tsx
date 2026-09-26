@@ -15,6 +15,7 @@ import { CodemapTab } from '@/components/terminal/CodemapTab'
 import { sendTermInput } from '@/components/terminal/QuickKeys'
 import { ShortcutsModal } from '@/components/shortcuts/ShortcutsModal'
 import { parseKeyCombo, type Shortcut } from '@/lib/shortcuts'
+import { ButlerFab } from '@/components/ButlerFab'
 
 // The terminal screen: header (status, session picker, actions) above the
 // live terminal pane. Owns which session is attached and the shared status/
@@ -282,6 +283,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
         harnesses={harnesses}
         onLaunched={onLaunched}
       />
+      <ButlerFab projectHint={projectId} />
     </div>
   )
 }

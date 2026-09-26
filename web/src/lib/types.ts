@@ -1,3 +1,11 @@
+// Shared butler shapes: one global thread list, one turn POST with SSE
+// status lines (data: {...}) plus a final plain-JSON answer.
+export type ButlerStep = { tool: string; args?: string; result?: string; error?: string }
+export type ButlerTurn = { turnId: string; prompt: string; answer?: string; steps?: ButlerStep[] | null; projectHint?: string; time?: string; error?: string | null }
+export type ButlerThreadSummary = { id: string; title: string; createdAt: string; updatedAt: string; turnCount: number; preview: string }
+export type ButlerThread = { id: string; title: string; createdAt: string; updatedAt: string; turns: ButlerTurn[] }
+export type ButlerTurnResult = { threadId: string; threadTitle: string; turnId: string; answer: string; steps: ButlerStep[]; time: string }
+
 // Shared API shapes. One declaration per backend payload, imported
 // everywhere instead of re-declared per component.
 export type Project = { id: string; harnesses?: string[] }

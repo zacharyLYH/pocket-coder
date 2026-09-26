@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { api, errMsg } from '@/lib/api'
 import type { ExecResult, GitIdentity, Project, SSHKey } from '@/lib/types'
 import { useAiConfig } from '@/hooks/useAiConfig'
+import { ButlerFab } from '@/components/ButlerFab'
 import { useProjects } from '@/hooks/useProjects'
 
 // Home: projects first, connections as three status rows, power tools last.
@@ -68,6 +69,7 @@ export function Home({ email, onLogout, navigate }: {
         <RunEverywhereCard projects={projects} busy={harnessBusy} onBusy={setHarnessBusy} />
       </main>
       {harnessBusy && <BusyOverlay />}
+      <ButlerFab projectHint={null} />
     </>
   )
 }

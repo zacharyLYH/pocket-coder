@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"pcoder/internal/auth"
+	"pcoder/internal/butlerthreads"
 	"pcoder/internal/codemapthreads"
 	"pcoder/internal/config"
 	"pcoder/internal/docker"
@@ -141,6 +142,7 @@ func main() {
 		Sessions: sessions, Harnesses: harnesses,
 		SSHKeys: sshKeyStore, State: st, Preview: previewManager,
 		Obs: observe, Docker: dkr, Codemaps: codemapStore,
+		Butler: butlerthreads.New(filepath.Join(cfg.DataDir, "butler")),
 	})}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

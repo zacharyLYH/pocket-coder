@@ -71,7 +71,7 @@ Ordered. Each lands with tests. No big bang. Phase 2 stays out.
 
 2. Transcript store. Server stores under `data/butler/<threadID>/` with `manifest.json` plus `N.json` turn files. List sorts by creation time. Delete removes the folder. No cap. No search or export. Example: thread `a1b2` holds `manifest.json` plus `1.json`. Unit: create, get, list order, delete idempotent. Smoke: `go -C server test ./internal/butler -run TestStore`.
 
-3. Sheet shell. One `ButlerSheet` serves Home and project. Bot button floats bottom right. Bottom sheet on mobile, right drawer on desktop. Global thread list, project hint chip such as "looking at: api" with clear, empty chips "Wire my key", "Brief me", "New shortcut", composer at bottom. No backend yet, mocked fetch. Example: tap "Brief me" fills the composer. Unit: vitest render with mockFetch. E2e: `web/e2e/butler.shell.spec.ts` checks button opens sheet on Home and project.
+3. Sheet shell. One `ButlerSheet` serves Home and project. Bot button floats bottom right. Centered floating card on mobile (margins all around), floating chat window on desktop (old-messenger vibe). Blurred backdrop on both, tap outside to exit. Global thread list, project hint chip such as "looking at: api" with clear, empty chips "Wire my key", "Brief me", "New shortcut", composer at bottom. No backend yet, mocked fetch. Example: tap "Brief me" fills the composer. Unit: vitest render with mockFetch. E2e: `web/e2e/butler.shell.spec.ts` checks button opens sheet on Home and project.
 
 4. Turn round trip. `POST /api/butler/turns` returns one 200 with the final answer. SSE streams one line per tool start and finish while the turn runs. Loop caps at 6 steps. No action without a user message. No background work. Example: "brief me" streams "checked 3 projects" then returns a summary. Unit: loop cap plus SSE order. Smoke: POST with fake model returns 200. E2e: pending turn shows status lines under it.
 
@@ -109,7 +109,7 @@ The codemap composer and the butler each carry a model picker bound to the same 
 
 ## UI
 
-One `ButlerSheet` component serves both mounts. A bot button floats at the bottom right on Home and in the project header. It opens a bottom sheet on mobile and a right drawer on desktop.
+One `ButlerSheet` component serves both mounts. A bot button floats at the bottom right on Home and in the project header. It opens a centered floating card on mobile and a small floating chat window on desktop.
 
 The sheet shows one global thread list. A chip names the project hint, such as "looking at: api", with a clear button. The empty state shows preset chips: "Wire my key", "Brief me", "New shortcut". Threads show user bubbles and butler answers. A confirm card shows the old and new value with Confirm and Discard buttons. The composer stays at the bottom.
 
