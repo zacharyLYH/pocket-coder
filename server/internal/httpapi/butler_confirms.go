@@ -6,9 +6,8 @@
 package httpapi
 
 import (
-	"context"
 	"net/http"
-	"sync"
+	"time"
 
 	"pcoder/internal/butlerthreads"
 	"pcoder/internal/obs"
@@ -22,43 +21,19 @@ type butlerCard struct {
 	BlastRadius string `json:"blastRadius"`
 }
 
-// butlerPending is the stored work behind a card. Run takes the masked
-// value from the apply body (empty for every tool but propose_env_fix).
-type butlerPending struct {
-	card butlerCard
-	run  func(ctx context.Context, secret string) (string, error)
-}
-
-var butlerPendings = struct {
-	sync.Mutex
-	m map[string]butlerPending
-}{m: map[string]butlerPending{}}
-
-// butlerPropose stores run and returns its confirm id. created collects
-// the public card when non-nil (the turn's confirms array).
-func butlerPropose(tool, summary, blast string, run func(ctx context.Context, secret string) (string, error), created *[]butlerCard) string {
+// butlerPropose stores the approval on the owning thread and returns its
+// confirm id. created collects the public card for the turn response.
+func butlerPropose(st *butlerthreads.Store, threadID, tool, args, summary, blast string, created *[]butlerCard) (string, error) {
 	id := butlerthreads.MintID()
 	card := butlerCard{ID: id, Tool: tool, Summary: summary, BlastRadius: blast}
-	butlerPendings.Lock()
-	butlerPendings.m[id] = butlerPending{card: card, run: run}
-	butlerPendings.Unlock()
+	err := st.AddApproval(threadID, butlerthreads.Approval{ID: id, Tool: tool, Args: []byte(args), Summary: summary, BlastRadius: blast, CreatedAt: time.Now().UTC()})
+	if err != nil {
+		return "", err
+	}
 	if created != nil {
 		*created = append(*created, card)
 	}
-	return id
-}
-
-// butlerTake removes and returns a pending. False when unknown (or already
-// applied/discarded): destructive tools need this explicit id, so a wrong
-// id never runs anything.
-func butlerTake(id string) (butlerPending, bool) {
-	butlerPendings.Lock()
-	defer butlerPendings.Unlock()
-	p, ok := butlerPendings.m[id]
-	if ok {
-		delete(butlerPendings.m, id)
-	}
-	return p, ok
+	return id, nil
 }
 
 func handleButlerConfirmApply(d Deps) http.HandlerFunc {
@@ -77,45 +52,52 @@ func handleButlerConfirmApply(d Deps) http.HandlerFunc {
 			return
 		}
 		defer butlerBusy.Store(false)
-		p, ok := butlerTake(id)
-		if !ok {
+		if d.Butler == nil {
 			writeErr(w, http.StatusNotFound, "unknown confirm — propose it again from chat")
 			return
 		}
-		// The secret never enters obs/events: only the tool name is logged.
-		obs.Info(r.Context(), obs.ButlerTurn, "butler confirm apply: "+p.card.Tool, map[string]any{"tool": p.card.Tool})
-		out, err := p.run(r.Context(), body.Value)
+		a, threadID, err := d.Butler.FindApproval(id)
 		if err != nil {
-			obsFail(r, obs.ButlerTurn, "butler apply failed", err, map[string]any{"tool": p.card.Tool})
+			writeErr(w, http.StatusNotFound, "unknown confirm — propose it again from chat")
+			return
+		}
+		var def *butlerWriteDef
+		for i := range butlerWriteTable {
+			if butlerWriteTable[i].name == a.Tool {
+				def = &butlerWriteTable[i]
+				break
+			}
+		}
+		if def == nil {
+			writeErr(w, http.StatusBadRequest, "unknown confirm tool")
+			return
+		}
+		// The secret never enters obs/events: only the tool name is logged.
+		obs.Info(r.Context(), obs.ButlerTurn, "butler confirm apply: "+a.Tool, map[string]any{"tool": a.Tool})
+		out, err := def.exec(r.Context(), d, butlerArgs(string(a.Args)), body.Value)
+		if err != nil {
+			obsFail(r, obs.ButlerTurn, "butler apply failed", err, map[string]any{"tool": a.Tool})
 			writeErr(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		_, _ = d.Events.Append("butler.apply", map[string]any{"tool": p.card.Tool})
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tool": p.card.Tool, "result": out})
+		_ = d.Butler.DeleteApproval(threadID, id)
+		_, _ = d.Events.Append("butler.apply", map[string]any{"tool": a.Tool})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tool": a.Tool, "result": out})
 	}
 }
 
-func handleButlerConfirmDiscard(_ Deps) http.HandlerFunc {
+func handleButlerConfirmDiscard(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		if _, ok := butlerTake(id); !ok {
+		if d.Butler == nil {
+			writeErr(w, http.StatusNotFound, "unknown confirm — propose it again from chat")
+			return
+		}
+		a, threadID, err := d.Butler.FindApproval(id)
+		if err != nil || d.Butler.DeleteApproval(threadID, a.ID) != nil {
 			writeErr(w, http.StatusNotFound, "unknown confirm — propose it again from chat")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
-}
-
-// butlerPendingCount is test-only.
-func butlerPendingCount() int {
-	butlerPendings.Lock()
-	defer butlerPendings.Unlock()
-	return len(butlerPendings.m)
-}
-
-// butlerResetPendings is test-only.
-func butlerResetPendings() {
-	butlerPendings.Lock()
-	defer butlerPendings.Unlock()
-	butlerPendings.m = map[string]butlerPending{}
 }

@@ -1,6 +1,7 @@
 package butlerthreads
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,33 @@ func TestReserveGetListDelete(t *testing.T) {
 	}
 	if list, _ := s.List(); len(list) != 0 {
 		t.Fatalf("list after delete = %+v", list)
+	}
+}
+
+func TestApprovalsSurviveReloadAndCanBeRemoved(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	tid, _, err := s.ReserveNewThread("setup", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := Approval{ID: MintID(), Tool: "stop", Args: json.RawMessage(`{"project":"a/b"}`), Summary: "Stop a/b?", BlastRadius: "Container stops."}
+	if err := s.AddApproval(tid, a); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := New(dir).Approvals(tid)
+	if err != nil || len(loaded) != 1 || loaded[0].ID != a.ID {
+		t.Fatalf("reloaded approvals = %+v, err=%v", loaded, err)
+	}
+	thread, err := New(dir).Get(tid)
+	if err != nil || len(thread.Approvals) != 1 {
+		t.Fatalf("thread approvals = %+v, err=%v", thread.Approvals, err)
+	}
+	if err := New(dir).DeleteApproval(tid, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := New(dir).Approvals(tid); len(got) != 0 {
+		t.Fatalf("approvals after delete = %+v", got)
 	}
 }
 

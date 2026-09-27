@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Avatar } from '@/components/ui/avatar'
 import { ButlerConfirm } from '@/components/ButlerConfirm'
 import { ButlerSteps } from '@/components/ButlerSteps'
+import { Markdown } from '@/components/Markdown'
 import { api, errMsg } from '@/lib/api'
 import { postButlerTurn, type ButlerStatus } from '@/lib/butler'
 import type { ButlerConfirm as ButlerCard, ButlerThread, ButlerThreadSummary, ButlerTurn } from '@/lib/types'
@@ -48,6 +49,7 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
     try {
       const d = await api<{ thread: ButlerThread }>(`/api/butler/threads/${encodeURIComponent(id)}`)
       setThread(d.thread)
+      setConfirms(d.thread.approvals ?? [])
     } catch (e) { setError(errMsg(e)) }
   }
 
@@ -140,7 +142,7 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
                 <div className="min-w-0 flex-1">
                   <div className="w-fit max-w-full rounded-2xl bg-muted px-4 py-2.5">
                     {t.error ? (<p className="text-sm text-destructive" data-testid="butler-error">{t.error}</p>)
-                      : t.answer ? (<p className="text-sm whitespace-pre-wrap" data-testid="butler-answer">{t.answer}</p>)
+                      : t.answer ? (<div data-testid="butler-answer"><Markdown className="text-sm" text={t.answer} /></div>)
                       : !busy ? (<p className="text-sm text-muted-foreground">…</p>) : null}
                   </div>
                   {t.steps && t.steps.length > 0 && <ButlerSteps steps={t.steps} />}

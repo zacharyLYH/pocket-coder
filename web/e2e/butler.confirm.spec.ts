@@ -102,6 +102,7 @@ test.describe('butler confirm card', () => {
     await expect(page.getByTestId('butler-confirm-summary')).toContainText('Stop project a/b?')
     await expect(page.getByTestId('butler-confirm-blast')).toContainText('Stops its container')
     await expect(applied).toHaveLength(0)
+    await expect(page).toHaveScreenshot('butler-confirm.png')
 
     await page.getByTestId('butler-confirm-ok').click()
     await expect(page.getByTestId('butler-applied')).toContainText('Stopped.')

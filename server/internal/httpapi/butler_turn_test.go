@@ -90,8 +90,6 @@ func TestButlerTurnBriefMeFlow(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	butlerResetPendings()
-	defer butlerResetPendings()
 
 	rec := butlerPost(t, h, cookie, `{"prompt":"brief me"}`, http.StatusOK)
 	statuses, last := splitSSEBody(t, rec.Body.String())
@@ -227,8 +225,6 @@ func TestButlerTurnProposeFlow(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	butlerResetPendings()
-	defer butlerResetPendings()
 
 	rec := butlerPost(t, h, cookie, `{"prompt":"stop the api project"}`, http.StatusOK)
 	_, last := splitSSEBody(t, rec.Body.String())

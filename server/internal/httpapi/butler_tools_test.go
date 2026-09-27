@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -18,7 +19,11 @@ import (
 // butlerToolByName finds one tool in a registry by name.
 func butlerToolByName(t *testing.T, d Deps, name string, created *[]butlerCard) func(ctx context.Context, args string) (string, error) {
 	t.Helper()
-	for _, tl := range append(butlerReadTools(d), butlerWriteTools(d, created)...) {
+	threadID, _, err := d.Butler.ReserveNewThread("test approval", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tl := range append(butlerReadTools(d), butlerWriteTools(d, d.Butler, threadID, created)...) {
 		if tl.Name == name {
 			return tl.Run
 		}
@@ -349,7 +354,6 @@ func TestButlerWriteNeedsConfirm(t *testing.T) {
 	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
 		t.Fatal(err)
 	}
-	butlerResetPendings()
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 	var created []butlerCard
@@ -373,7 +377,7 @@ func TestButlerWriteNeedsConfirm(t *testing.T) {
 	if prop.BlastRadius == "" || len(created) != 1 || created[0].ID != prop.ConfirmID {
 		t.Fatalf("proposal = %s, want a blast-radius card", raw)
 	}
-	if n := butlerPendingCount(); n != 1 {
+	if n := d.Butler.ApprovalCount(); n != 1 {
 		t.Fatalf("pendings = %d, want 1", n)
 	}
 
@@ -383,7 +387,7 @@ func TestButlerWriteNeedsConfirm(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("apply: got %d %q", rec.Code, rec.Body.String())
 	}
-	if n := butlerPendingCount(); n != 0 {
+	if n := d.Butler.ApprovalCount(); n != 0 {
 		t.Fatalf("pendings after apply = %d, want 0", n)
 	}
 
@@ -402,7 +406,7 @@ func TestButlerWriteNeedsConfirm(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("discard: got %d %q", rec.Code, rec.Body.String())
 	}
-	if n := butlerPendingCount(); n != 0 {
+	if n := d.Butler.ApprovalCount(); n != 0 {
 		t.Fatalf("pendings after discard = %d, want 0", n)
 	}
 }
@@ -419,8 +423,6 @@ func TestButlerWriteProposeAll(t *testing.T) {
 	md.EXPECT().Exec(mock.Anything, "pcoder-a-b",
 		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "one\n"}, nil)
-	butlerResetPendings()
-	defer butlerResetPendings()
 
 	rows := []struct{ tool, args string }{
 		{butlerToolCreateProject, `{"repoUrl":"https://github.com/x/y.git","branch":"main"}`},
@@ -470,7 +472,7 @@ func TestButlerWriteProposeAll(t *testing.T) {
 			t.Fatalf("%s proposal = %s, want summary + blast radius", row.tool, raw)
 		}
 	}
-	if n := butlerPendingCount(); n != len(rows) {
+	if n := d.Butler.ApprovalCount(); n != len(rows) {
 		t.Fatalf("pendings = %d, want %d (nothing ran, everything stored)", n, len(rows))
 	}
 	if len(created) != len(rows) {
@@ -493,14 +495,14 @@ func TestButlerWriteProposeAll(t *testing.T) {
 		{butlerToolSaveShortcut, `{"project":"a/b","alias":"x","kind":"bogus"}`},
 		{butlerToolAddSSHKey, `{"publicKey":"not-a-key"}`},
 	}
-	before := butlerPendingCount()
+	before := d.Butler.ApprovalCount()
 	for _, row := range bad {
 		run := butlerToolByName(t, d, row.tool, nil)
 		if _, err := run(context.Background(), row.args); err == nil {
 			t.Fatalf("%s with %s: want validation error", row.tool, row.args)
 		}
 	}
-	if n := butlerPendingCount(); n != before {
+	if n := d.Butler.ApprovalCount(); n != before {
 		t.Fatalf("pendings = %d, want %d (invalid args store nothing)", n, before)
 	}
 }
@@ -518,8 +520,6 @@ func TestButlerWriteApplyStateOnly(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	butlerResetPendings()
-	defer butlerResetPendings()
 
 	apply := func(tool, args string) string {
 		t.Helper()
@@ -534,11 +534,7 @@ func TestButlerWriteApplyStateOnly(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &prop); err != nil {
 			t.Fatal(err)
 		}
-		p, ok := butlerTake(prop.ConfirmID)
-		if !ok {
-			t.Fatalf("%s: pending vanished", tool)
-		}
-		out, err := p.run(context.Background(), "")
+		out, err := applyButlerTestApproval(t, d, prop.ConfirmID, "")
 		if err != nil {
 			t.Fatalf("%s apply: %v", tool, err)
 		}
@@ -578,8 +574,6 @@ func TestButlerWriteApplyContainer(t *testing.T) {
 	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
 		t.Fatal(err)
 	}
-	butlerResetPendings()
-	defer butlerResetPendings()
 
 	apply := func(tool, args string) {
 		t.Helper()
@@ -594,11 +588,7 @@ func TestButlerWriteApplyContainer(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &prop); err != nil {
 			t.Fatal(err)
 		}
-		p, ok := butlerTake(prop.ConfirmID)
-		if !ok {
-			t.Fatalf("%s: pending vanished", tool)
-		}
-		if _, err := p.run(context.Background(), ""); err != nil {
+		if _, err := applyButlerTestApproval(t, d, prop.ConfirmID, ""); err != nil {
 			t.Fatalf("%s apply: %v", tool, err)
 		}
 	}
@@ -623,6 +613,24 @@ func TestButlerWriteApplyContainer(t *testing.T) {
 	apply(butlerToolGitPull, `{"project":"a/b"}`)
 }
 
+func applyButlerTestApproval(t *testing.T, d Deps, id, secret string) (string, error) {
+	t.Helper()
+	a, threadID, err := d.Butler.FindApproval(id)
+	if err != nil {
+		return "", err
+	}
+	for i := range butlerWriteTable {
+		if butlerWriteTable[i].name == a.Tool {
+			out, err := butlerWriteTable[i].exec(context.Background(), d, butlerArgs(string(a.Args)), secret)
+			if err == nil {
+				err = d.Butler.DeleteApproval(threadID, id)
+			}
+			return out, err
+		}
+	}
+	return "", fmt.Errorf("unknown tool %s", a.Tool)
+}
+
 // Each delete scope states its own blast radius: container takes the home
 // volume, repo takes the code, metadata takes only the record, all takes
 // everything.
@@ -634,8 +642,6 @@ func TestButlerDeleteBlastPerScope(t *testing.T) {
 	md.EXPECT().Exec(mock.Anything, "pcoder-a-b",
 		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "one\n"}, nil)
-	butlerResetPendings()
-	defer butlerResetPendings()
 
 	cases := []struct{ scope, want string }{
 		{"container", "home volume"},
@@ -685,8 +691,6 @@ func TestButlerNestedModel(t *testing.T) {
 // turn runs 409s instead of interleaving a second writer.
 func TestButlerApplyBusy409s(t *testing.T) {
 	d, _, pinOut, _ := newSessionDeps(t)
-	butlerResetPendings()
-	defer butlerResetPendings()
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 	run := butlerToolByName(t, d, butlerToolStop, nil)
@@ -720,7 +724,6 @@ func TestButlerApplyBusy409s(t *testing.T) {
 // value never appears in results, events, or errors.
 func TestButlerSensitiveWrites(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
-	butlerResetPendings()
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
@@ -794,14 +797,12 @@ func TestButlerSensitiveWrites(t *testing.T) {
 	if !strings.Contains(swRaw, "gpt-4o") {
 		t.Fatalf("switch proposal = %s, want the one-line diff", swRaw)
 	}
-	butlerResetPendings()
 }
 
 // The fanout example proposes first: "update opencode everywhere" runs
 // nowhere until Confirm.
 func TestButlerFanoutProposesOnly(t *testing.T) {
 	d, _, _, _ := newSessionDeps(t)
-	butlerResetPendings()
 	var created []butlerCard
 	fanout := butlerToolByName(t, d, butlerToolFanoutExec, &created)
 	raw, err := fanout(context.Background(), `{"projects":["a/b"],"command":"npm i -g opencode-ai@latest"}`)
@@ -811,8 +812,7 @@ func TestButlerFanoutProposesOnly(t *testing.T) {
 	if !strings.Contains(raw, "needsConfirm") || len(created) != 1 {
 		t.Fatalf("fanout = %s, want a confirm card, no execution", raw)
 	}
-	if n := butlerPendingCount(); n != 1 {
+	if n := d.Butler.ApprovalCount(); n != 1 {
 		t.Fatalf("pendings = %d, want 1 (nothing ran)", n)
 	}
-	butlerResetPendings()
 }

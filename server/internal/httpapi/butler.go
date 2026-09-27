@@ -112,11 +112,16 @@ func butlerThreadJSON(th butlerthreads.Thread) any {
 			"time": t.Time.Format(time.RFC3339),
 		})
 	}
+	approvals := make([]butlerCard, 0, len(th.Approvals))
+	for _, a := range th.Approvals {
+		approvals = append(approvals, butlerCard{ID: a.ID, Tool: a.Tool, Summary: a.Summary, BlastRadius: a.BlastRadius})
+	}
 	return map[string]any{
 		"id": th.ID, "title": th.Title,
 		"createdAt": th.CreatedAt.Format(time.RFC3339),
 		"updatedAt": th.UpdatedAt.Format(time.RFC3339),
 		"turns":     turns,
+		"approvals": approvals,
 	}
 }
 
@@ -266,7 +271,7 @@ func runButlerTurn(r *http.Request, d Deps, cfg agent.Config, st *butlerthreads.
 		}
 	}
 	var confirms []butlerCard
-	tools := append(butlerReadTools(d), butlerWriteTools(d, &confirms)...)
+	tools := append(butlerReadTools(d), butlerWriteTools(d, st, threadID, &confirms)...)
 	answer, err := agent.Run(r.Context(), cfg, butlerGuide, userPrompt, history, tools, "", nil, 6, onTrace, nil,
 		agent.WithoutGroundingNudge(), agent.WithLeadIn(prompt.ButlerWorkflows()))
 	if err != nil {

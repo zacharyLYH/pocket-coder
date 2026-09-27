@@ -4,6 +4,7 @@
 //	  manifest.json
 //	  1.json
 //	  2.json
+//	  approvals.json
 //
 // One global history: no project scope (the current page passes only a
 // hint per turn). Shape mirrors codemapthreads minus lineage: the folder
@@ -47,11 +48,12 @@ type Turn struct {
 
 // Thread is one chat, reassembled from manifest.json + sorted N.json.
 type Thread struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	Turns     []Turn    `json:"turns"`
+	ID        string     `json:"id"`
+	Title     string     `json:"title"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
+	Turns     []Turn     `json:"turns"`
+	Approvals []Approval `json:"approvals,omitempty"`
 }
 
 // Manifest is the thread-level record: exactly {id, title, createdAt}.
@@ -69,6 +71,15 @@ type Summary struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 	TurnCount int       `json:"turnCount"`
 	Preview   string    `json:"preview"`
+}
+
+type Approval struct {
+	ID          string          `json:"id"`
+	Tool        string          `json:"tool"`
+	Args        json.RawMessage `json:"args"`
+	Summary     string          `json:"summary"`
+	BlastRadius string          `json:"blastRadius"`
+	CreatedAt   time.Time       `json:"createdAt"`
 }
 
 // Store owns the thread folders. Safe for concurrent use.
@@ -179,6 +190,18 @@ func readTurnLocked(path string) (Turn, bool) {
 	return t, true
 }
 
+func readApprovalsLocked(dir string) []Approval {
+	raw, err := os.ReadFile(filepath.Join(dir, "approvals.json"))
+	if err != nil {
+		return nil
+	}
+	var out []Approval
+	if json.Unmarshal(raw, &out) != nil {
+		return nil
+	}
+	return out
+}
+
 func sortedTurnNsLocked(dir string) []int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -282,6 +305,88 @@ func (s *Store) CompleteTurn(threadID string, n int, turn Turn) error {
 	return writeJSONFile(filepath.Join(dir, strconv.Itoa(n)+".json"), turn)
 }
 
+func (s *Store) AddApproval(threadID string, a Approval) error {
+	if !validID(threadID) || a.ID == "" || a.Tool == "" {
+		return fmt.Errorf("bad approval")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir := s.threadDir(threadID)
+	if _, ok := readManifestLocked(dir); !ok {
+		return fmt.Errorf("unknown thread")
+	}
+	return writeJSONFile(filepath.Join(dir, "approvals.json"), append(readApprovalsLocked(dir), a))
+}
+
+func (s *Store) Approvals(threadID string) ([]Approval, error) {
+	if !validID(threadID) {
+		return nil, fmt.Errorf("unknown thread")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir := s.threadDir(threadID)
+	if _, ok := readManifestLocked(dir); !ok {
+		return nil, fmt.Errorf("unknown thread")
+	}
+	return readApprovalsLocked(dir), nil
+}
+
+func (s *Store) ApprovalCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, _ := os.ReadDir(s.dir)
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() && validID(e.Name()) {
+			n += len(readApprovalsLocked(s.threadDir(e.Name())))
+		}
+	}
+	return n
+}
+
+func (s *Store) FindApproval(id string) (Approval, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := os.ReadDir(s.dir)
+	if err != nil && !os.IsNotExist(err) {
+		return Approval{}, "", err
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !validID(e.Name()) {
+			continue
+		}
+		for _, a := range readApprovalsLocked(s.threadDir(e.Name())) {
+			if a.ID == id {
+				return a, e.Name(), nil
+			}
+		}
+	}
+	return Approval{}, "", fmt.Errorf("unknown approval")
+}
+
+func (s *Store) DeleteApproval(threadID, id string) error {
+	if !validID(threadID) {
+		return fmt.Errorf("unknown thread")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir := s.threadDir(threadID)
+	items := readApprovalsLocked(dir)
+	out := items[:0]
+	for _, a := range items {
+		if a.ID != id {
+			out = append(out, a)
+		}
+	}
+	if len(out) == len(items) {
+		return fmt.Errorf("unknown approval")
+	}
+	if len(out) == 0 {
+		return os.Remove(filepath.Join(dir, "approvals.json"))
+	}
+	return writeJSONFile(filepath.Join(dir, "approvals.json"), out)
+}
+
 // Get returns one thread with all its turns.
 func (s *Store) Get(id string) (Thread, error) {
 	if !validID(id) {
@@ -303,6 +408,7 @@ func (s *Store) Get(id string) (Thread, error) {
 		}
 		th.Turns = append(th.Turns, t)
 	}
+	th.Approvals = readApprovalsLocked(dir)
 	if len(th.Turns) == 0 {
 		return Thread{}, fmt.Errorf("unknown thread")
 	}

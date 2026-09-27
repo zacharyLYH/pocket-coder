@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"pcoder/internal/agent"
+	"pcoder/internal/butlerthreads"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
 	"pcoder/internal/session"
@@ -72,7 +73,7 @@ func butlerSessionCount(ctx context.Context, d Deps, id string) int {
 }
 
 // butlerWriteTools wraps the table: wall check, blast, propose.
-func butlerWriteTools(d Deps, created *[]butlerCard) []agent.Tool {
+func butlerWriteTools(d Deps, st *butlerthreads.Store, threadID string, created *[]butlerCard) []agent.Tool {
 	byName := make(map[string]butlerWriteDef, len(butlerWriteTable))
 	for _, def := range butlerWriteTable {
 		byName[def.name] = def
@@ -93,9 +94,10 @@ func butlerWriteTools(d Deps, created *[]butlerCard) []agent.Tool {
 				if err != nil {
 					return "", err
 				}
-				id := butlerPropose(def.name, summary, blast, func(ctx context.Context, secret string) (string, error) {
-					return def.exec(ctx, d, args, secret)
-				}, created)
+				id, err := butlerPropose(st, threadID, def.name, argsJSON, summary, blast, created)
+				if err != nil {
+					return "", err
+				}
 				return butlerJSON(map[string]any{
 					"needsConfirm": true, "confirmId": id,
 					"summary": summary, "blastRadius": blast,
