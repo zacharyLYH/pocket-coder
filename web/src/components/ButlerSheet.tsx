@@ -43,33 +43,42 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
 
   async function openThread(id: string) {
     setError(null)
+    setConfirms([])
+    setApplied([])
     try {
       const d = await api<{ thread: ButlerThread }>(`/api/butler/threads/${encodeURIComponent(id)}`)
       setThread(d.thread)
     } catch (e) { setError(errMsg(e)) }
   }
 
-  function newChat() { setThread(null); setError(null); setStatuses([]) }
+  function newChat() { setThread(null); setError(null); setStatuses([]); setConfirms([]); setApplied([]) }
 
   async function del(id: string) {
     try {
       await api(`/api/butler/threads/${encodeURIComponent(id)}`, { method: 'DELETE' })
       setThreads((t) => t.filter((x) => x.id !== id))
-      if (thread?.id === id) setThread(null)
+      if (thread?.id === id) {
+        setThread(null)
+        setConfirms([])
+        setApplied([])
+      }
     } catch (e) { setError(errMsg(e)) }
   }
 
   async function send(text: string) {
     const p = text.trim()
     if (!p || busy) return
-    setBusy(true); setError(null); setStatuses([]); setConfirms([])
+    setBusy(true); setError(null); setStatuses([])
     const optimistic: ButlerTurn = { turnId: 'pending', prompt: p, projectHint: projectHint ?? undefined }
     const curId = thread?.id && thread.id !== 'new' ? thread.id : undefined
     setThread((t) => t ? { ...t, turns: [...t.turns, optimistic] } : { id: 'new', title: 'New chat', createdAt: '', updatedAt: '', turns: [optimistic] })
     setPrompt('')
     try {
       const r = await postButlerTurn({ prompt: p, threadId: curId, projectHint: projectHint ?? undefined }, (s) => setStatuses((prev) => [...prev, s]))
-      setConfirms(r.confirms ?? [])
+      // Cards stay expanded across turns: merge the new ones in, keep the
+      // undecided ones (Confirm/Discard removes each by id).
+      const fresh = r.confirms ?? []
+      setConfirms((prev) => [...prev.filter((c) => !fresh.some((f) => f.id === c.id)), ...fresh])
       const d = await api<{ thread: ButlerThread }>(`/api/butler/threads/${encodeURIComponent(r.threadId)}`)
       setThread(d.thread)
       void refreshList()

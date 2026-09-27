@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -148,6 +150,62 @@ func TestButlerTurnBriefMeFlow(t *testing.T) {
 		if len([]rune(s.Result)) > 121 { // summarize cuts at 120 + "…"
 			t.Fatalf("step %q result not summarized: %q", s.Tool, s.Result)
 		}
+	}
+}
+
+// A whitespace-only prompt is a 400 with no side effects: no thread, no
+// model call. The fake has zero scripted calls, so any LLM burn fails.
+func TestButlerRejectsBlankPrompt(t *testing.T) {
+	d, _, pinOut, st := newSessionDeps(t)
+	f := newFakeModel(t)
+	seedAI(t, st, f.srv.URL)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	rec := butlerPost(t, h, cookie, `{"prompt":"   "}`, http.StatusBadRequest)
+	if !strings.Contains(rec.Body.String(), "1-2000") {
+		t.Fatalf("body = %q, want the length error", rec.Body.String())
+	}
+	threads, err := d.Butler.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(threads) != 0 {
+		t.Fatalf("threads = %d, want none created", len(threads))
+	}
+}
+
+// CompleteTurn failing mid-stream still answers 200: the failure rides
+// the stream with the thread identity for a retry, never a dropped 500.
+func TestButlerCompleteTurnFailureStreamsError(t *testing.T) {
+	d, _, pinOut, st := newSessionDeps(t)
+	butlerDir := t.TempDir()
+	d.Butler = butlerthreads.New(butlerDir)
+	f := newFakeModel(t,
+		func(w http.ResponseWriter, body map[string]any) {
+			// Sabotage the just-reserved thread before answering: the
+			// persist below must fail while the answer exists.
+			entries, _ := os.ReadDir(butlerDir)
+			for _, e := range entries {
+				_ = os.RemoveAll(filepath.Join(butlerDir, e.Name()))
+			}
+			scopeAllow(w, body)
+		},
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", "answered anyway", nil)
+		},
+	)
+	seedAI(t, st, f.srv.URL)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	rec := butlerPost(t, h, cookie, `{"prompt":"brief me"}`, http.StatusOK)
+	_, last := splitSSEBody(t, rec.Body.String())
+	if last["error"] != errInternal {
+		t.Fatalf("final = %v, want the transparent error, not the answer", last)
+	}
+	if last["threadId"] == "" || last["threadTitle"] == "" {
+		t.Fatalf("final = %v, want thread identity for a retry", last)
 	}
 }
 

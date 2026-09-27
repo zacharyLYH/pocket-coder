@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"pcoder/internal/agent"
@@ -92,7 +93,7 @@ func butlerWriteTools(d Deps, created *[]butlerCard) []agent.Tool {
 				if err != nil {
 					return "", err
 				}
-				id := butlerPropose(def.name, argsJSON, summary, blast, func(ctx context.Context, secret string) (string, error) {
+				id := butlerPropose(def.name, summary, blast, func(ctx context.Context, secret string) (string, error) {
 					return def.exec(ctx, d, args, secret)
 				}, created)
 				return butlerJSON(map[string]any{
@@ -109,7 +110,7 @@ func butlerWriteTools(d Deps, created *[]butlerCard) []agent.Tool {
 var butlerWriteTable = []butlerWriteDef{
 	{
 		name: butlerToolCreateProject, desc: "Clone a repo URL and branch, then report Ready.",
-		schema: butlerSchema(map[string]any{"repoUrl": strProp(), "branch": strProp()}),
+		schema: butlerSchema(map[string]any{"repoUrl": strProp(), "branch": strProp(), "cloneMethod": strProp()}),
 		blast: func(d Deps, _ context.Context, args map[string]any) (string, string, error) {
 			url := butlerStr(args, "repoUrl")
 			if url == "" {
@@ -218,8 +219,8 @@ var butlerWriteTable = []butlerWriteDef{
 		schema: butlerSchema(map[string]any{"project": strProp(), "name": strProp()}),
 		blast: func(_ Deps, _ context.Context, args map[string]any) (string, string, error) {
 			id, name := butlerStr(args, "project"), butlerStr(args, "name")
-			if id == "" || name == "" {
-				return "", "", fmt.Errorf("project and name are required")
+			if id == "" || !session.ValidName(name) {
+				return "", "", fmt.Errorf("project and a valid session name are required")
 			}
 			return fmt.Sprintf("Kill session %s in %s?", name, id), "Ends that session. Other sessions keep running.", nil
 		},
@@ -240,8 +241,8 @@ var butlerWriteTable = []butlerWriteDef{
 		schema: butlerSchema(map[string]any{"project": strProp(), "name": strProp()}),
 		blast: func(_ Deps, _ context.Context, args map[string]any) (string, string, error) {
 			id, name := butlerStr(args, "project"), butlerStr(args, "name")
-			if id == "" || name == "" {
-				return "", "", fmt.Errorf("project and name are required")
+			if id == "" || !session.ValidName(name) {
+				return "", "", fmt.Errorf("project and a valid session name are required")
 			}
 			return fmt.Sprintf("Restart session %s in %s?", name, id), "Kills it and relaunches the same harness or shell.", nil
 		},
@@ -289,11 +290,11 @@ var butlerWriteTable = []butlerWriteDef{
 		schema: butlerSchema(map[string]any{"project": strProp(), "port": map[string]any{"type": "number"}}),
 		blast: func(_ Deps, _ context.Context, args map[string]any) (string, string, error) {
 			id := butlerStr(args, "project")
-			port := butlerInt(args, "port", 0, 65535)
-			if id == "" || port == 0 {
-				return "", "", fmt.Errorf("project and a valid port are required")
+			port, _ := args["port"].(float64)
+			if id == "" || port <= 0 || port > 65535 {
+				return "", "", fmt.Errorf("project and a port 1-65535 are required")
 			}
-			return fmt.Sprintf("Preview %s on :%d?", id, port), "Opens the preview sidecar against that port.", nil
+			return fmt.Sprintf("Preview %s on :%d?", id, int(port)), "Opens the preview sidecar against that port.", nil
 		},
 		exec: func(ctx context.Context, d Deps, args map[string]any, _ string) (string, error) {
 			if d.Preview == nil {
@@ -417,14 +418,29 @@ var butlerWriteTable = []butlerWriteDef{
 			if id == "" {
 				return "", "", fmt.Errorf("project is required")
 			}
-			scope := orDefault(butlerStr(args, "scope"), "all")
-			n := butlerSessionCount(ctx, d, id)
-			volumes := "Volumes stay."
-			if scope == "all" {
-				volumes = "Containers, volumes, and metadata go."
+			scope := project.Scope(orDefault(butlerStr(args, "scope"), "all"))
+			switch scope {
+			case project.ScopeContainer, project.ScopeRepo, project.ScopeMetadata, project.ScopeAll:
+			default:
+				return "", "", fmt.Errorf("invalid scope %q: container, repo, metadata, or all", butlerStr(args, "scope"))
 			}
-			return fmt.Sprintf("Delete project %s?", id),
-				fmt.Sprintf("This removes the container and %d sessions. %s", n, volumes), nil
+			n := butlerSessionCount(ctx, d, id)
+			sess := "1 session"
+			if n != 1 {
+				sess = fmt.Sprintf("%d sessions", n)
+			}
+			var blast string
+			switch scope {
+			case project.ScopeContainer:
+				blast = fmt.Sprintf("This removes the container, its %s, and the home volume. The repo volume stays, and the project stays listed.", sess)
+			case project.ScopeRepo:
+				blast = fmt.Sprintf("This removes the container, its %s, and the repo volume (the code). The home volume stays, and the project stays listed.", sess)
+			case project.ScopeMetadata:
+				blast = "This removes only the project record, including its chats. Containers, volumes, and sessions are untouched."
+			default:
+				blast = fmt.Sprintf("This removes the container, its %s, both volumes, and the project record.", sess)
+			}
+			return fmt.Sprintf("Delete project %s?", id), blast, nil
 		},
 		exec: func(ctx context.Context, d Deps, args map[string]any, _ string) (string, error) {
 			if d.Projects == nil {
@@ -581,14 +597,16 @@ var butlerWriteTable = []butlerWriteDef{
 			if hid == "" || model == "" {
 				return "", "", fmt.Errorf("harness and model are required")
 			}
-			old := "(unset)"
+			where, old := "model", "(unset)"
 			if d.Harnesses != nil {
 				if h, err := d.Harnesses.Get(hid); err == nil {
-					old = butlerConfigModel(h.Config)
+					if path, prev, ok := butlerFindModel(h.Config); ok {
+						where, old = strings.Join(path, "."), prev
+					}
 				}
 			}
 			return fmt.Sprintf("Switch model in %s to %s?", hid, model),
-				fmt.Sprintf("Rewrites one line in %s config: model %s -> %s.", hid, old, model), nil
+				fmt.Sprintf("Rewrites one line in %s config: %s %s -> %s.", hid, where, old, model), nil
 		},
 		exec: func(_ context.Context, d Deps, args map[string]any, _ string) (string, error) {
 			if d.State == nil {
@@ -600,7 +618,7 @@ var butlerWriteTable = []butlerWriteDef{
 				if !ok {
 					return fmt.Errorf("no such harness")
 				}
-				h.Config = butlerConfigWithModel(h.Config, model)
+				h.Config = butlerSetModel(h.Config, model)
 				doc.Harnesses[hid] = h
 				return nil
 			})
@@ -758,23 +776,44 @@ func orDefault(s, def string) string {
 	return s
 }
 
-// butlerConfigModel reads the "model" key out of a harness config blob.
-func butlerConfigModel(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return "(unset)"
-	}
+// butlerFindModel locates the first "model" string in a harness config
+// blob, descending sorted keys for determinism. Profile-shaped configs
+// (providers.openai.model) report their dotted path; flat ones report
+// ["model"]. ok is false when no model string exists.
+func butlerFindModel(raw json.RawMessage) (path []string, old string, ok bool) {
 	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return "(unset)"
+	if len(raw) == 0 || json.Unmarshal(raw, &m) != nil {
+		return nil, "", false
 	}
-	if s, ok := m["model"].(string); ok && s != "" {
-		return s
+	var walk func(prefix []string, obj map[string]any) bool
+	walk = func(prefix []string, obj map[string]any) bool {
+		keys := make([]string, 0, len(obj))
+		for k := range obj {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			switch v := obj[k].(type) {
+			case string:
+				if k == "model" && strings.TrimSpace(v) != "" {
+					path, old, ok = append(prefix, k), v, true
+					return true
+				}
+			case map[string]any:
+				if walk(append(prefix, k), v) {
+					return true
+				}
+			}
+		}
+		return false
 	}
-	return "(unset)"
+	walk(nil, m)
+	return path, old, ok
 }
 
-// butlerConfigWithModel returns the config blob with "model" set.
-func butlerConfigWithModel(raw json.RawMessage, model string) json.RawMessage {
+// butlerSetModel returns the config blob with the model set: at its
+// existing path when one is found, top-level "model" otherwise.
+func butlerSetModel(raw json.RawMessage, model string) json.RawMessage {
 	var m map[string]any
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &m)
@@ -782,7 +821,20 @@ func butlerConfigWithModel(raw json.RawMessage, model string) json.RawMessage {
 	if m == nil {
 		m = map[string]any{}
 	}
-	m["model"] = model
+	if path, _, ok := butlerFindModel(raw); ok && len(path) > 0 {
+		cur := m
+		for _, k := range path[:len(path)-1] {
+			next, _ := cur[k].(map[string]any)
+			if next == nil {
+				next = map[string]any{}
+				cur[k] = next
+			}
+			cur = next
+		}
+		cur[path[len(path)-1]] = model
+	} else {
+		m["model"] = model
+	}
 	out, _ := json.Marshal(m)
 	return out
 }

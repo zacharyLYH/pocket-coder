@@ -43,9 +43,9 @@ func TestPromptNoWeakCopies(t *testing.T) {
 
 // Budgets enforce the restraint rule: a block earns its place by changing
 // behavior, and these caps force a conscious edit to grow them. Sizes use
-// representative 10+23 tool names, matching the real registry shape.
+// representative 11+23 tool names, matching the real registry shape.
 func TestPromptBudgets(t *testing.T) {
-	reads := make([]string, 10)
+	reads := make([]string, 11)
 	writes := make([]string, 23)
 	for i := range reads {
 		reads[i] = fmt.Sprintf("read_tool_%d", i)

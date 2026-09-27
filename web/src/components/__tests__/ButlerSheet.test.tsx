@@ -100,6 +100,17 @@ describe('ButlerSheet', () => {
     await waitFor(() => expect(screen.queryByTestId('butler-confirm')).not.toBeInTheDocument())
   })
 
+  it('clears pending cards when starting a new chat', async () => {
+    const final = `{"threadId":"${THREAD}","threadTitle":"Brief me","turnId":"t1","answer":"Ready.","steps":[],"confirms":[{"id":"c1","tool":"stop","summary":"Stop project?","blastRadius":"Container stops."}],"time":"2026-09-02T10:00:00Z"}\n`
+    mockAll(final)
+    render(<ButlerSheet projectHint={null} onClearHint={vi.fn()} onClose={vi.fn()} />)
+    fireEvent.change(screen.getByTestId('butler-prompt'), { target: { value: 'Stop it' } })
+    fireEvent.click(screen.getByTestId('butler-send'))
+    expect(await screen.findByTestId('butler-confirm')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('butler-new'))
+    expect(screen.queryByTestId('butler-confirm')).not.toBeInTheDocument()
+  })
+
   it('clears the hint chip', async () => {
     mockAll('')
     const onClear = vi.fn()

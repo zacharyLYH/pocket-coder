@@ -122,16 +122,10 @@ func butlerThreadJSON(th butlerthreads.Thread) any {
 
 func handleButlerTurn(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.ButlerAsk, "butler ask failed", err, nil)
-			}
-		}()
 		cfg := aiConfig(d, aiBody{})
 		if !cfg.Valid() {
-			err = errors.New("ai not configured")
-			writeErr(w, http.StatusConflict, err.Error())
+			obsFail(r, obs.ButlerAsk, "butler ask failed", errors.New("ai not configured"), nil)
+			writeErr(w, http.StatusConflict, "ai not configured")
 			return
 		}
 		var body struct {
@@ -142,18 +136,19 @@ func handleButlerTurn(d Deps) http.HandlerFunc {
 		if !decodeBody(w, r, &body, false) {
 			return
 		}
+		body.Prompt = strings.TrimSpace(body.Prompt)
 		if len(body.Prompt) == 0 || len(body.Prompt) > 2000 {
-			err = errors.New("prompt must be 1-2000 chars")
-			writeErr(w, http.StatusBadRequest, err.Error())
+			obsFail(r, obs.ButlerAsk, "butler ask failed", errors.New("prompt must be 1-2000 chars"), nil)
+			writeErr(w, http.StatusBadRequest, "prompt must be 1-2000 chars")
 			return
 		}
 		st, ok := butlerStoreOr500(w, d)
 		if !ok {
-			err = errors.New("butler store not configured")
+			obsFail(r, obs.ButlerAsk, "butler ask failed", errors.New("butler store not configured"), nil)
 			return
 		}
 		if !butlerBusy.CompareAndSwap(false, true) {
-			err = errors.New("butler busy")
+			obsFail(r, obs.ButlerAsk, "butler ask failed", errors.New("butler busy"), nil)
 			writeErr(w, http.StatusConflict, "butler busy — wait for the current run")
 			return
 		}
@@ -164,7 +159,6 @@ func handleButlerTurn(d Deps) http.HandlerFunc {
 		if newThread {
 			tid, turn, rerr := st.ReserveNewThread(body.Prompt, body.ProjectHint)
 			if rerr != nil {
-				err = rerr
 				obsFail(r, obs.ButlerTurn, "reserve butler thread failed", rerr, nil)
 				writeTurnErr(w, http.StatusInternalServerError, errInternal, "", "")
 				return
@@ -181,7 +175,6 @@ func handleButlerTurn(d Deps) http.HandlerFunc {
 			var rerr error
 			n, turnID, rerr = st.ReserveFollowup(threadID, body.Prompt, body.ProjectHint)
 			if rerr != nil {
-				err = rerr
 				obsFail(r, obs.ButlerTurn, "reserve butler turn failed", rerr, map[string]any{"threadId": threadID})
 				writeTurnErr(w, http.StatusInternalServerError, errInternal, threadID, threadTitle)
 				return
@@ -196,18 +189,20 @@ func handleButlerTurn(d Deps) http.HandlerFunc {
 			msg := runErr.Error()
 			turn.Error = &msg
 			_ = st.CompleteTurn(threadID, n, turn)
-			err = runErr
 			obsFail(r, obs.ButlerTurn, "butler turn failed", runErr, map[string]any{"threadId": threadID})
 			// The stream is already 200: a second WriteHeader would be dropped
 			// and the client would read a bare error as the answer. Failures
-			// ride the stream as the final line, identity intact.
+			// ride the stream as the final line, identity intact, so the
+			// user sees the failure transparently and can retry in-thread.
 			final(map[string]any{"error": msg, "threadId": threadID, "threadTitle": threadTitle})
 			return
 		}
 		if cerr := st.CompleteTurn(threadID, n, turn); cerr != nil {
-			err = cerr
 			obsFail(r, obs.ButlerTurn, "complete butler turn failed", cerr, map[string]any{"threadId": threadID})
-			writeTurnErr(w, http.StatusInternalServerError, errInternal, threadID, threadTitle)
+			// Same stream-already-200 story as above: the answer exists but
+			// the persist failed, so the failure rides the stream with the
+			// thread identity for a retry instead of a dropped 500.
+			final(map[string]any{"error": errInternal, "threadId": threadID, "threadTitle": threadTitle})
 			return
 		}
 		_, _ = d.Events.Append("butler.turn", map[string]any{"threadId": threadID})

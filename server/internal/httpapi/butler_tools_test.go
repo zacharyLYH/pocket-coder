@@ -42,8 +42,8 @@ func TestButlerReadTools(t *testing.T) {
 	for _, tl := range butlerReadTools(d) {
 		byName[tl.Name] = tl.Run
 	}
-	if len(byName) != 11 {
-		t.Fatalf("read tools = %d, want 10", len(byName))
+	if len(byName) != len(butlerReadNames) {
+		t.Fatalf("read tools = %d, want %d", len(byName), len(butlerReadNames))
 	}
 
 	// list_projects: ids, branches, container status — no repo URLs.
@@ -183,6 +183,11 @@ func TestButlerReadTools(t *testing.T) {
 	}
 	if !strings.Contains(out, "SMTP_PASSWORD") {
 		t.Fatalf("env_names = %s", out)
+	}
+	for _, name := range []string{"PCODER_DATA_DIR", "PCODER_BIND", "PCODER_DOCKER_SOCK"} {
+		if !strings.Contains(out, name) {
+			t.Fatalf("env_names = %s, want documented %s", out, name)
+		}
 	}
 	out, err = byName[butlerToolConfigStatus](context.Background(), `{}`)
 	if err != nil {
@@ -477,6 +482,10 @@ func TestButlerWriteProposeAll(t *testing.T) {
 		{butlerToolStart, `{}`},
 		{butlerToolSessionCreate, `{"project":"a/b","name":"bad name!"}`},
 		{butlerToolPreviewStart, `{"project":"a/b","port":0}`},
+		{butlerToolPreviewStart, `{"project":"a/b","port":70000}`},
+		{butlerToolSessionKill, `{"project":"a/b","name":"bad name!"}`},
+		{butlerToolSessionRestart, `{"project":"a/b","name":""}`},
+		{butlerToolDeleteProject, `{"project":"a/b","scope":"everything"}`},
 		{butlerToolGitSwitch, `{"project":"a/b"}`},
 		{butlerToolInstallHarness, `{"harness":"fake","projects":[]}`},
 		{butlerToolFanoutExec, `{"projects":[],"command":"echo hi"}`},
@@ -542,8 +551,8 @@ func TestButlerWriteApplyStateOnly(t *testing.T) {
 	}
 	apply(butlerToolSwitchModel, `{"harness":"h","model":"gpt-4o"}`)
 	h, _ := d.Harnesses.Get("h")
-	if got := butlerConfigModel(h.Config); got != "gpt-4o" {
-		t.Fatalf("harness model = %q, want gpt-4o", got)
+	if path, got, ok := butlerFindModel(h.Config); !ok || got != "gpt-4o" {
+		t.Fatalf("harness model = %v %q, want [model] gpt-4o", path, got)
 	}
 	apply(butlerToolSaveShortcut, `{"project":"a/b","alias":"retest","kind":"cmd","command":"npm test"}`)
 	var shortcuts []state.Shortcut
@@ -614,6 +623,98 @@ func TestButlerWriteApplyContainer(t *testing.T) {
 	apply(butlerToolGitPull, `{"project":"a/b"}`)
 }
 
+// Each delete scope states its own blast radius: container takes the home
+// volume, repo takes the code, metadata takes only the record, all takes
+// everything.
+func TestButlerDeleteBlastPerScope(t *testing.T) {
+	d, md, _, st := newSessionDeps(t)
+	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
+		t.Fatal(err)
+	}
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b",
+		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "one\n"}, nil)
+	butlerResetPendings()
+	defer butlerResetPendings()
+
+	cases := []struct{ scope, want string }{
+		{"container", "home volume"},
+		{"repo", "repo volume (the code)"},
+		{"metadata", "only the project record"},
+		{"all", "both volumes, and the project record"},
+	}
+	for _, c := range cases {
+		run := butlerToolByName(t, d, butlerToolDeleteProject, nil)
+		raw, err := run(context.Background(), `{"project":"a/b","scope":"`+c.scope+`"}`)
+		if err != nil {
+			t.Fatalf("scope %s: %v", c.scope, err)
+		}
+		var prop struct {
+			BlastRadius string `json:"blastRadius"`
+		}
+		if err := json.Unmarshal([]byte(raw), &prop); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(prop.BlastRadius, c.want) {
+			t.Fatalf("scope %s blast = %q, want %q", c.scope, prop.BlastRadius, c.want)
+		}
+	}
+}
+
+// Nested profile configs resolve to their dotted model path, and the
+// apply writes back at that path instead of adding a stray top-level key.
+func TestButlerNestedModel(t *testing.T) {
+	raw := json.RawMessage(`{"verbose":true,"providers":{"openai":{"model":"gpt-3"}}}`)
+	path, old, ok := butlerFindModel(raw)
+	if !ok || old != "gpt-3" || strings.Join(path, ".") != "providers.openai.model" {
+		t.Fatalf("find = %v %q, want providers.openai.model gpt-3", path, old)
+	}
+	out := butlerSetModel(raw, "gpt-4o")
+	if path2, got, ok := butlerFindModel(out); !ok || got != "gpt-4o" || strings.Join(path2, ".") != "providers.openai.model" {
+		t.Fatalf("set = %s, want the nested path updated", out)
+	}
+	if _, _, ok := butlerFindModel(json.RawMessage(`{"a":1}`)); ok {
+		t.Fatal("find on model-less config must miss")
+	}
+	if _, _, ok := butlerFindModel(json.RawMessage(`not json`)); ok {
+		t.Fatal("find on garbage must miss")
+	}
+}
+
+// Applies serialize with turns: proposing is open, but Confirm while a
+// turn runs 409s instead of interleaving a second writer.
+func TestButlerApplyBusy409s(t *testing.T) {
+	d, _, pinOut, _ := newSessionDeps(t)
+	butlerResetPendings()
+	defer butlerResetPendings()
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	run := butlerToolByName(t, d, butlerToolStop, nil)
+	raw, err := run(context.Background(), `{"project":"a/b"}`)
+	if err != nil {
+		t.Fatalf("propose: %v", err)
+	}
+	var prop struct {
+		ConfirmID string `json:"confirmId"`
+	}
+	if err := json.Unmarshal([]byte(raw), &prop); err != nil {
+		t.Fatal(err)
+	}
+	if !butlerBusy.CompareAndSwap(false, true) {
+		t.Fatal("busy slot not taken")
+	}
+	defer func() { butlerBusy.Store(false) }()
+	rec := authedPost(t, h, cookie, "/api/butler/confirms/"+prop.ConfirmID+"/apply", `{}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("apply while busy: got %d, want 409", rec.Code)
+	}
+	// Discard stays open: dropping a proposal is always safe.
+	rec = authedPost(t, h, cookie, "/api/butler/confirms/"+prop.ConfirmID+"/discard", `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("discard while busy: got %d, want 200", rec.Code)
+	}
+}
+
 // Sensitive writes: the delete card states the blast radius (sessions +
 // volumes), unknown confirm ids never run anything, and the masked env
 // value never appears in results, events, or errors.
@@ -643,8 +744,8 @@ func TestButlerSensitiveWrites(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &prop); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(prop.BlastRadius, "3 sessions") || !strings.Contains(prop.BlastRadius, "Volumes stay") {
-		t.Fatalf("blast radius = %q, want sessions + volumes", prop.BlastRadius)
+	if !strings.Contains(prop.BlastRadius, "3 sessions") || !strings.Contains(prop.BlastRadius, "repo volume stays") {
+		t.Fatalf("blast radius = %q, want sessions + surviving volume", prop.BlastRadius)
 	}
 
 	// Destructive tooling needs the explicit id: a wrong one 404s.

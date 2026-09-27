@@ -9,7 +9,6 @@ import (
 	"context"
 	"net/http"
 	"sync"
-	"time"
 
 	"pcoder/internal/butlerthreads"
 	"pcoder/internal/obs"
@@ -27,9 +26,7 @@ type butlerCard struct {
 // value from the apply body (empty for every tool but propose_env_fix).
 type butlerPending struct {
 	card butlerCard
-	args string
 	run  func(ctx context.Context, secret string) (string, error)
-	time time.Time
 }
 
 var butlerPendings = struct {
@@ -39,11 +36,11 @@ var butlerPendings = struct {
 
 // butlerPropose stores run and returns its confirm id. created collects
 // the public card when non-nil (the turn's confirms array).
-func butlerPropose(tool, args, summary, blast string, run func(ctx context.Context, secret string) (string, error), created *[]butlerCard) string {
+func butlerPropose(tool, summary, blast string, run func(ctx context.Context, secret string) (string, error), created *[]butlerCard) string {
 	id := butlerthreads.MintID()
 	card := butlerCard{ID: id, Tool: tool, Summary: summary, BlastRadius: blast}
 	butlerPendings.Lock()
-	butlerPendings.m[id] = butlerPending{card: card, args: args, run: run, time: time.Now().UTC()}
+	butlerPendings.m[id] = butlerPending{card: card, run: run}
 	butlerPendings.Unlock()
 	if created != nil {
 		*created = append(*created, card)
@@ -73,9 +70,16 @@ func handleButlerConfirmApply(d Deps) http.HandlerFunc {
 		if !decodeBody(w, r, &body, true) {
 			return
 		}
+		// Hold the same slot as turns for the entire apply, so a turn cannot
+		// start between the busy check and the mutation.
+		if !butlerBusy.CompareAndSwap(false, true) {
+			writeErr(w, http.StatusConflict, "butler busy — wait for the current run")
+			return
+		}
+		defer butlerBusy.Store(false)
 		p, ok := butlerTake(id)
 		if !ok {
-			writeErr(w, http.StatusNotFound, "unknown confirm — it may have expired")
+			writeErr(w, http.StatusNotFound, "unknown confirm — propose it again from chat")
 			return
 		}
 		// The secret never enters obs/events: only the tool name is logged.
@@ -95,7 +99,7 @@ func handleButlerConfirmDiscard(_ Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if _, ok := butlerTake(id); !ok {
-			writeErr(w, http.StatusNotFound, "unknown confirm — it may have expired")
+			writeErr(w, http.StatusNotFound, "unknown confirm — propose it again from chat")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})

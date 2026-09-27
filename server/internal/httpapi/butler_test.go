@@ -203,6 +203,10 @@ func TestButlerTurnFailurePersistsAndStreamsError(t *testing.T) {
 	if len(th.Turns) != 1 || th.Turns[0].Error == nil || th.Turns[0].Answer != "" {
 		t.Fatalf("persisted turn = %+v", th.Turns)
 	}
+	// Single logging is structural now: the deferred ask-log is gone, so
+	// each error return below carries its only obsFail. (Project-less
+	// butler entries reach slog only — emit drops them from the store by
+	// design — so there is no countable assertion here.)
 }
 
 // The loop cap: a model that always answers with tool calls (and never a
