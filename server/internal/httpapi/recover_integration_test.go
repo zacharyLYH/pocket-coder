@@ -30,7 +30,9 @@ func TestStateMockRecovery(t *testing.T) {
 
 	// seed a fresh data dir with one project, shaped like the committed
 	// mock (owner/repo key, repo + harness + session, no name field)
-	seed := `{"user":{"email":"me@example.com"},"projects":{` +
+	seed := `{"user":{"email":"me@example.com"},` +
+		`"git_identities":[{"id":"default","label":"Default","name":"Test","email":"test@example.com","token":"test-token"}],` +
+		`"projects":{` +
 		`"` + id + `":{"repo":"` + url + `","branch":"main","cloneMethod":"http",` +
 		`"harnesses":["opencode"],"sessions":{"main":{},"oc1":{"harness":"opencode"}},` +
 		`"shortcuts":[{"id":"qc-dev","alias":"dev","kind":"cmd","command":"npm install && npm start -- --host 0.0.0.0"}]}},` +
