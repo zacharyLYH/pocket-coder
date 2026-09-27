@@ -16,6 +16,7 @@ const (
 	butlerToolHarnessInventory = "harness_inventory"
 	butlerToolEnvNames         = "env_names"
 	butlerToolConfigStatus     = "config_status"
+	butlerToolListAIModels     = "list_ai_models"
 	butlerToolArchitecture     = "architecture"
 )
 
@@ -41,6 +42,7 @@ const (
 	butlerToolFanoutExec      = "fanout_exec"
 	butlerToolProposeEnvFix   = "propose_env_fix"
 	butlerToolSwitchModel     = "switch_model"
+	butlerToolUpdateAIModel   = "update_ai_model"
 	butlerToolSaveShortcut    = "save_shortcut"
 	butlerToolSaveGitIdentity = "save_git_identity"
 	butlerToolAddSSHKey       = "add_ssh_key"
@@ -58,6 +60,7 @@ var butlerReadNames = []string{
 	butlerToolHarnessInventory,
 	butlerToolEnvNames,
 	butlerToolConfigStatus,
+	butlerToolListAIModels,
 	butlerToolArchitecture,
 }
 
@@ -83,6 +86,7 @@ var butlerWriteNames = []string{
 	butlerToolFanoutExec,
 	butlerToolProposeEnvFix,
 	butlerToolSwitchModel,
+	butlerToolUpdateAIModel,
 	butlerToolSaveShortcut,
 	butlerToolSaveGitIdentity,
 	butlerToolAddSSHKey,

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -424,6 +425,65 @@ func TestRunRepeatCallHint(t *testing.T) {
 	raw, _ := json.Marshal(bodies[2])
 	if !strings.Contains(string(raw), "already ran") {
 		t.Fatalf("repeat hint missing from model context: %s", string(raw))
+	}
+}
+
+func TestRunRepeatFailureEscalates(t *testing.T) {
+	// Same tool+args failing twice: the second error reply tells the
+	// model to stop repeating and change approach, and the run still
+	// completes when the model then answers.
+	var bodies []map[string]any
+	var mu sync.Mutex
+	errResp := func(id string) map[string]any {
+		return map[string]any{
+			"id": "chatcmpl-test", "object": "chat.completion", "created": 1, "model": "fake",
+			"choices": []map[string]any{{"index": 0, "finish_reason": "tool_calls",
+				"message": map[string]any{"role": "assistant", "content": "",
+					"tool_calls": []map[string]any{{
+						"id": id, "type": "function",
+						"function": map[string]any{"name": "switch", "arguments": `{"model":"liquid"}`},
+					}}}}},
+		}
+	}
+	doneResp := map[string]any{
+		"id": "chatcmpl-test", "object": "chat.completion", "created": 1, "model": "fake",
+		"choices": []map[string]any{{"index": 0, "finish_reason": "stop",
+			"message": map[string]any{"role": "assistant", "content": "cannot do that"}}},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		raw, _ := json.Marshal(body)
+		var cp map[string]any
+		_ = json.Unmarshal(raw, &cp)
+		n := len(bodies)
+		bodies = append(bodies, cp)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if n < 2 {
+			_ = json.NewEncoder(w).Encode(errResp("c1"))
+		} else {
+			_ = json.NewEncoder(w).Encode(doneResp)
+		}
+	}))
+	defer srv.Close()
+	boom := Tool{Name: "switch", Description: "s", Schema: map[string]any{"type": "object"},
+		Run: func(_ context.Context, _ string) (string, error) { return "", errors.New("model \"liquid\" is not configured") }}
+	out, err := Run(context.Background(),
+		Config{BaseURL: srv.URL, APIKey: "k", Model: "m"},
+		"sys", "hi", nil, []Tool{boom}, "s", nil, 4, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "cannot do that" {
+		t.Fatalf("out = %q, want the post-escalation answer", out)
+	}
+	// The third request carries the failure-escalation note: the note
+	// rides the second error's reply, which the model sees one round later.
+	raw, _ := json.Marshal(bodies[2])
+	if !strings.Contains(string(raw), "already failed") || !strings.Contains(string(raw), "do not repeat") {
+		t.Fatalf("failure escalation missing from model context: %s", string(raw))
 	}
 }
 

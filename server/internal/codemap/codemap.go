@@ -408,7 +408,8 @@ func Ask(ctx context.Context, cfg agent.Config, exec Executor, container, repoDi
 	if listing := repoOrientation(exec, ctx, container, repoDir); listing != "" {
 		sys += "\n\nRepo root orientation (top-level files/dirs of this project — use it to pick stack-appropriate first searches, e.g. package.json/src means JS, not Python):\n" + listing
 	}
-	out, err := agent.Run(ctx, cfg, sys, prompt, history, Tools(exec, container, repoDir), "codemap", schemaJSON(), 8,
+	tools := append([]agent.Tool{agent.TodoTool(lin)}, Tools(exec, container, repoDir)...)
+	out, err := agent.Run(ctx, cfg, sys, prompt, history, tools, "codemap", schemaJSON(), 8,
 		func(ev agent.TraceEvent) {
 			switch ev.Kind {
 			case "round":

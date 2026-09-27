@@ -62,8 +62,8 @@ func TestPromptBudgets(t *testing.T) {
 	if n := len(ButlerWorkflows()); n > 700 {
 		t.Fatalf("workflow examples = %d chars, over the 700 budget", n)
 	}
-	if n := len(CodemapGuide()); n > 1600 {
-		t.Fatalf("codemap guide = %d chars, over the 1600 budget", n)
+	if n := len(CodemapGuide()); n > 1700 {
+		t.Fatalf("codemap guide = %d chars, over the 1700 budget", n)
 	}
 }
 

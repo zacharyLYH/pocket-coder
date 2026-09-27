@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
+	"pcoder/internal/agent"
+	"pcoder/internal/butlerthreads"
 	"pcoder/internal/docker"
 	"pcoder/internal/project"
 	"pcoder/internal/prompt"
@@ -23,7 +25,7 @@ func butlerToolByName(t *testing.T, d Deps, name string, created *[]butlerCard) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tl := range append(butlerReadTools(d), butlerWriteTools(d, d.Butler, threadID, created)...) {
+	for _, tl := range append(butlerReadTools(d), butlerWriteTools(d, d.Butler, threadID, "turn-test", created)...) {
 		if tl.Name == name {
 			return tl.Run
 		}
@@ -210,6 +212,31 @@ func TestButlerReadTools(t *testing.T) {
 	if strings.Contains(out, "test-token") || strings.Contains(out, `"k"`) {
 		t.Fatalf("config_status leaks secrets: %s", out)
 	}
+
+	// list_ai_models: entries with id/label/model/hasKey, never key values.
+	if err := st.Mutate(func(doc *state.Document) error {
+		doc.AIModels = []state.AIModel{
+			{ID: "m1", Label: "liq", BaseURL: "https://x", APIKey: "secret-key-1", Model: "gpt-3.5"},
+			{ID: "m2", Label: "four", BaseURL: "https://y", APIKey: "secret-key-2", Model: "gpt-4o"},
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err = byName[butlerToolListAIModels](context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("list_ai_models: %v", err)
+	}
+	for _, want := range []string{"m1", "liq", "gpt-3.5", "m2"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("list_ai_models = %s, want %q", out, want)
+		}
+	}
+	for _, banned := range []string{"secret-key-1", "secret-key-2"} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("list_ai_models leaks key values: %s", out)
+		}
+	}
 	_ = cookie
 	_ = h
 }
@@ -218,8 +245,8 @@ func TestButlerReadTools(t *testing.T) {
 // order, so the lists and the registries cannot drift.
 func TestButlerToolNames(t *testing.T) {
 	d, _, _, _ := newSessionDeps(t)
-	if len(butlerReadNames) != 11 || len(butlerWriteNames) != 23 {
-		t.Fatalf("consts = %d reads + %d writes, want 11 + 23",
+	if len(butlerReadNames) != 12 || len(butlerWriteNames) != 24 {
+		t.Fatalf("consts = %d reads + %d writes, want 12 + 24",
 			len(butlerReadNames), len(butlerWriteNames))
 	}
 	var built []string
@@ -256,6 +283,8 @@ func TestButlerGuideLocksScope(t *testing.T) {
 	for _, want := range []string{
 		"is this something you can help with", // the yes/no lockdown
 		"read more than you can write",        // the responsibility invariant
+		"never improvise with an adjacent tool", // the no-matching-tool escape hatch
+		"todo checklist first",                // todo before the first tool call
 		"terminal coding CLIs",                // product context
 		"texting a friend",                    // prose guidance
 		"/workspace/repo",                     // non-goal: never open repos
@@ -351,6 +380,10 @@ func TestButlerScopeGateMalformedFallsThrough(t *testing.T) {
 // card; only Confirm applies it. Discard drops it silently.
 func TestButlerWriteNeedsConfirm(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
+	f := newFakeModel(t, func(w http.ResponseWriter, _ map[string]any) {
+		writeCompletion(w, "stop", "What would you like to do next?", nil)
+	})
+	seedAI(t, st, f.srv.URL)
 	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
 		t.Fatal(err)
 	}
@@ -409,6 +442,14 @@ func TestButlerWriteNeedsConfirm(t *testing.T) {
 	if n := d.Butler.ApprovalCount(); n != 0 {
 		t.Fatalf("pendings after discard = %d, want 0", n)
 	}
+	a, threadID, err := d.Butler.FindApproval(prop2.ConfirmID)
+	if err != nil || a.Status != butlerthreads.ApprovalDiscarded {
+		t.Fatalf("discarded approval = %+v, err=%v", a, err)
+	}
+	thread, err := d.Butler.Get(threadID)
+	if err != nil || len(thread.Turns) != 2 || !strings.Contains(thread.Turns[1].Answer, "What would you like") {
+		t.Fatalf("discard closure thread = %+v, err=%v", thread, err)
+	}
 }
 
 // Every write tool proposes: valid args store a blast-radius card and run
@@ -418,6 +459,13 @@ func TestButlerWriteNeedsConfirm(t *testing.T) {
 func TestButlerWriteProposeAll(t *testing.T) {
 	d, md, _, st := newSessionDeps(t)
 	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Mutate(func(doc *state.Document) error {
+		doc.AIModels = []state.AIModel{{ID: "m1", Model: "gpt-3.5"}, {ID: "m2", Model: "gpt-4o"}}
+		doc.Harnesses["fake"] = state.Harness{ID: "fake", Name: "Fake", Command: "fake", Config: json.RawMessage(`{"model":"gpt-3.5"}`)}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	md.EXPECT().Exec(mock.Anything, "pcoder-a-b",
@@ -445,6 +493,7 @@ func TestButlerWriteProposeAll(t *testing.T) {
 		{butlerToolFanoutExec, `{"projects":["a/b"],"command":"echo hi"}`},
 		{butlerToolProposeEnvFix, `{"name":"SMTP_PASSWORD"}`},
 		{butlerToolSwitchModel, `{"harness":"fake","model":"gpt-4o"}`},
+		{butlerToolUpdateAIModel, `{"id":"m2","label":"Production"}`},
 		{butlerToolSaveShortcut, `{"project":"a/b","alias":"retest","kind":"cmd","command":"npm test"}`},
 		{butlerToolSaveGitIdentity, `{"project":"a/b","identityId":"default"}`},
 		{butlerToolAddSSHKey, `{"publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF AKEL","label":"laptop"}`},
@@ -478,6 +527,14 @@ func TestButlerWriteProposeAll(t *testing.T) {
 	if len(created) != len(rows) {
 		t.Fatalf("cards = %d, want one per proposal", len(created))
 	}
+	beforeUnknown := d.Butler.ApprovalCount()
+	run := butlerToolByName(t, d, butlerToolSwitchModel, nil)
+	if _, err := run(context.Background(), `{"harness":"fake","model":"not-configured"}`); err == nil {
+		t.Fatal("unknown model was proposed")
+	}
+	if d.Butler.ApprovalCount() != beforeUnknown {
+		t.Fatal("unknown model created an approval")
+	}
 
 	bad := []struct{ tool, args string }{
 		{butlerToolCreateProject, `{}`},
@@ -492,6 +549,8 @@ func TestButlerWriteProposeAll(t *testing.T) {
 		{butlerToolInstallHarness, `{"harness":"fake","projects":[]}`},
 		{butlerToolFanoutExec, `{"projects":[],"command":"echo hi"}`},
 		{butlerToolProposeEnvFix, `{}`},
+		{butlerToolUpdateAIModel, `{"id":"nope","label":"X"}`},
+		{butlerToolUpdateAIModel, `{"id":"m1"}`},
 		{butlerToolSaveShortcut, `{"project":"a/b","alias":"x","kind":"bogus"}`},
 		{butlerToolAddSSHKey, `{"publicKey":"not-a-key"}`},
 	}
@@ -516,6 +575,7 @@ func TestButlerWriteApplyStateOnly(t *testing.T) {
 	}
 	if err := st.Mutate(func(doc *state.Document) error {
 		doc.User.Email = "me@example.com"
+		doc.AIModels = []state.AIModel{{ID: "m1", Label: "liq", BaseURL: "https://x", APIKey: "k", Model: "gpt-3.5"}, {ID: "m2", Label: "GPT-4o", BaseURL: "https://x", APIKey: "k2", Model: "gpt-4o"}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -542,6 +602,14 @@ func TestButlerWriteApplyStateOnly(t *testing.T) {
 	}
 
 	apply(butlerToolCreateHarness, `{"name":"H","command":"hcli","install":"npm i -g hcli"}`)
+	if err := st.Mutate(func(doc *state.Document) error {
+		h := doc.Harnesses["h"]
+		h.Config = json.RawMessage(`{"model":"gpt-3.5"}`)
+		doc.Harnesses["h"] = h
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := d.Harnesses.Get("h"); err != nil {
 		t.Fatalf("harness h missing after apply: %v", err)
 	}
@@ -549,6 +617,16 @@ func TestButlerWriteApplyStateOnly(t *testing.T) {
 	h, _ := d.Harnesses.Get("h")
 	if path, got, ok := butlerFindModel(h.Config); !ok || got != "gpt-4o" {
 		t.Fatalf("harness model = %v %q, want [model] gpt-4o", path, got)
+	}
+	apply(butlerToolUpdateAIModel, `{"id":"m1","label":"Liquid"}`)
+	st.View(func(doc *state.Document) {
+		m := doc.AIModels[0]
+		if m.Label != "Liquid" || m.Model != "gpt-3.5" || m.APIKey != "k" {
+			t.Fatalf("after rename: %+v, want label changed, model+key untouched", m)
+		}
+	})
+	if out := apply(butlerToolUpdateAIModel, `{"id":"m1","label":"Liquid"}`); !strings.Contains(out, "Liquid") {
+		t.Fatalf("update_ai_model result = %q", out)
 	}
 	apply(butlerToolSaveShortcut, `{"project":"a/b","alias":"retest","kind":"cmd","command":"npm test"}`)
 	var shortcuts []state.Shortcut
@@ -563,6 +641,83 @@ func TestButlerWriteApplyStateOnly(t *testing.T) {
 	apply(butlerToolDeleteHarness, `{"id":"h"}`)
 	if _, err := d.Harnesses.Get("h"); err == nil {
 		t.Fatal("harness h survives delete apply")
+	}
+}
+
+// Live-state enum injection: write-tool schemas pin project/harness/model
+// ids at build time, so a model cannot hallucinate an id — the provider
+// rejects the call before the tool ever runs.
+func TestButlerWriteSchemaEnums(t *testing.T) {
+	d, _, _, st := newSessionDeps(t)
+	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Mutate(func(doc *state.Document) error {
+		doc.AIModels = []state.AIModel{{ID: "m1", Model: "gpt-4o"}}
+		doc.Harnesses["fake"] = state.Harness{ID: "fake", Name: "Fake", Command: "fake"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	enums := butlerLiveEnums(d)
+	if got := enums[butlerToolStart]["project"]; len(got) != 1 || got[0] != "a/b" {
+		t.Fatalf("start project enum = %v, want [a/b]", got)
+	}
+	if got := enums[butlerToolSwitchModel]["harness"]; len(got) != 1 || got[0] != "fake" {
+		t.Fatalf("switch_model harness enum = %v, want [fake]", got)
+	}
+	if got := enums[butlerToolUpdateAIModel]["id"]; len(got) != 1 || got[0] != "m1" {
+		t.Fatalf("update_ai_model id enum = %v, want [m1]", got)
+	}
+	// The shipped tool schema carries the enum, and the plain-text prop
+	// (session name) stays open.
+	tools := butlerWriteTools(d, d.Butler, "t", "turn", nil)
+	byName := map[string]agent.Tool{}
+	for _, tl := range tools {
+		byName[tl.Name] = tl
+	}
+	raw, _ := json.Marshal(byName[butlerToolSwitchModel].Schema)
+	if !strings.Contains(string(raw), `"enum":["fake"]`) {
+		t.Fatalf("switch_model schema = %s, want enum on harness", string(raw))
+	}
+	raw, _ = json.Marshal(byName[butlerToolSwitchModel].Schema)
+	if strings.Contains(string(raw), `"enum"`) && strings.Contains(string(raw), `"model"`) {
+		// model prop may also be enum-free; only harness carries one
+		if strings.Contains(string(raw), `"model":{`+`"type":"string","enum"`) {
+			t.Fatalf("switch_model model prop unexpectedly constrained: %s", string(raw))
+		}
+	}
+	// Empty state: no enum, schema untouched (stays open).
+	d2, _, _, _ := newSessionDeps(t)
+	if props := butlerLiveEnums(d2)[butlerToolStart]; props != nil {
+		t.Fatalf("empty state produced enums: %v", props)
+	}
+}
+
+// Confirm-card summaries show the human-readable name, never the minted
+// hex id alone — the id may only disambiguate in the blast radius.
+func TestButlerWriteSummaryUsesDisplayName(t *testing.T) {
+	d, _, _, st := newSessionDeps(t)
+	if err := st.Mutate(func(doc *state.Document) error {
+		doc.AIModels = []state.AIModel{{ID: "988f1d277463f60a", Label: "liq", Model: "liquid/lfm-2.5-2.6b"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	run := butlerToolByName(t, d, butlerToolUpdateAIModel, nil)
+	raw, err := run(context.Background(), `{"id":"988f1d277463f60a","label":"liquid"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prop struct{ Summary, BlastRadius string }
+	if err := json.Unmarshal([]byte(raw), &prop); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prop.Summary, `"liq"`) || !strings.Contains(prop.Summary, `"liquid"`) || strings.Contains(prop.Summary, "988f1d277463f60a") {
+		t.Fatalf("summary = %q, want display name, no raw id", prop.Summary)
+	}
+	if !strings.Contains(prop.BlastRadius, "988f1d277463f60a") || !strings.Contains(prop.BlastRadius, "liquid/lfm-2.5-2.6b") {
+		t.Fatalf("blast = %q, want id + model string for disambiguation", prop.BlastRadius)
 	}
 }
 
@@ -623,7 +778,7 @@ func applyButlerTestApproval(t *testing.T, d Deps, id, secret string) (string, e
 		if butlerWriteTable[i].name == a.Tool {
 			out, err := butlerWriteTable[i].exec(context.Background(), d, butlerArgs(string(a.Args)), secret)
 			if err == nil {
-				err = d.Butler.DeleteApproval(threadID, id)
+				err = d.Butler.ResolveApproval(threadID, id, butlerthreads.ApprovalApproved)
 			}
 			return out, err
 		}
@@ -690,7 +845,7 @@ func TestButlerNestedModel(t *testing.T) {
 // Applies serialize with turns: proposing is open, but Confirm while a
 // turn runs 409s instead of interleaving a second writer.
 func TestButlerApplyBusy409s(t *testing.T) {
-	d, _, pinOut, _ := newSessionDeps(t)
+	d, _, pinOut, st := newSessionDeps(t)
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 	run := butlerToolByName(t, d, butlerToolStop, nil)
@@ -704,6 +859,12 @@ func TestButlerApplyBusy409s(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &prop); err != nil {
 		t.Fatal(err)
 	}
+	// AI configured: discard now runs the closure turn, which needs a
+	// model even though it proposes nothing.
+	f := newFakeModel(t, func(w http.ResponseWriter, body map[string]any) {
+		writeCompletion(w, "stop", "Fine — nothing ran.", nil)
+	})
+	seedAI(t, st, f.srv.URL)
 	if !butlerBusy.CompareAndSwap(false, true) {
 		t.Fatal("busy slot not taken")
 	}
@@ -727,6 +888,12 @@ func TestButlerSensitiveWrites(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Mutate(func(doc *state.Document) error {
+		doc.AIModels = []state.AIModel{{ID: "m1", Model: "gpt-4o"}}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 

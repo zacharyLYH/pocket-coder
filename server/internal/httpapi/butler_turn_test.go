@@ -166,6 +166,55 @@ func TestButlerTurnBriefMeFlow(t *testing.T) {
 	}
 }
 
+// The model owns progress: it creates a checklist, receives the serialized
+// list back from the tool, then replaces it with completed items. The final
+// state is persisted in lineage, not inferred from the assistant's prose.
+func TestButlerTodoLifecyclePersistsCheckedItems(t *testing.T) {
+	d, _, pinOut, st := newSessionDeps(t)
+	var secondRound map[string]any
+	f := newFakeModel(t, scopeAllow,
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("todo-1", "todo", `{"todos":[{"content":"Inspect projects","status":"in_progress","priority":"high"},{"content":"Report findings","status":"pending","priority":"medium"}]}`)})
+		},
+		func(w http.ResponseWriter, body map[string]any) {
+			secondRound = body
+			writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("todo-2", "todo", `{"todos":[{"content":"Inspect projects","status":"completed","priority":"high"},{"content":"Report findings","status":"completed","priority":"medium"}]}`)})
+		},
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", "All findings are reported.", nil)
+		},
+	)
+	seedAI(t, st, f.srv.URL)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := butlerPost(t, h, cookie, `{"prompt":"inspect projects and report findings"}`, http.StatusOK)
+	_, last := splitSSEBody(t, rec.Body.String())
+	if last["answer"] != "All findings are reported." {
+		t.Fatalf("final = %v", last)
+	}
+	if !strings.Contains(fmt.Sprint(secondRound["messages"]), "Inspect projects") {
+		t.Fatalf("second round did not receive the first todo state: %v", secondRound["messages"])
+	}
+
+	tid, _ := last["threadId"].(string)
+	raw, err := d.Butler.ReadTurnLineage(tid, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lineage struct {
+		Todos []struct {
+			Content string `json:"content"`
+			Status  string `json:"status"`
+		} `json:"todos"`
+	}
+	if err := json.Unmarshal(raw, &lineage); err != nil {
+		t.Fatal(err)
+	}
+	if len(lineage.Todos) != 2 || lineage.Todos[0].Status != "completed" || lineage.Todos[1].Status != "completed" {
+		t.Fatalf("persisted todos = %+v, want both checked off", lineage.Todos)
+	}
+}
+
 // A whitespace-only prompt is a 400 with no side effects: no thread, no
 // model call. The fake has zero scripted calls, so any LLM burn fails.
 func TestButlerRejectsBlankPrompt(t *testing.T) {
@@ -236,6 +285,9 @@ func TestButlerTurnProposeFlow(t *testing.T) {
 		func(w http.ResponseWriter, _ map[string]any) {
 			writeCompletion(w, "stop", "Tap Confirm to stop a/b.", nil)
 		},
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", "What would you like to do next?", nil)
+		},
 	)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
@@ -264,6 +316,10 @@ func TestButlerTurnProposeFlow(t *testing.T) {
 	}
 	if !strings.Contains(th.Turns[0].Steps[0].Result, card["id"].(string)) {
 		t.Fatalf("step result = %q, want the confirm id", th.Turns[0].Steps[0].Result)
+	}
+	blocked := authedPost(t, h, cookie, "/api/butler/turn", `{"prompt":"what now?","threadId":"`+tid+`"}`)
+	if blocked.Code != http.StatusConflict || !strings.Contains(blocked.Body.String(), "pending confirmation") {
+		t.Fatalf("follow-up while approval pending = %d %q, want conflict", blocked.Code, blocked.Body.String())
 	}
 
 	// Nothing ran yet: the docker call is scripted only now, for apply.

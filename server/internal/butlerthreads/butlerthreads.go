@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,12 +78,23 @@ type Summary struct {
 
 type Approval struct {
 	ID          string          `json:"id"`
+	TurnID      string          `json:"turnId,omitempty"`
+	Status      string          `json:"status"`
 	Tool        string          `json:"tool"`
 	Args        json.RawMessage `json:"args"`
 	Summary     string          `json:"summary"`
 	BlastRadius string          `json:"blastRadius"`
 	CreatedAt   time.Time       `json:"createdAt"`
+	ResolvedAt  time.Time       `json:"resolvedAt,omitempty"`
 }
+
+var ErrPendingApproval = errors.New("pending confirmation")
+
+const (
+	ApprovalPending   = "pending"
+	ApprovalApproved  = "approved"
+	ApprovalDiscarded = "discarded"
+)
 
 // Store owns the thread folders. Safe for concurrent use.
 type Store struct {
@@ -265,6 +277,11 @@ func (s *Store) ReserveFollowup(threadID string, prompt string, projectHint stri
 	if _, ok := readManifestLocked(dir); !ok {
 		return 0, "", fmt.Errorf("unknown thread")
 	}
+	for _, a := range readApprovalsLocked(dir) {
+		if approvalStatus(a) == ApprovalPending {
+			return 0, "", ErrPendingApproval
+		}
+	}
 	ns := sortedTurnNsLocked(dir)
 	if len(ns) == 0 {
 		return 0, "", fmt.Errorf("unknown thread")
@@ -333,6 +350,9 @@ func (s *Store) AddApproval(threadID string, a Approval) error {
 	if !validID(threadID) || a.ID == "" || a.Tool == "" {
 		return fmt.Errorf("bad approval")
 	}
+	if a.Status == "" {
+		a.Status = ApprovalPending
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	dir := s.threadDir(threadID)
@@ -362,7 +382,11 @@ func (s *Store) ApprovalCount() int {
 	n := 0
 	for _, e := range entries {
 		if e.IsDir() && validID(e.Name()) {
-			n += len(readApprovalsLocked(s.threadDir(e.Name())))
+			for _, a := range readApprovalsLocked(s.threadDir(e.Name())) {
+				if approvalStatus(a) == ApprovalPending {
+					n++
+				}
+			}
 		}
 	}
 	return n
@@ -388,27 +412,35 @@ func (s *Store) FindApproval(id string) (Approval, string, error) {
 	return Approval{}, "", fmt.Errorf("unknown approval")
 }
 
-func (s *Store) DeleteApproval(threadID, id string) error {
+func (s *Store) ResolveApproval(threadID, id, status string) error {
 	if !validID(threadID) {
 		return fmt.Errorf("unknown thread")
+	}
+	if status != ApprovalApproved && status != ApprovalDiscarded {
+		return fmt.Errorf("invalid approval status")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	dir := s.threadDir(threadID)
 	items := readApprovalsLocked(dir)
-	out := items[:0]
-	for _, a := range items {
-		if a.ID != id {
-			out = append(out, a)
+	for i := range items {
+		if items[i].ID == id {
+			if approvalStatus(items[i]) != ApprovalPending {
+				return fmt.Errorf("approval already resolved")
+			}
+			items[i].Status = status
+			items[i].ResolvedAt = time.Now().UTC()
+			return writeJSONFile(filepath.Join(dir, "approvals.json"), items)
 		}
 	}
-	if len(out) == len(items) {
-		return fmt.Errorf("unknown approval")
+	return fmt.Errorf("unknown approval")
+}
+
+func approvalStatus(a Approval) string {
+	if a.Status == "" {
+		return ApprovalPending
 	}
-	if len(out) == 0 {
-		return os.Remove(filepath.Join(dir, "approvals.json"))
-	}
-	return writeJSONFile(filepath.Join(dir, "approvals.json"), out)
+	return a.Status
 }
 
 // Get returns one thread with all its turns.

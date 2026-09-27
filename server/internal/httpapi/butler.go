@@ -114,6 +114,9 @@ func butlerThreadJSON(th butlerthreads.Thread) any {
 	}
 	approvals := make([]butlerCard, 0, len(th.Approvals))
 	for _, a := range th.Approvals {
+		if a.Status != "" && a.Status != butlerthreads.ApprovalPending {
+			continue
+		}
 		approvals = append(approvals, butlerCard{ID: a.ID, Tool: a.Tool, Summary: a.Summary, BlastRadius: a.BlastRadius})
 	}
 	return map[string]any{
@@ -181,12 +184,16 @@ func handleButlerTurn(d Deps) http.HandlerFunc {
 			n, turnID, rerr = st.ReserveFollowup(threadID, body.Prompt, body.ProjectHint)
 			if rerr != nil {
 				obsFail(r, obs.ButlerTurn, "reserve butler turn failed", rerr, map[string]any{"threadId": threadID})
+				if errors.Is(rerr, butlerthreads.ErrPendingApproval) {
+					writeTurnErr(w, http.StatusConflict, "pending confirmation — confirm or discard it before continuing", threadID, threadTitle)
+					return
+				}
 				writeTurnErr(w, http.StatusInternalServerError, errInternal, threadID, threadTitle)
 				return
 			}
 		}
 		emit, final := sseTurn(w)
-		answer, steps, confirms, lineage, runErr := runButlerTurn(r, d, cfg, st, threadID, body.Prompt, emit)
+		answer, steps, confirms, lineage, runErr := runButlerTurn(r, d, cfg, st, threadID, turnID, body.Prompt, emit, true, true)
 		turn := butlerthreads.Turn{TurnID: turnID, Prompt: body.Prompt, Answer: answer,
 			Steps: steps, ProjectHint: body.ProjectHint, Time: time.Now().UTC(),
 		}
@@ -245,11 +252,13 @@ func butlerScopeParse(raw string) bool {
 // confirm cards proposed during the turn. A structured scope check opens
 // the turn: out-of-scope asks get the pinned refusal with no tool rounds.
 // The gate only ever refutes — any gate failure falls through to the loop.
-func runButlerTurn(r *http.Request, d Deps, cfg agent.Config, st *butlerthreads.Store, threadID, userPrompt string, emit func(tool, msg string)) (string, []butlerthreads.Step, []butlerCard, *agent.Lineage, error) {
+func runButlerTurn(r *http.Request, d Deps, cfg agent.Config, st *butlerthreads.Store, threadID, turnID, userPrompt string, emit func(tool, msg string), checkScope, allowWrites bool) (string, []butlerthreads.Step, []butlerCard, *agent.Lineage, error) {
 	lineage := &agent.Lineage{}
-	if scoped, serr := agent.Structured(r.Context(), cfg, prompt.ButlerScopePrompt(), userPrompt, "butler_scope", prompt.ButlerScopeSchema(), lineage); serr == nil && !butlerScopeParse(scoped) {
-		emit("done", "answered")
-		return prompt.ButlerRefusal, []butlerthreads.Step{}, []butlerCard{}, lineage, nil
+	if checkScope {
+		if scoped, serr := agent.Structured(r.Context(), cfg, prompt.ButlerScopePrompt(), userPrompt, "butler_scope", prompt.ButlerScopeSchema(), lineage); serr == nil && !butlerScopeParse(scoped) {
+			emit("done", "answered")
+			return prompt.ButlerRefusal, []butlerthreads.Step{}, []butlerCard{}, lineage, nil
+		}
 	}
 	th, _ := st.Get(threadID)
 	history := butlerHistory(th, userPrompt)
@@ -272,7 +281,10 @@ func runButlerTurn(r *http.Request, d Deps, cfg agent.Config, st *butlerthreads.
 		}
 	}
 	var confirms []butlerCard
-	tools := append(butlerReadTools(d), butlerWriteTools(d, st, threadID, &confirms)...)
+	tools := append([]agent.Tool{agent.TodoTool(lineage)}, butlerReadTools(d)...)
+	if allowWrites {
+		tools = append(tools, butlerWriteTools(d, st, threadID, turnID, &confirms)...)
+	}
 	answer, err := agent.Run(r.Context(), cfg, butlerGuide, userPrompt, history, tools, "", nil, 6, onTrace, lineage,
 		agent.WithoutGroundingNudge(), agent.WithLeadIn(prompt.ButlerWorkflows()))
 	if err != nil {
@@ -286,6 +298,40 @@ func runButlerTurn(r *http.Request, d Deps, cfg agent.Config, st *butlerthreads.
 	}
 	emit("done", "answered")
 	return answer, steps, confirms, lineage, nil
+}
+
+func runButlerClosure(r *http.Request, d Deps, threadID string, approval butlerthreads.Approval) (string, error) {
+	st := d.Butler
+	if st == nil {
+		return "", errors.New("butler store not configured")
+	}
+	promptText := "The user discarded this proposed action: " + approval.Summary + ". Do not call any write tools. Ask the user what they would like to do next."
+	n, turnID, err := st.ReserveFollowup(threadID, promptText, "")
+	if err != nil {
+		return "", err
+	}
+	cfg := aiConfig(d, aiBody{})
+	emit := func(string, string) {}
+	answer, steps, _, lineage, runErr := runButlerTurn(r, d, cfg, st, threadID, turnID, promptText, emit, false, false)
+	turn := butlerthreads.Turn{TurnID: turnID, Prompt: promptText, Answer: answer, Steps: steps, Time: time.Now().UTC()}
+	if runErr != nil {
+		msg := runErr.Error()
+		turn.Error = &msg
+	}
+	if err := st.CompleteTurn(threadID, n, turn, butlerLineage(lineage, turnID, threadID, promptText, turnError(turn))); err != nil {
+		return "", err
+	}
+	if runErr != nil {
+		return "", runErr
+	}
+	return answer, nil
+}
+
+func turnError(turn butlerthreads.Turn) string {
+	if turn.Error == nil {
+		return ""
+	}
+	return *turn.Error
 }
 
 func butlerLineage(l *agent.Lineage, turnID, threadID, prompt, errMsg string) []byte {

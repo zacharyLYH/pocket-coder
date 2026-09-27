@@ -29,6 +29,7 @@ Read tools:
 * `health` returns disk free, uptime, docker ping, and server version, plus per-project CPU, memory, and disk numbers when given a project.
 * `harness_inventory` lists harnesses plus per-project install state.
 * `env_names`, `config_status` return names and booleans only.
+* `list_ai_models` returns the configured AI model entries: id, label, model name, and whether a key is stored. Never key values.
 * `architecture` returns the architecture notes whole or by section (overview, state, projects, sessions, previews, harnesses, butler). Read it when a question needs design context.
 
 Write tools, each behind a confirm card with a Confirm button:
@@ -41,6 +42,7 @@ Write tools, each behind a confirm card with a Confirm button:
 * `delete_project` removes a container, repo, or metadata by scope.
 * `propose_env_fix` names the missing variable. The UI collects the value in a masked field.
 * `switch_model` reads one harness config in the home volume and proposes a one-line diff.
+* `update_ai_model` renames or relabels one AI model entry by id, behind a confirm card. Label only: the model name, endpoint, and stored key stay untouched.
 * `save_shortcut` stores a `state.Shortcut`: either a command shortcut (`Run tests` runs `npm test`) or a key shortcut (`Undo` sends `Ctrl-Z`). Shortcuts store per project.
 * `preview_start`, `preview_close` open or close a preview port.
 * `git_pull`, `git_push`, `git_switch` run boring git ops.
@@ -50,7 +52,7 @@ The server enforces the bounds. A tool call with a repo path fails. A test pins 
 
 ## Denylist
 
-The butler has no file-read tool outside its allowlist. The denylist below is explicit so reviews can check it.
+The butler has no file-read tool outside its allowlist. The denylist below is explicit so reviews can check it. The inverse holds too: every in-scope domain carries a read tool, and every in-scope verb maps to a tool or a named limit. When no tool matches, the guide says to answer "not available" in one line — never improvise with an adjacent tool.
 
 * User repos: `/workspace/repo`, any project volume, file content, diff hunks, `tmux capture-pane`, `tmux load-buffer`.
 * This app's own code: the pocket-coder checkout, `server/`, `web/src`, `state.json` secrets at rest. The butler knows the system from the guide and the tools, never from reading its own source.
@@ -92,9 +94,9 @@ Ordered. Each lands with tests. No big bang. Phase 2 stays out.
 
 Usage stats land on the nerdy stuff page, not in the butler sheet. Inference time split by codemaps and butler, time per harness from session age, token counts where the provider reports them, lines changed over time from diff numstat. Reads come from the event log plus harness-native records. No new collection exists. The butler reads the same numbers when asked "how much am I using?"
 
-## Phase 3 (planned)
+## Phase 3
 
-Todo lists for longer-horizon tasks, in butler and codemaps. Early-ish in the agent loop the model emits the list via structured outputs, and later rounds steer by it: which steps are done, what is next, what is blocked. The list persists beside the thread and surfaces in both UIs (butler sheet, codemap tab) as a compact checklist, collapsed by default like the steps row. No new backend beyond the structured emit plus the transcript field; no auto-execution, no cross-thread todos. Tackled after v1, not here.
+Todo lists for longer-horizon tasks live in `lineage.todos` for both Butler and codemaps. The shared `todo` structured tool replaces the full list during the agent loop; later rounds receive its result and can steer by what is done, next, or blocked. Items use `pending`, `in_progress`, `completed`, or `cancelled` status and `high`, `medium`, or `low` priority, with at most one `in_progress` item. The list persists beside the thread and is available to both UIs as a compact checklist. There is no auto-execution and no cross-thread todo state.
 
 ## Issues
 

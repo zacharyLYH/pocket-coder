@@ -72,29 +72,114 @@ func butlerSessionCount(ctx context.Context, d Deps, id string) int {
 	return len(live)
 }
 
-// butlerWriteTools wraps the table: wall check, blast, propose.
-func butlerWriteTools(d Deps, st *butlerthreads.Store, threadID string, created *[]butlerCard) []agent.Tool {
+// butlerLiveEnums reads current ids out of state so tool schemas can
+// constrain them at request-build time — the codex pattern: determinism
+// comes from the harness constraining args, not from the model remembering.
+// Each map is schema-prop-name -> id list; tools not listed stay open.
+func butlerLiveEnums(d Deps) map[string]map[string][]string {
+	enums := map[string]map[string][]string{}
+	add := func(tool, prop string, ids []string) {
+		if len(ids) == 0 {
+			return
+		}
+		if enums[tool] == nil {
+			enums[tool] = map[string][]string{}
+		}
+		enums[tool][prop] = ids
+	}
+	if d.State != nil {
+		d.State.View(func(doc *state.Document) {
+			hids := make([]string, 0, len(doc.Harnesses))
+			for id := range doc.Harnesses {
+				hids = append(hids, id)
+			}
+			sort.Strings(hids)
+			add(butlerToolSwitchModel, "harness", hids)
+			add(butlerToolDeleteHarness, "id", hids)
+			mids := make([]string, 0, len(doc.AIModels))
+			for _, m := range doc.AIModels {
+				mids = append(mids, m.ID)
+			}
+			add(butlerToolUpdateAIModel, "id", mids)
+			gids := make([]string, 0, len(doc.GitIDs))
+			for _, g := range doc.GitIDs {
+				gids = append(gids, g.ID)
+			}
+			add(butlerToolSaveGitIdentity, "identityId", gids)
+		})
+	}
+	if d.Projects != nil {
+		if entries, err := d.Projects.List(); err == nil {
+			ids := make([]string, 0, len(entries))
+			for _, e := range entries {
+				ids = append(ids, e.ID)
+			}
+			for _, tool := range []string{butlerToolStart, butlerToolStop, butlerToolRestart,
+				butlerToolDeleteProject, butlerToolSessionCreate, butlerToolSessionKill,
+				butlerToolSessionRestart, butlerToolSessionRename, butlerToolPreviewStart,
+				butlerToolPreviewClose, butlerToolGitPull, butlerToolGitPush, butlerToolGitSwitch,
+				butlerToolSaveShortcut, butlerToolSaveGitIdentity, butlerToolInstallHarness,
+				butlerToolFanoutExec} {
+				add(tool, "project", ids)
+			}
+		}
+	}
+	return enums
+}
+
+// butlerConstrainSchema deep-copies the def schema and pins enum values
+// onto the named props. Unknown props are ignored. Best effort: when a
+// list is empty (no state yet) the arg stays open and validation
+// remains the backstop.
+func butlerConstrainSchema(schema map[string]any, props map[string][]string) map[string]any {
+	raw, err := json.Marshal(schema)
+	if err != nil {
+		return schema
+	}
+	var clone map[string]any
+	if json.Unmarshal(raw, &clone) != nil {
+		return schema
+	}
+	properties, _ := clone["properties"].(map[string]any)
+	for name, values := range props {
+		p, ok := properties[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		p["enum"] = values
+	}
+	return clone
+}
+
+// butlerWriteTools wraps the table: wall check, blast, propose. Schemas
+// are constrained with live-state ids before shipping to the model.
+func butlerWriteTools(d Deps, st *butlerthreads.Store, threadID, turnID string, created *[]butlerCard) []agent.Tool {
 	byName := make(map[string]butlerWriteDef, len(butlerWriteTable))
 	for _, def := range butlerWriteTable {
 		byName[def.name] = def
 	}
+	enums := butlerLiveEnums(d)
 	out := make([]agent.Tool, 0, len(butlerWriteNames))
 	for _, name := range butlerWriteNames {
 		def, ok := byName[name]
 		if !ok {
 			continue // TestButlerToolNames pins names against the table
 		}
+		schema := def.schema
+		if props, ok := enums[name]; ok {
+			schema = butlerConstrainSchema(schema, props)
+		}
 		out = append(out, agent.Tool{
 			Name:        def.name,
 			Description: def.desc + " Needs Confirm: proposing returns a confirm card; nothing runs until Confirm.",
-			Schema:      def.schema,
+			Schema:      schema,
 			Run: func(ctx context.Context, argsJSON string) (string, error) {
 				args := butlerArgs(argsJSON)
 				summary, blast, err := def.blast(d, ctx, args)
 				if err != nil {
 					return "", err
 				}
-				id, err := butlerPropose(st, threadID, def.name, argsJSON, summary, blast, created)
+				id, err := butlerPropose(st, threadID, turnID, def.name, argsJSON, summary, blast, created)
 				if err != nil {
 					return "", err
 				}
@@ -599,13 +684,22 @@ var butlerWriteTable = []butlerWriteDef{
 			if hid == "" || model == "" {
 				return "", "", fmt.Errorf("harness and model are required")
 			}
+			if d.Harnesses == nil {
+				return "", "", fmt.Errorf("no harness registry")
+			}
+			h, err := d.Harnesses.Get(hid)
+			if err != nil {
+				return "", "", err
+			}
 			where, old := "model", "(unset)"
-			if d.Harnesses != nil {
-				if h, err := d.Harnesses.Get(hid); err == nil {
-					if path, prev, ok := butlerFindModel(h.Config); ok {
-						where, old = strings.Join(path, "."), prev
-					}
+			if path, prev, ok := butlerFindModel(h.Config); ok {
+				where, old = strings.Join(path, "."), prev
+				if !butlerAIModelExists(d.State, prev) {
+					return "", "", fmt.Errorf("current model %q is not in the configured AI models (%s) — run list_ai_models for entry ids", prev, butlerAIModelNames(d.State))
 				}
+			}
+			if !butlerAIModelExists(d.State, model) {
+				return "", "", fmt.Errorf("model %q is not in the configured AI models (%s). Only switching is supported here — renaming an entry is update_ai_model", model, butlerAIModelNames(d.State))
 			}
 			return fmt.Sprintf("Switch model in %s to %s?", hid, model),
 				fmt.Sprintf("Rewrites one line in %s config: %s %s -> %s.", hid, where, old, model), nil
@@ -628,6 +722,58 @@ var butlerWriteTable = []butlerWriteDef{
 				return "", err
 			}
 			return "Switched to " + model, nil
+		},
+	},
+	{
+		name: butlerToolUpdateAIModel, desc: "Rename or relabel one AI model entry by id. Proposes a one-line diff.",
+		schema: butlerSchema(map[string]any{"id": strProp(), "label": strProp()}),
+		blast: func(d Deps, _ context.Context, args map[string]any) (string, string, error) {
+			id, label := butlerStr(args, "id"), butlerStr(args, "label")
+			if id == "" || label == "" {
+				return "", "", fmt.Errorf("id and label are required")
+			}
+			if d.State == nil {
+				return "", "", fmt.Errorf("no state")
+			}
+			var old string
+			found := false
+			d.State.View(func(doc *state.Document) {
+				if i := aiIndex(doc, id); i >= 0 {
+					old, found = doc.AIModels[i].Label, true
+				}
+			})
+			if !found {
+				return "", "", fmt.Errorf("no such AI model entry %q — run list_ai_models for the ids", id)
+			}
+			// Display name (label, falling back to the model string) in the
+			// summary; the opaque minted id only disambiguates in the blast.
+			disp := func(s string) string {
+				if s == "" {
+					return id
+				}
+				return s
+			}
+			return fmt.Sprintf("Rename AI model %q to %q?", disp(old), label),
+				fmt.Sprintf("Rewrites the label of model entry %s (current model string %s): %q -> %q. The model name, endpoint, and stored key stay untouched.", id, dispButlerAIModelString(d, id), disp(old), label), nil
+		},
+		exec: func(_ context.Context, d Deps, args map[string]any, _ string) (string, error) {
+			if d.State == nil {
+				return "", fmt.Errorf("no state")
+			}
+			id, label := butlerStr(args, "id"), butlerStr(args, "label")
+			err := d.State.Mutate(func(doc *state.Document) error {
+				i := aiIndex(doc, id)
+				if i < 0 {
+					return fmt.Errorf("no such AI model entry %q", id)
+				}
+				doc.AIModels[i].Label = label
+				return nil
+			})
+			if err != nil {
+				return "", err
+			}
+			_, _ = d.Events.Append("ai.model_updated", map[string]any{"id": id, "label": label})
+			return "Renamed to " + label, nil
 		},
 	},
 	{
@@ -776,6 +922,60 @@ func orDefault(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// butlerAIModelNames returns the configured model names ("Model" field,
+// what switch_model validates against), for error context so the model
+// can self-correct instead of guessing.
+func butlerAIModelNames(st *state.Store) string {
+	if st == nil {
+		return "none configured"
+	}
+	names := []string{}
+	st.View(func(doc *state.Document) {
+		for _, m := range doc.AIModels {
+			if s := strings.TrimSpace(m.Model); s != "" {
+				names = append(names, s)
+			}
+		}
+	})
+	if len(names) == 0 {
+		return "none configured"
+	}
+	return strings.Join(names, ", ")
+}
+
+// dispButlerAIModelString returns the model string ("Model" field) of
+// one entry by id, for display in summaries.
+func dispButlerAIModelString(d Deps, id string) string {
+	if d.State == nil {
+		return "(unset)"
+	}
+	s := "(unset)"
+	d.State.View(func(doc *state.Document) {
+		if i := aiIndex(doc, id); i >= 0 {
+			if v := strings.TrimSpace(doc.AIModels[i].Model); v != "" {
+				s = v
+			}
+		}
+	})
+	return s
+}
+
+func butlerAIModelExists(st *state.Store, name string) bool {
+	if st == nil || strings.TrimSpace(name) == "" {
+		return false
+	}
+	found := false
+	st.View(func(doc *state.Document) {
+		for _, model := range doc.AIModels {
+			if strings.TrimSpace(model.Model) == name {
+				found = true
+				return
+			}
+		}
+	})
+	return found
 }
 
 // butlerFindModel locates the first "model" string in a harness config

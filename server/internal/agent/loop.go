@@ -94,9 +94,10 @@ func (l *loop) params() openai.ChatCompletionNewParams {
 	return openai.ChatCompletionNewParams{Model: l.cfg.Model, Messages: l.msgs, Tools: sdkTools(l.tools)}
 }
 
-// gather runs the tool loop to a free-text final answer. Nudges (grounding,
-// close-out) consume steps of the same budget, so weak models cannot loop
-// forever: at most maxSteps tool rounds, one grounding nudge, one close-out.
+// gather runs the tool loop to a free-text final answer. The grounding
+// and close-out nudges consume steps of the same budget, so weak models
+// cannot loop forever: at most maxSteps tool rounds, one grounding
+// nudge, one close-out.
 func (l *loop) gather(ctx context.Context) (string, error) {
 	for step := 0; step < l.maxStep; step++ {
 		if err := ctx.Err(); err != nil {
@@ -213,9 +214,16 @@ func (l *loop) execTool(ctx context.Context, toolStart time.Time, step int, name
 			ev.Err = capLine(rerr.Error(), 4000)
 		}
 	})
+	// Exact repeats — successful or failing — get a model-visible note
+	// so weak models steer off. Failing repeats escalate harder: two
+	// identical errors means the approach is wrong, not flaky.
 	key := name + "\x00" + args
-	if l.seenCalls[key] > 0 && rerr == nil {
-		out += fmt.Sprintf("\n(note: this exact call already ran %d time(s) with the same result — try a different pattern, path, or tool instead of repeating it)", l.seenCalls[key])
+	if l.seenCalls[key] > 0 {
+		if rerr != nil {
+			out += fmt.Sprintf("\n(note: this exact call already failed %d time(s) with the same error — do not repeat it. The request itself is the problem: pick a different tool or answer that this cannot be done)", l.seenCalls[key])
+		} else {
+			out += fmt.Sprintf("\n(note: this exact call already ran %d time(s) with the same result — try a different pattern, path, or tool instead of repeating it)", l.seenCalls[key])
+		}
 	}
 	l.seenCalls[key]++
 	return toolReply(id, out)

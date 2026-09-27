@@ -94,6 +94,7 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
 
   const turns = thread?.turns ?? []
   const lastStatus = statuses.length > 0 ? statuses[statuses.length - 1] : null
+  const approvalPending = confirms.length > 0
 
   return (
     <div className="flex h-full flex-col" data-testid="butler-sheet">
@@ -158,6 +159,7 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
             onDone={(result) => {
               setConfirms((prev) => prev.filter((x) => x.id !== c.id))
               if (result) setApplied((prev) => [...prev, result])
+              if (result && thread?.id && thread.id !== 'new') void openThread(thread.id)
             }}
           />
         ))}
@@ -181,12 +183,13 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
       </div>
       {error && (<p className="shrink-0 border-t border-destructive/30 bg-destructive/10 px-4 py-2 text-xs break-all text-destructive" data-testid="butler-global-error">{error}</p>)}
       <div className="shrink-0 border-t p-3">
+        {approvalPending && <p className="mb-2 px-3 text-xs text-muted-foreground" data-testid="butler-approval-block">Confirm or discard the pending action to continue.</p>}
         <div className="flex w-full items-end gap-2 rounded-3xl border bg-muted px-2 py-1.5">
-          <textarea placeholder="Ask Butler…" value={prompt} disabled={busy} onChange={(e) => setPrompt(e.target.value)}
+          <textarea placeholder="Ask Butler…" value={prompt} disabled={busy || approvalPending} onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(prompt) } }}
             data-testid="butler-prompt" rows={1}
-            className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-3 pt-2 pb-1 text-sm leading-relaxed focus:outline-none" />
-          <Button size="icon" onClick={() => void send(prompt)} disabled={busy || !prompt.trim()} data-testid="butler-send" aria-label="Send" className="size-8 shrink-0 rounded-full"><Send className="size-4" /></Button>
+            className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-3 pt-2 pb-1 text-sm leading-relaxed focus:outline-none disabled:cursor-not-allowed" />
+          <Button size="icon" onClick={() => void send(prompt)} disabled={busy || approvalPending || !prompt.trim()} data-testid="butler-send" aria-label="Send" className="size-8 shrink-0 rounded-full disabled:cursor-not-allowed"><Send className="size-4" /></Button>
         </div>
       </div>
     </div>

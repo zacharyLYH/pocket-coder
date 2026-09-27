@@ -448,6 +448,23 @@ func butlerReadTools(d Deps) []agent.Tool {
 				}), nil
 			},
 		},
+		butlerToolListAIModels: {
+			Name:        butlerToolListAIModels,
+			Description: "Configured AI model entries: id, label, model name, and whether a key is stored. Names only, never key values. No args.",
+			Schema:      noProps,
+			Run: func(_ context.Context, _ string) (string, error) {
+				if d.State == nil {
+					return "[]", nil
+				}
+				out := []map[string]any{}
+				d.State.View(func(doc *state.Document) {
+					for _, m := range doc.AIModels {
+						out = append(out, aiListItem(m)) // id/label/model/hasKey; never the key
+					}
+				})
+				return butlerJSON(out), nil
+			},
+		},
 		butlerToolArchitecture: {
 			Name:        butlerToolArchitecture,
 			Description: "Design notes: how the system is built and why. Read when a question needs design context (what survives deletes, where state lives). Args: {section?} — overview, state, projects, sessions, previews, harnesses, butler; omit for all.",

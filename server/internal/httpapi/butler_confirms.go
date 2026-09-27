@@ -23,10 +23,10 @@ type butlerCard struct {
 
 // butlerPropose stores the approval on the owning thread and returns its
 // confirm id. created collects the public card for the turn response.
-func butlerPropose(st *butlerthreads.Store, threadID, tool, args, summary, blast string, created *[]butlerCard) (string, error) {
+func butlerPropose(st *butlerthreads.Store, threadID, turnID, tool, args, summary, blast string, created *[]butlerCard) (string, error) {
 	id := butlerthreads.MintID()
 	card := butlerCard{ID: id, Tool: tool, Summary: summary, BlastRadius: blast}
-	err := st.AddApproval(threadID, butlerthreads.Approval{ID: id, Tool: tool, Args: []byte(args), Summary: summary, BlastRadius: blast, CreatedAt: time.Now().UTC()})
+	err := st.AddApproval(threadID, butlerthreads.Approval{ID: id, TurnID: turnID, Status: butlerthreads.ApprovalPending, Tool: tool, Args: []byte(args), Summary: summary, BlastRadius: blast, CreatedAt: time.Now().UTC()})
 	if err != nil {
 		return "", err
 	}
@@ -61,6 +61,10 @@ func handleButlerConfirmApply(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusNotFound, "unknown confirm — propose it again from chat")
 			return
 		}
+		if a.Status != "" && a.Status != butlerthreads.ApprovalPending {
+			writeErr(w, http.StatusConflict, "approval already resolved")
+			return
+		}
 		var def *butlerWriteDef
 		for i := range butlerWriteTable {
 			if butlerWriteTable[i].name == a.Tool {
@@ -80,7 +84,10 @@ func handleButlerConfirmApply(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		_ = d.Butler.DeleteApproval(threadID, id)
+		if err := d.Butler.ResolveApproval(threadID, id, butlerthreads.ApprovalApproved); err != nil {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
 		_, _ = d.Events.Append("butler.apply", map[string]any{"tool": a.Tool})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tool": a.Tool, "result": out})
 	}
@@ -94,10 +101,23 @@ func handleButlerConfirmDiscard(d Deps) http.HandlerFunc {
 			return
 		}
 		a, threadID, err := d.Butler.FindApproval(id)
-		if err != nil || d.Butler.DeleteApproval(threadID, a.ID) != nil {
+		if err != nil {
 			writeErr(w, http.StatusNotFound, "unknown confirm — propose it again from chat")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		if a.Status != "" && a.Status != butlerthreads.ApprovalPending {
+			writeErr(w, http.StatusConflict, "approval already resolved")
+			return
+		}
+		if err := d.Butler.ResolveApproval(threadID, id, butlerthreads.ApprovalDiscarded); err != nil {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		answer, err := runButlerClosure(r, d, threadID, a)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "result": answer})
 	}
 }

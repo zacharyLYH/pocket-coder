@@ -2,6 +2,7 @@ package butlerthreads
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -69,7 +70,7 @@ func TestApprovalsSurviveReloadAndCanBeRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := Approval{ID: MintID(), Tool: "stop", Args: json.RawMessage(`{"project":"a/b"}`), Summary: "Stop a/b?", BlastRadius: "Container stops."}
+	a := Approval{ID: MintID(), TurnID: "turn-1", Tool: "stop", Args: json.RawMessage(`{"project":"a/b"}`), Summary: "Stop a/b?", BlastRadius: "Container stops."}
 	if err := s.AddApproval(tid, a); err != nil {
 		t.Fatal(err)
 	}
@@ -81,11 +82,29 @@ func TestApprovalsSurviveReloadAndCanBeRemoved(t *testing.T) {
 	if err != nil || len(thread.Approvals) != 1 {
 		t.Fatalf("thread approvals = %+v, err=%v", thread.Approvals, err)
 	}
-	if err := New(dir).DeleteApproval(tid, a.ID); err != nil {
+	if err := New(dir).ResolveApproval(tid, a.ID, ApprovalDiscarded); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := New(dir).Approvals(tid); len(got) != 0 {
-		t.Fatalf("approvals after delete = %+v", got)
+	if got, _ := New(dir).Approvals(tid); len(got) != 1 || got[0].Status != ApprovalDiscarded || got[0].ResolvedAt.IsZero() {
+		t.Fatalf("approvals after resolve = %+v", got)
+	}
+}
+
+func TestPendingApprovalBlocksFollowup(t *testing.T) {
+	s := New(t.TempDir())
+	tid, turnID, err := s.ReserveNewThread("stop it", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddApproval(tid, Approval{ID: MintID(), TurnID: turnID, Tool: "stop"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ReserveFollowup(tid, "what now?", ""); !errors.Is(err, ErrPendingApproval) {
+		t.Fatalf("followup error = %v, want pending approval", err)
+	}
+	approvals, _ := s.Approvals(tid)
+	if len(approvals) != 1 || approvals[0].TurnID != turnID {
+		t.Fatalf("approvals = %+v, want turn id %q", approvals, turnID)
 	}
 }
 

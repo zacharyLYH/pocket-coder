@@ -56,7 +56,7 @@ export function ButlerConfirm({ card, onDone }: { card: Card; onDone: (result: s
         >
           Confirm
         </Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act('discard')} data-testid="butler-confirm-no">
+        <Button size="sm" variant="destructive" disabled={busy} onClick={() => void act('discard')} data-testid="butler-confirm-no">
           Discard
         </Button>
       </div>

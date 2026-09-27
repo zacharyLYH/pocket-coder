@@ -30,6 +30,14 @@ type LineageEvent struct {
 	Payload    any    `json:"payload,omitempty"`
 }
 
+// Todo is the small, replace-in-place checklist shared by agent features.
+// Status and priority mirror OpenCode's todo contract.
+type Todo struct {
+	Content  string `json:"content"`
+	Status   string `json:"status"`
+	Priority string `json:"priority"`
+}
+
 type Lineage struct {
 	InitialRequest  any            `json:"initialRequest,omitempty"`
 	TurnID          string         `json:"turnId,omitempty"`
@@ -37,6 +45,7 @@ type Lineage struct {
 	Prompt          string         `json:"prompt,omitempty"`
 	Time            time.Time      `json:"time,omitempty"`
 	Events          []LineageEvent `json:"events"`
+	Todos           []Todo         `json:"todos,omitempty"`
 	PrunedTier1Data any            `json:"prunedTier1Data,omitempty"`
 	Error           string         `json:"error,omitempty"`
 }

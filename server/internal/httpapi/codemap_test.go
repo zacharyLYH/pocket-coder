@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -492,6 +493,67 @@ func TestCodemapSuccess(t *testing.T) {
 		if _, ok := lastEvent(t, d).Data["prompt"]; !ok {
 			t.Fatalf("audit event missing prompt excerpt")
 		}
+	}
+}
+
+// A codemap turn uses the same replace-in-place todo lifecycle as Butler:
+// the model creates the list, sees the tool result on the next round, and
+// checks both items off before the final structured answer is formatted.
+func TestCodemapTodoLifecyclePersistsCheckedItems(t *testing.T) {
+	d, md, pinOut, st := newSessionDeps(t)
+	mockRepoDir(md, "abc123")
+	mockOrientation(md, "go.mod\ninternal/\n")
+	mockHydrate(md, "func main() {\n")
+	var secondRound map[string]any
+	f := newFakeModel(t,
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("todo-1", "todo", `{"todos":[{"content":"Map entrypoints","status":"in_progress","priority":"high"},{"content":"Summarize flow","status":"pending","priority":"medium"}]}`)})
+		},
+		func(w http.ResponseWriter, body map[string]any) {
+			secondRound = body
+			writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("todo-2", "todo", `{"todos":[{"content":"Map entrypoints","status":"completed","priority":"high"},{"content":"Summarize flow","status":"completed","priority":"medium"}]}`)})
+		},
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", finalCodemapJSON(), nil)
+		},
+		func(w http.ResponseWriter, body map[string]any) {
+			if _, ok := body["response_format"]; !ok {
+				t.Errorf("format call must use structured output")
+			}
+			writeCompletion(w, "stop", finalCodemapJSON(), nil)
+		},
+	)
+	seedAI(t, st, f.srv.URL)
+	seedProject(t, st, "abc")
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"map the entrypoints and summarize the flow"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codemap: got %d %q", rec.Code, rec.Body)
+	}
+	var response struct {
+		ThreadID string `json:"threadId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || response.ThreadID == "" {
+		t.Fatalf("response = %s, err=%v", rec.Body, err)
+	}
+	if !strings.Contains(fmt.Sprint(secondRound["messages"]), "Map entrypoints") {
+		t.Fatalf("second round did not receive the first todo state: %v", secondRound["messages"])
+	}
+	raw, err := d.Codemaps.ReadTurnLineage("abc", response.ThreadID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lineage struct {
+		Todos []struct {
+			Status string `json:"status"`
+		} `json:"todos"`
+	}
+	if err := json.Unmarshal(raw, &lineage); err != nil {
+		t.Fatal(err)
+	}
+	if len(lineage.Todos) != 2 || lineage.Todos[0].Status != "completed" || lineage.Todos[1].Status != "completed" {
+		t.Fatalf("persisted todos = %+v, want both checked off", lineage.Todos)
 	}
 }
 
