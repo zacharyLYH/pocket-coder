@@ -149,6 +149,21 @@ func TestButlerTurnBriefMeFlow(t *testing.T) {
 			t.Fatalf("step %q result not summarized: %q", s.Tool, s.Result)
 		}
 	}
+	lineageRaw, err := d.Butler.ReadTurnLineage(tid, 1)
+	if err != nil {
+		t.Fatalf("lineage missing: %v", err)
+	}
+	var lineage struct {
+		TurnID   string `json:"turnId"`
+		ThreadID string `json:"threadId"`
+		Prompt   string `json:"prompt"`
+		Events   []struct {
+			Kind string `json:"kind"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(lineageRaw, &lineage); err != nil || lineage.TurnID == "" || lineage.ThreadID != tid || lineage.Prompt != "brief me" || len(lineage.Events) == 0 || lineage.Events[0].Kind != "llm_request" {
+		t.Fatalf("lineage = %s, err=%v", lineageRaw, err)
+	}
 }
 
 // A whitespace-only prompt is a 400 with no side effects: no thread, no

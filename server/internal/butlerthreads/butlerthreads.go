@@ -5,11 +5,13 @@
 //	  1.json
 //	  2.json
 //	  approvals.json
+//	  1.lineage.json
 //
 // One global history: no project scope (the current page passes only a
-// hint per turn). Shape mirrors codemapthreads minus lineage: the folder
+// hint per turn). Shape mirrors codemapthreads: the folder
 // name IS the thread ID (opaque hex MintID), the manifest holds {id,
-// title, createdAt} only, each N.json holds one user-side Turn.
+// title, createdAt} only, each N.json holds one user-side Turn and each
+// N.lineage.json holds debug lineage.
 package butlerthreads
 
 import (
@@ -276,7 +278,7 @@ func (s *Store) ReserveFollowup(threadID string, prompt string, projectHint stri
 }
 
 // CompleteTurn overwrites N.json with the finished turn.
-func (s *Store) CompleteTurn(threadID string, n int, turn Turn) error {
+func (s *Store) CompleteTurn(threadID string, n int, turn Turn, lineage []byte) error {
 	if !validID(threadID) || n < 1 || turn.TurnID == "" || strings.TrimSpace(turn.Prompt) == "" {
 		return fmt.Errorf("bad turn")
 	}
@@ -302,7 +304,29 @@ func (s *Store) CompleteTurn(threadID string, n int, turn Turn) error {
 	if turn.Steps == nil {
 		turn.Steps = []Step{}
 	}
-	return writeJSONFile(filepath.Join(dir, strconv.Itoa(n)+".json"), turn)
+	if err := writeJSONFile(filepath.Join(dir, strconv.Itoa(n)+".json"), turn); err != nil {
+		return err
+	}
+	if lineage != nil {
+		return os.WriteFile(filepath.Join(dir, strconv.Itoa(n)+".lineage.json"), append(lineage, '\n'), 0o600)
+	}
+	return nil
+}
+
+func (s *Store) ReadTurnLineage(threadID string, n int) ([]byte, error) {
+	if !validID(threadID) || n < 1 {
+		return nil, fmt.Errorf("unknown lineage")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := readManifestLocked(s.threadDir(threadID)); !ok {
+		return nil, fmt.Errorf("unknown lineage")
+	}
+	raw, err := os.ReadFile(filepath.Join(s.threadDir(threadID), strconv.Itoa(n)+".lineage.json"))
+	if err != nil {
+		return nil, fmt.Errorf("unknown lineage")
+	}
+	return raw, nil
 }
 
 func (s *Store) AddApproval(threadID string, a Approval) error {

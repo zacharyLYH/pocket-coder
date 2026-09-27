@@ -26,7 +26,7 @@ func TestReserveGetListDelete(t *testing.T) {
 	if err != nil || n != 2 {
 		t.Fatalf("followup n=%d err=%v", n, err)
 	}
-	if err := s.CompleteTurn(tid, 2, Turn{TurnID: "t2", Prompt: "and now?", Answer: "still fine", Time: th.CreatedAt}); err != nil {
+	if err := s.CompleteTurn(tid, 2, Turn{TurnID: "t2", Prompt: "and now?", Answer: "still fine", Time: th.CreatedAt}, nil); err != nil {
 		t.Fatal(err)
 	}
 	list, err := s.List()
@@ -41,6 +41,24 @@ func TestReserveGetListDelete(t *testing.T) {
 	}
 	if list, _ := s.List(); len(list) != 0 {
 		t.Fatalf("list after delete = %+v", list)
+	}
+}
+
+func TestCompleteTurnWritesSeparateLineage(t *testing.T) {
+	s := New(t.TempDir())
+	tid, _, err := s.ReserveNewThread("brief me", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteTurn(tid, 1, Turn{TurnID: "t1", Prompt: "brief me", Answer: "done"}, []byte(`{"events":[{"kind":"tool_start"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.ReadTurnLineage(tid, 1); err != nil || !strings.Contains(string(got), "tool_start") {
+		t.Fatalf("lineage = %s, err=%v", got, err)
+	}
+	th, err := s.Get(tid)
+	if err != nil || len(th.Turns[0].Steps) != 0 {
+		t.Fatalf("turn = %+v, err=%v", th.Turns, err)
 	}
 }
 

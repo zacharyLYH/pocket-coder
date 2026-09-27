@@ -186,14 +186,14 @@ func handleButlerTurn(d Deps) http.HandlerFunc {
 			}
 		}
 		emit, final := sseTurn(w)
-		answer, steps, confirms, runErr := runButlerTurn(r, d, cfg, st, threadID, body.Prompt, emit)
+		answer, steps, confirms, lineage, runErr := runButlerTurn(r, d, cfg, st, threadID, body.Prompt, emit)
 		turn := butlerthreads.Turn{TurnID: turnID, Prompt: body.Prompt, Answer: answer,
 			Steps: steps, ProjectHint: body.ProjectHint, Time: time.Now().UTC(),
 		}
 		if runErr != nil {
 			msg := runErr.Error()
 			turn.Error = &msg
-			_ = st.CompleteTurn(threadID, n, turn)
+			_ = st.CompleteTurn(threadID, n, turn, butlerLineage(lineage, turnID, threadID, body.Prompt, msg))
 			obsFail(r, obs.ButlerTurn, "butler turn failed", runErr, map[string]any{"threadId": threadID})
 			// The stream is already 200: a second WriteHeader would be dropped
 			// and the client would read a bare error as the answer. Failures
@@ -202,7 +202,7 @@ func handleButlerTurn(d Deps) http.HandlerFunc {
 			final(map[string]any{"error": msg, "threadId": threadID, "threadTitle": threadTitle})
 			return
 		}
-		if cerr := st.CompleteTurn(threadID, n, turn); cerr != nil {
+		if cerr := st.CompleteTurn(threadID, n, turn, butlerLineage(lineage, turnID, threadID, body.Prompt, "")); cerr != nil {
 			obsFail(r, obs.ButlerTurn, "complete butler turn failed", cerr, map[string]any{"threadId": threadID})
 			// Same stream-already-200 story as above: the answer exists but
 			// the persist failed, so the failure rides the stream with the
@@ -245,10 +245,11 @@ func butlerScopeParse(raw string) bool {
 // confirm cards proposed during the turn. A structured scope check opens
 // the turn: out-of-scope asks get the pinned refusal with no tool rounds.
 // The gate only ever refutes — any gate failure falls through to the loop.
-func runButlerTurn(r *http.Request, d Deps, cfg agent.Config, st *butlerthreads.Store, threadID, userPrompt string, emit func(tool, msg string)) (string, []butlerthreads.Step, []butlerCard, error) {
-	if scoped, serr := agent.Structured(r.Context(), cfg, prompt.ButlerScopePrompt(), userPrompt, "butler_scope", prompt.ButlerScopeSchema()); serr == nil && !butlerScopeParse(scoped) {
+func runButlerTurn(r *http.Request, d Deps, cfg agent.Config, st *butlerthreads.Store, threadID, userPrompt string, emit func(tool, msg string)) (string, []butlerthreads.Step, []butlerCard, *agent.Lineage, error) {
+	lineage := &agent.Lineage{}
+	if scoped, serr := agent.Structured(r.Context(), cfg, prompt.ButlerScopePrompt(), userPrompt, "butler_scope", prompt.ButlerScopeSchema(), lineage); serr == nil && !butlerScopeParse(scoped) {
 		emit("done", "answered")
-		return prompt.ButlerRefusal, []butlerthreads.Step{}, []butlerCard{}, nil
+		return prompt.ButlerRefusal, []butlerthreads.Step{}, []butlerCard{}, lineage, nil
 	}
 	th, _ := st.Get(threadID)
 	history := butlerHistory(th, userPrompt)
@@ -272,10 +273,10 @@ func runButlerTurn(r *http.Request, d Deps, cfg agent.Config, st *butlerthreads.
 	}
 	var confirms []butlerCard
 	tools := append(butlerReadTools(d), butlerWriteTools(d, st, threadID, &confirms)...)
-	answer, err := agent.Run(r.Context(), cfg, butlerGuide, userPrompt, history, tools, "", nil, 6, onTrace, nil,
+	answer, err := agent.Run(r.Context(), cfg, butlerGuide, userPrompt, history, tools, "", nil, 6, onTrace, lineage,
 		agent.WithoutGroundingNudge(), agent.WithLeadIn(prompt.ButlerWorkflows()))
 	if err != nil {
-		return "", steps, confirms, err
+		return "", steps, confirms, lineage, err
 	}
 	if steps == nil {
 		steps = []butlerthreads.Step{}
@@ -284,7 +285,19 @@ func runButlerTurn(r *http.Request, d Deps, cfg agent.Config, st *butlerthreads.
 		confirms = []butlerCard{}
 	}
 	emit("done", "answered")
-	return answer, steps, confirms, nil
+	return answer, steps, confirms, lineage, nil
+}
+
+func butlerLineage(l *agent.Lineage, turnID, threadID, prompt, errMsg string) []byte {
+	if l == nil {
+		l = &agent.Lineage{}
+	}
+	l.TurnID, l.ThreadID, l.Prompt, l.Time, l.Error = turnID, threadID, prompt, time.Now().UTC(), errMsg
+	raw, err := json.Marshal(l)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 func summarize(s string) string {

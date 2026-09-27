@@ -203,6 +203,9 @@ func TestButlerTurnFailurePersistsAndStreamsError(t *testing.T) {
 	if len(th.Turns) != 1 || th.Turns[0].Error == nil || th.Turns[0].Answer != "" {
 		t.Fatalf("persisted turn = %+v", th.Turns)
 	}
+	if lineage, err := d.Butler.ReadTurnLineage(tid, 1); err != nil || !strings.Contains(string(lineage), `"error"`) {
+		t.Fatalf("failed-turn lineage = %s, err=%v", lineage, err)
+	}
 	// Single logging is structural now: the deferred ask-log is gone, so
 	// each error return below carries its only obsFail. (Project-less
 	// butler entries reach slog only — emit drops them from the store by

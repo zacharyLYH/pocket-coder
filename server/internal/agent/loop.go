@@ -28,7 +28,7 @@ func Run(ctx context.Context, cfg Config, sysPrompt, userPrompt string, history 
 		maxSteps = 8
 	}
 	client := NewClient(cfg)
-	if lin != nil {
+	if lin != nil && lin.InitialRequest == nil {
 		lin.InitialRequest = map[string]any{"userPrompt": userPrompt, "model": cfg.Model}
 	}
 	l := newLoop(client, cfg, tools, assembleMessages(sysPrompt, userPrompt, history), maxSteps, onTrace, lin)
