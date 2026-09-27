@@ -1,7 +1,6 @@
 // Command server is the Pocket Coder control plane: it serves the
-// HTTP API and talks to Docker on the host. This file only boots: config,
-// data dir, state file, event log, harness seeding. The HTTP surface lives
-// in internal/httpapi.
+// HTTP API and talks to Docker on the host. This file only boots; the
+// HTTP surface lives in internal/httpapi.
 package main
 
 import (
@@ -64,9 +63,8 @@ func main() {
 	defer ev.Close()
 
 	// Staged logging writes project lines to the observe file + stderr.
-	// events.log is NOT a destination: it holds only the global audit
-	// (boot, login, ssh keys — actions with no project), written by
-	// explicit Events.Append calls. Project detail lives in observe logs.
+	// events.log holds only the global audit (boot, login, ssh keys —
+	// actions with no project), written by explicit Events.Append calls.
 	observe := obs.NewStore(cfg.DataDir)
 	defer observe.Close()
 	obs.Configure(observe, nil)
@@ -176,7 +174,8 @@ func main() {
 }
 
 // previewSweepInterval bounds how stale a token's presence can look;
-// previewTokenSilence bounds how long a holder may go quiet before rotation.
+// previewTokenSilence bounds how long a holder may go quiet before
+// rotation.
 func previewSweepInterval() time.Duration {
 	return durationEnv("PCODER_PREVIEW_SWEEP_INTERVAL", 30*time.Second)
 }

@@ -102,7 +102,7 @@ func handleButlerConfirmDiscard(_ Deps) http.HandlerFunc {
 	}
 }
 
-// butlerPendingCount is test-only: how many unapplied cards exist.
+// butlerPendingCount is test-only.
 func butlerPendingCount() int {
 	butlerPendings.Lock()
 	defer butlerPendings.Unlock()

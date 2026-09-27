@@ -41,8 +41,7 @@ type Worker interface {
 	Close(ctx context.Context) error
 }
 
-// WorkerFactory starts the runtime for one project. The factory owns all
-// process/container details, which keeps this package deterministic in tests.
+// WorkerFactory starts the runtime for one project.
 type WorkerFactory interface {
 	Start(ctx context.Context, cfg Config) (Worker, error)
 }
@@ -122,8 +121,7 @@ func (m *Manager) Ensure(ctx context.Context, cfg Config) (Worker, error) {
 			return c.worker, nil
 		}
 		// The inflight map guarantees a single starter per project and the
-		// lock is held from delete to insert, so no existing worker can
-		// appear while Start runs.
+		// lock is held from delete to insert.
 		m.workers[cfg.ProjectID] = w
 		if _, ok := m.tokens[cfg.ProjectID]; !ok {
 			m.tokens[cfg.ProjectID] = newToken()

@@ -14,13 +14,11 @@ import { Card, CardContent } from '@/components/ui/card'
 // is the Close button's job in the Preview tab.
 //
 // The noVNC view uses resize=scale (see lib/preview) so the framebuffer
-// fills the iframe during the async backend resize, then converges to ~1:1
-// once this page fits the sidecar Chromium window to the iframe: after load
-// and on every (debounced) resize it reports the iframe size, and the
-// backend resizes the Chromium window to match.
-// The previewed app then reflows like a real browser window instead of
-// cropping a fixed-size desktop. Syncing starts on iframe load — never
-// before — so merely opening the page can't resurrect a closed sidecar.
+// fills the iframe, then converges to ~1:1 once this page fits the sidecar
+// Chromium window to the iframe: after load and on every (debounced) resize
+// it reports the iframe size, and the backend resizes the Chromium window
+// to match. Syncing starts on iframe load — never before — so merely
+// opening the page can't resurrect a closed sidecar.
 export function PreviewSurface({ projectId }: { projectId: string }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const [loaded, setLoaded] = useState(false)
@@ -148,5 +146,3 @@ export function PreviewSurface({ projectId }: { projectId: string }) {
     </main>
   )
 }
-
-// ApiError import is type-only to keep the heartbeat 404 path explicit.

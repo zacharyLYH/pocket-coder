@@ -1,6 +1,4 @@
-// postButlerTurn runs one butler turn over the shared SSE turn-stream:
-// status lines via onStatus, then the final answer. Errors carry threadId
-// when the server reserved a turn (same remount-into-run shape as codemap).
+// postButlerTurn runs one butler turn over the shared SSE turn-stream.
 import { postTurnStream, isFinalShape, type StreamStatus } from '@/lib/turnStream'
 import type { ButlerTurnResult } from '@/lib/types'
 

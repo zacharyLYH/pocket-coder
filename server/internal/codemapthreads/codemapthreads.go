@@ -55,9 +55,8 @@ type Thread struct {
 	Turns     []Turn    `json:"turns"`
 }
 
-// Manifest is the thread-level record: exactly {id, title, createdAt}.
-// No project (parent dir is the scope), no updatedAt/nextTurnIndex/
-// turnCount/preview. Set once at create; never bumped on turns.
+// Manifest is the thread-level record: exactly {id, title, createdAt},
+// set once at create (the parent dir is the project scope).
 type Manifest struct {
 	ID        string    `json:"id"`
 	Title     string    `json:"title"`
@@ -65,8 +64,6 @@ type Manifest struct {
 }
 
 // Summary is the list-view row: metadata without the turn bodies.
-// UpdatedAt is derived from the last turn file's time (== createdAt when
-// empty); CreatedAt == manifest.createdAt.
 type Summary struct {
 	ID        string    `json:"id"`
 	Title     string    `json:"title"`

@@ -105,8 +105,7 @@ func butlerWriteTools(d Deps, created *[]butlerCard) []agent.Tool {
 	return out
 }
 
-// butlerWriteTable is every write tool. Keep each row to a one-line blast
-// and a short exec block.
+// butlerWriteTable is every write tool.
 var butlerWriteTable = []butlerWriteDef{
 	{
 		name: butlerToolCreateProject, desc: "Clone a repo URL and branch, then report Ready.",

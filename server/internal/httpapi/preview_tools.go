@@ -170,10 +170,8 @@ func (s *cdpSession) call(ctx context.Context, method string, params any) (json.
 func cdpWSURL(endpoint string) (string, error) {
 	client := &http.Client{Timeout: 3 * time.Second}
 	// Retry /json/list a few times — the page target may not appear
-	// instantly even though WaitForCDP already proved the transport is up.
-	// No /json/version fallback: a browser-level target has no page
-	// context, so page-dependent tools would fail later anyway. Fail
-	// loudly here instead.
+	// instantly. No /json/version fallback: a browser-level target has no
+	// page context, so page-dependent tools would fail later anyway.
 	for attempt := 0; attempt < 5; attempt++ {
 		resp, err := client.Get(endpoint + "/json/list")
 		if err == nil {
@@ -658,7 +656,7 @@ func handlePreviewClick(d Deps) http.HandlerFunc {
 		if cerr := clickAt(r.Context(), s, body.X, body.Y); cerr != nil {
 			err = cerr
 			// clickAt already made a best-effort release when the press
-			// landed; keep the half-press note as a stable log op.
+			// landed; the op string keeps the half-press note stable in logs.
 			op := "cdp click press"
 			if strings.Contains(cerr.Error(), "release failed") {
 				op = "cdp click press succeeded but release failed"

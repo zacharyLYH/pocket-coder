@@ -40,16 +40,13 @@ type openFile struct {
 }
 
 // Store is the buffered per-project file writer: observe/<escaped>.log.jsonl
-// (+.1) under dataDir. One flush-loop goroutine owns every file: queueing is
-// a non-blocking chan send (drop+count past 1024), the loop drains to bufio
-// every second with fsync, and rotates past 4MB. seq is per-project atomic;
-// file size is loop-owned.
+// (+.1) under dataDir. One flush-loop goroutine owns every file: queueing
+// is a non-blocking chan send (drop+count past 1024), the loop drains to
+// bufio every second with fsync, and rotates past 4MB.
 //
 // Locking is two-mutex by design, never nested: wmu serializes all file I/O
 // (loop flush, read-triggered flush, delete, close); mu guards the seq map
-// and the errors cache. The seq resume scan takes no locks — max is
-// idempotent under a racing rotation, so a missed line can only reuse a seq
-// that still sorts correctly.
+// and the errors cache.
 type Store struct {
 	dir   string
 	mu    sync.Mutex // seq, errs
@@ -367,9 +364,7 @@ func (s *Store) Read(project string, after, before int64, limit int, level, sour
 	return all, all[0].Seq, all[len(all)-1].Seq
 }
 
-// matchType reports whether got is in the comma-separated want set. A
-// single type still matches exactly, so existing callers are unaffected;
-// the audit filter passes several milestone types at once.
+// matchType reports whether got is in the comma-separated want set.
 func matchType(got, want string) bool {
 	if !strings.Contains(want, ",") {
 		return got == want

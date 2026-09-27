@@ -23,11 +23,8 @@ const (
 // Completion issues one chat completion, logging under the given
 // request/response message names. It retries (up to maxAttempts total)
 // when the provider errors at the transport level or answers HTTP 200
-// with an empty payload (choices:null / empty message — verified
-// intermittent on free reasoning tiers); where describes the call for
-// retry traces ("step 3", "final-answer call", "format call"). It returns
-// the final response and raw JSON; callers still validate content. A
-// fatal context error returns ctx.Err().
+// with an empty payload; where describes the call for retry traces.
+// A fatal context error returns ctx.Err().
 func Completion(ctx context.Context, client openai.Client, params openai.ChatCompletionNewParams, onTrace func(TraceEvent), reqMsg, resMsg, where string, maxAttempts int) (*openai.ChatCompletion, []byte, error) {
 	call := func() (*openai.ChatCompletion, []byte, error) {
 		reqRaw, _ := json.Marshal(params)

@@ -4,9 +4,9 @@ import { Button } from '@/components/ui/button'
 import { api, errMsg } from '@/lib/api'
 import type { ButlerConfirm as Card } from '@/lib/types'
 
-// ConfirmCard renders one pending write: old/new summary plus the blast
-// radius, with Confirm and Discard. propose_env_fix adds a masked value
-// field; the value travels only in the apply body, never in chat.
+// ButlerConfirm renders one pending write with Confirm and Discard.
+// propose_env_fix adds a masked value field; the value travels only in the
+// apply body, never in chat.
 export function ButlerConfirm({ card, onDone }: { card: Card; onDone: (result: string | null) => void }) {
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)

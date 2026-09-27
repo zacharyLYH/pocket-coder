@@ -1,5 +1,5 @@
 // Butler read tools: names and counts only — no paths, no hunks, no
-// secret values. Each tool is one closure over Deps.
+// secret values.
 package httpapi
 
 import (
@@ -100,8 +100,8 @@ func butlerPreviewStatus(ctx context.Context, d Deps, id string) string {
 	return "ready"
 }
 
-// butlerReadTools returns the 10 read tools bound to d. Every Run guards
-// the wall first, then answers from live services in redacted shape.
+// butlerReadTools returns the read tools bound to d. Every Run answers in
+// redacted shape.
 func butlerReadTools(d Deps) []agent.Tool {
 	impls := map[string]agent.Tool{
 		butlerToolListProjects: {

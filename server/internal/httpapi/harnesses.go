@@ -1,6 +1,5 @@
 // Harness registry endpoints: the "+ New Session" list, the add-harness
-// form, and the explicit home-page install. The form and the folder are the
-// same thing — saving writes a plugin file (PRD §5).
+// form, and the explicit home-page install.
 package httpapi
 
 import (

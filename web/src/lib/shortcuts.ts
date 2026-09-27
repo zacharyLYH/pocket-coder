@@ -25,9 +25,8 @@ export function parseKeyCombo(raw: string): string {
 
 // keydownToLabel turns a physical keypress into the human-readable combo
 // the keys textbox stores ("Ctrl-C", "Esc", "Up"). Returns null for plain
-// typing (letters without modifiers, Backspace alone) so the input keeps
-// its normal behavior. Cmd (Meta) is treated as Ctrl — on macOS keyboards
-// ⌘C must mean Ctrl-C, not the copy hotkey.
+// typing so the input keeps its normal behavior. Cmd (Meta) is treated as
+// Ctrl — on macOS keyboards ⌘C must mean Ctrl-C, not the copy hotkey.
 export function keydownToLabel(e: KeyboardEvent | React.KeyboardEvent): string | null {
   const mod = e.ctrlKey || e.metaKey
   const named: Record<string, string> = {

@@ -1,8 +1,5 @@
 // Package agent is the reusable OpenAI-compatible loop future features
-// share. Codemap is the first caller; later callers add a system prompt
-// and tools without touching the loop.
-//
-// Only stdlib plus the official openai-go module. No frameworks.
+// share. Only stdlib plus the official openai-go module.
 package agent
 
 import (
@@ -17,14 +14,14 @@ import (
 	"github.com/openai/openai-go/v2/shared"
 )
 
-// Config is the single global model credential. One key only.
+// Config is the single global model credential.
 type Config struct {
 	BaseURL string
 	APIKey  string
 	Model   string
 }
 
-// Valid reports whether codemap features may run at all.
+// Valid reports whether agent features may run at all.
 func (c Config) Valid() bool {
 	return c.BaseURL != "" && c.APIKey != "" && c.Model != ""
 }
@@ -69,7 +66,7 @@ func sdkTools(tools []Tool) []openai.ChatCompletionToolUnionParam {
 		}
 		// Strict stays false on purpose: users bring any OpenAI-compatible
 		// endpoint (Ollama, proxies), and many 400 on strict schemas.
-		// Shape is enforced best-effort + validated by every caller.
+		// Shape is validated by every caller.
 		out = append(out, openai.ChatCompletionToolUnionParam{
 			OfFunction: &openai.ChatCompletionFunctionToolParam{
 				Function: shared.FunctionDefinitionParam{

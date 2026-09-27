@@ -12,7 +12,7 @@ import { copyToClipboard } from '@/lib/clipboard'
 import { BranchSheet } from '@/components/terminal/BranchSheet'
 import type { GitBranchList, GitDiffResponse, GitFileStatus, GitStatusResponse } from '@/lib/types'
 
-// Context levels for the per-file progressive expansion (§1.1).
+// Context levels for the per-file progressive expansion.
 const CONTEXT_LEVELS = [3, 10, 30, 0] as const // 0 = full
 const contextParam = (n: number) => (n === 0 ? 'full' : String(n))
 
@@ -113,7 +113,6 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
   })
   const [copied, setCopied] = useState(false)
 
-  // Git tab additions (mobile-git-flow-rfc).
   const [contextByPath, setContextByPath] = useState<Record<string, number>>({})
   const [message, setMessage] = useState('')
   const [identityOpen, setIdentityOpen] = useState(false)
@@ -283,8 +282,6 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
     setNotesOpen(true)
     setCopied(false)
   }
-
-  // ---- Git tab actions (§2, §4) ----
 
   // runGit wraps one git-busy action: busy flag + error slot handled once.
   async function runGit<T>(key: string, fn: () => Promise<T>): Promise<T | null> {
@@ -511,7 +508,7 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
         {isOpen && (
           <div className="flex flex-col gap-2 border-t p-2">
             <div className="flex flex-wrap items-center gap-2">
-              {/* Per-file context expansion (§1.1): 3 → 10 → 30 → full. */}
+              {/* Per-file context expansion: 3 → 10 → 30 → full. */}
               {!f.binary && (
                 <Button
                   size="sm"
@@ -632,7 +629,7 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
             </Button>
           </div>
         )}
-        {/* Message box (§2): always visible at the top of the content. */}
+        {/* Message box: always visible at the top of the content. */}
         {!status?.notRepo && (
           <div className="flex flex-col gap-1.5 rounded-lg border p-2" data-testid="git-commit-section">
             <div className="flex items-center gap-2">
@@ -823,7 +820,6 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
           </div>
         )}
 
-        {/* ---- Branch sheet (§5) ---- */}
         {branchOpen && (
           <BranchSheet
             branches={branches}

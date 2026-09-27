@@ -238,17 +238,13 @@ func newPreviewProxy(target *url.URL, path string) *httputil.ReverseProxy {
 // handlePreviewHeartbeat proves a live surface page for one project.
 func handlePreviewHeartbeat(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Heartbeat fires every few seconds per open surface. It goes to
-		// the runtime tail like everything else — filter it from the UI
-		// if the poll noise bothers you; slog stays as the cheap
-		// operator-side presence proof.
+		// Heartbeat fires every few seconds per open surface.
 		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			return
 		}
 		obs.Info(r.Context(), obs.PreviewHeartbeat, "preview heartbeat", nil)
-		// Reached only with a valid token (the gate above 404s
-		// otherwise), so each line is proof of tokened presence.
-		// The value itself is never logged.
+		// Reached only with a valid token, so each line is proof of
+		// tokened presence. The token itself is never logged.
 		slog.Info("preview heartbeat", "project", r.PathValue("id"))
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
@@ -318,9 +314,8 @@ func handlePreviewPorts(d Deps) http.HandlerFunc {
 		output, xerr := d.Sessions.ExecCommand(r.Context(), cid, "ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || true")
 		if xerr != nil {
 			err = xerr
-			// Return an error rather than an empty list so the UI keeps its
-			// last-known ports instead of blinking them away. No slog here:
-			// the deferred obs error already logs to stderr + file.
+			// An error (not an empty list) so the UI keeps its last-known
+			// ports instead of blinking them away.
 			writeErr(w, http.StatusBadGateway, "ports probe failed")
 			return
 		}
@@ -341,8 +336,7 @@ var sidecarPorts = map[int]bool{
 	preview.SidecarCDPProxyPort: true,
 }
 
-// dockerEmbeddedDNS is Docker's embedded DNS resolver, an artifact of the
-// network namespace, never a user server.
+// dockerEmbeddedDNS is Docker's embedded DNS resolver, never a user server.
 const dockerEmbeddedDNS = "127.0.0.11"
 
 // parseListeningPorts extracts port numbers from ss/netstat listening output.

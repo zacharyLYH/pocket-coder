@@ -79,10 +79,9 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
 
   useEffect(() => { refreshSessions() }, [refreshSessions, redial])
 
-  // Re-list on connect: the pane's ensure POST (which creates the session)
-  // and this view's initial GET race on first open, so the first paint can
-  // show an empty tab strip with no later refetch to heal it. By the time
-  // the socket is live the session exists, so this converges the tabs.
+  // Re-list on connect: the pane's ensure POST and this view's initial GET
+  // race on first open; by the time the socket is live the session exists,
+  // so this converges the tabs.
   useEffect(() => {
     if (status === 'live') refreshSessions()
   }, [status, refreshSessions])
@@ -136,10 +135,8 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
     }
   }
 
-  // Delete removes the session outright (tmux kill + state.json metadata),
-  // so it disappears from the picker for good. Deleting the attached session
-  // lands the user on the next remaining session instead of a dead screen;
-  // the API refuses to delete the last one, so a fallback is never needed.
+  // Delete removes the session outright; deleting the attached session
+  // lands the user on the next remaining session instead of a dead screen.
   const del = useCallback(async (name: string) => {
     try {
       await api(projectPath(projectId, `/sessions/${name}/delete`), { method: 'DELETE' })
@@ -180,8 +177,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   }
 
   // Run a shortcut from the modal: commands inject into the session,
-  // key combos go over the PTY input path. Uses the row's current
-  // (possibly unsaved) values so users can try before saving.
+  // key combos go over the PTY input path.
   async function runShortcut(s: Shortcut) {
     setShortcutError(null)
     try {

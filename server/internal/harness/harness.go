@@ -96,9 +96,8 @@ func (l *Store) Remove(id string) error {
 }
 
 // EnsureBuiltins adds any missing builtin plugins to the registry, never
-// overwriting existing entries (the user may have edited them). Returns the
-// names written. Replaces the old seed-files-on-boot behavior: builtins are
-// state now, seeded once and edited like any other plugin.
+// overwriting existing entries (the user may have edited them). Returns
+// the names written.
 func (l *Store) EnsureBuiltins() ([]string, error) {
 	var written []string
 	err := l.st.Mutate(func(doc *state.Document) error {

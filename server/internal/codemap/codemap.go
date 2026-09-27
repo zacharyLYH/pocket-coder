@@ -1,8 +1,6 @@
 // Package codemap is the first caller of the agent loop: it answers
 // "what does this code do" with short sections and clickable snippets.
-//
-// Tools are read only by construction: search and read. No writer tool
-// may register here; writers get their own prompt and route.
+// Tools are read only by construction: search and read.
 package codemap
 
 import (
@@ -145,8 +143,8 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 					return "", fmt.Errorf("pattern must be one line")
 				}
 				// Run from inside the repo so matches come back
-				// repo-relative: absolute matches teach the model to call
-				// read_file with absolute paths, which it must never use.
+				// repo-relative: absolute matches teach the model to use
+				// absolute paths, which it must never use.
 				cmd := fmt.Sprintf("cd %s && grep -rn --exclude-dir=.git --exclude-dir=node_modules --exclude='*.lock' --exclude-dir=dist -I -m 50 -- %s . | sed -e \"s|^\\./||\" | head -50",
 					shQuote(repoDir), shQuote(pattern))
 				out, err := exec.ExecCommand(ctx, container, cmd)

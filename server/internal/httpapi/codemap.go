@@ -1,8 +1,6 @@
 // Codemap endpoints: ask-about-the-code over the agent loop, plus the
-// read only file reader the snippet overlay consumes.
-//
-// Chats live in per-thread folders (see codemapthreads), not events.log.
-// Tools are read only. No write path exists in this file.
+// read only file reader the snippet overlay consumes. Chats live in
+// per-thread folders (see codemapthreads). Tools are read only.
 package httpapi
 
 import (
@@ -23,11 +21,9 @@ import (
 )
 
 // codemapBusy serializes one run per project: a second POST while one is
-// in flight gets 409 codemap busy instead of burning a second loop.
-// The value is the in-flight thread ID ("" only transiently before a new
-// chat reserves its folder), so DELETE can refuse to drop a thread
-// mid-run while still allowing unrelated threads through, and GET
-// threads can surface it as runningThreadId for remount-into-run.
+// in flight gets 409 codemap busy instead of burning a second loop. The
+// value is the in-flight thread ID, surfaced by GET threads as
+// runningThreadId for remount-into-run.
 var codemapBusy = struct {
 	mu sync.Mutex
 	m  map[string]string
@@ -94,9 +90,8 @@ func repoSHA(d Deps, r *http.Request, container, dir string) string {
 func handleCodemap(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		// Reserve/store failures below already log specifically (codemap.turn
-		// key); this deferred error covers only the pre-reserve failures
-		// that have no specific line yet.
+		// Deferred error covers only the pre-reserve failures: reserve and
+		// store failures below log specifically (codemap.turn key).
 		var err error
 		defer func() {
 			if err != nil {
@@ -197,8 +192,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 }
 
 // handleCodemapRetry reruns the LAST (highest-N) turn, which must be
-// failed/crashed. The turn's N.json + N.lineage.json are rewritten from
-// scratch (same turnId/path/prompt, fresh time+sha) and the full
+// failed/crashed. The turn is rewritten from scratch and the full
 // pipeline reruns with context turns 1..N-1 only. Response mirrors
 // POST /codemap.
 func handleCodemapRetry(d Deps) http.HandlerFunc {
@@ -276,9 +270,9 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 }
 
 // executeReservedTurn runs the model for an already-reserved placeholder
-// turn and persists via Complete/Fail. Manifest untouched after create.
-// Post-manifest errors keep threadId+title so FE can open the failed
-// placeholder. Callers hold the codemapBusy slot.
+// turn and persists via Complete/Fail. Post-manifest errors keep
+// threadId+title so FE can open the failed placeholder. Callers hold the
+// codemapBusy slot.
 func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, container, dir string, cfg agent.Config, st *codemapthreads.Store, threadID, threadTitle string, turnN int, turnID, prompt string, history []map[string]any) {
 	r = r.WithContext(obs.WithProject(r.Context(), id))
 	sha := repoSHA(d, r, container, dir)
@@ -323,9 +317,8 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 					map[string]any{"turnId": turnID, "path": ev.Tool, "range": ev.Args, "reason": ev.Result})
 			}
 		})
-	// Keep the complete debug graph separate from the FE turn record.
-	// It is written on both success and failure so failed provider calls
-	// remain diagnosable.
+	// Lineage is the complete debug graph, separate from the FE turn
+	// record; written on both success and failure.
 	var lineageRaw []byte
 	if lineage != nil {
 		lineage.TurnID = turnID
@@ -362,8 +355,7 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 		return
 	}
 	steps := flattenRounds(rounds)
-	// events.log keeps only an audit line (never sections); raw tier-2
-	// text lives only in lineage format_response events, never in N.json.
+	// events.log keeps only an audit line (never sections).
 	sectionsRaw, merr := json.Marshal(res.Sections)
 	if merr != nil {
 		obs.Error(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] sections marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_sections", "error": merr.Error()})
@@ -412,8 +404,7 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 }
 
 // cut bounds s at max runes (rune-aware: byte slicing could split a
-// multi-byte rune). excerpt2000 trims and names empties for log lines;
-// capData is the same cut for log entry data.
+// multi-byte rune).
 func cut(s string, max int) string {
 	if r := []rune(s); len(r) > max {
 		return string(r[:max]) + "…"
@@ -495,14 +486,10 @@ func sectionsTranscript(sections []codemap.Section) string {
 	return sb.String()
 }
 
-// threadHistory rebuilds the LLM conversation from persisted turns:
-// each turn becomes user(prompt) [+ one assistant(toolSteps) per tool
-// round, laid out as the turn made them + assistant(transcript)]. Lineage
-// files are NEVER read for context: history comes exclusively from N.json
-// turn files (prompt + sections + tools per turn). Failed/crashed turns
-// (error set or answer-less) contribute their prompt only: no sections
-// to replay, no tool block without outputs. Context is bounded to the
-// last 20 turns and ~16KB estimated chars.
+// threadHistory rebuilds the LLM conversation from persisted turns (N.json
+// files only — lineage files are NEVER read for context). Failed/crashed
+// turns contribute their prompt only. Context is bounded to the last 20
+// turns and ~16KB estimated chars.
 func threadHistory(th codemapthreads.Thread) []map[string]any {
 	turns := th.Turns
 	if len(turns) > 20 {

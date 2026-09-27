@@ -1,5 +1,4 @@
-// Shared butler shapes: one global thread list, one turn POST with SSE
-// status lines (data: {...}) plus a final plain-JSON answer.
+// Shared butler shapes.
 export type ButlerStep = { tool: string; args?: string; result?: string; error?: string }
 export type ButlerTurn = { turnId: string; prompt: string; answer?: string; steps?: ButlerStep[] | null; projectHint?: string; time?: string; error?: string | null }
 export type ButlerThreadSummary = { id: string; title: string; createdAt: string; updatedAt: string; turnCount: number; preview: string }
@@ -7,8 +6,7 @@ export type ButlerThread = { id: string; title: string; createdAt: string; updat
 export type ButlerConfirm = { id: string; tool: string; summary: string; blastRadius: string }
 export type ButlerTurnResult = { threadId: string; threadTitle: string; turnId: string; answer: string; steps: ButlerStep[]; confirms?: ButlerConfirm[] | null; time: string }
 
-// Shared API shapes. One declaration per backend payload, imported
-// everywhere instead of re-declared per component.
+// Shared API shapes.
 export type Project = { id: string; harnesses?: string[] }
 export type SSHKey = { fingerprint: string; publicKey: string; label: string }
 export type Harness = { id: string; name: string; command: string; install?: string; installed?: boolean }
@@ -52,6 +50,5 @@ export type CodemapThreadSummary = { id: string; title: string; createdAt: strin
 export type CodemapThread = { id: string; project: string; title: string; createdAt: string; updatedAt: string; turns: CodemapTurn[] }
 export type CodemapFile = { path: string; content: string; binary: boolean; moved: boolean; sha: string }
 
-// isLaunchable reports whether a harness offers its own session type in
-// "+ New Tab". The bash shell is a plain terminal, not a launch target.
+// isLaunchable: the bash shell is a plain terminal, not a launch target.
 export const isLaunchable = (h: Harness) => h.command !== 'bash'

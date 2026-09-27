@@ -9,11 +9,9 @@ import (
 	"github.com/openai/openai-go/v2"
 )
 
-// Model-facing prompts for the gather phase. Tier-2's extractor prompt
-// lives separately in format.go; the two evolve independently.
 const (
 	// groundingNudge steers ungrounded answers (zero tool rounds) toward
-	// one verification pass instead of prose-begging every turn.
+	// one verification pass.
 	groundingNudge = "Before answering, ground your answer: call at least one available tool to verify against the repo. If the question has nothing to do with this repo's code, answer directly instead."
 	// closeOutPrompt turns maxSteps exhaustion into an answer: one
 	// tools-free call over everything gathered so far.
@@ -21,9 +19,7 @@ const (
 )
 
 // Run answers one prompt: gather free text via the tool loop, then shape
-// it once through the schema-enforcing format call. The loop never
-// carries a schema (providers drop tool calls or null out choices when
-// json_schema rides with tools); the format call never carries tools.
+// it through the schema-enforcing format call.
 func Run(ctx context.Context, cfg Config, sysPrompt, userPrompt string, history []map[string]any, tools []Tool, schemaName string, schema map[string]any, maxSteps int, onTrace func(TraceEvent), lin *Lineage, opts ...RunOption) (string, error) {
 	if !cfg.Valid() {
 		return "", fmt.Errorf("ai not configured")
@@ -46,21 +42,16 @@ func Run(ctx context.Context, cfg Config, sysPrompt, userPrompt string, history 
 	return formatResult(ctx, client, cfg, schemaName, schema, answer, onTrace, lin)
 }
 
-// RunOption tweaks one loop. Variadic on Run so existing callers keep
-// working untouched.
+// RunOption tweaks one loop.
 type RunOption func(*loop)
 
 // WithoutGroundingNudge disables the one-time repo-verification nudge.
-// Codemap keeps it; the butler opts out (its questions are rarely about
-// repo code, and its guide already directs tool use).
 func WithoutGroundingNudge() RunOption {
 	return func(l *loop) { l.groundNudged = true }
 }
 
-// WithLeadIn inserts one developer message right after the system prompt:
-// a second prompt that loads only on this run, never stored in history.
-// Butler uses it for workflow examples, which refused turns never pay
-// for and follow-ups never replay.
+// WithLeadIn inserts one developer message right after the system prompt,
+// never stored in history.
 func WithLeadIn(text string) RunOption {
 	return func(l *loop) {
 		if strings.TrimSpace(text) == "" || len(l.msgs) == 0 {
@@ -131,8 +122,6 @@ func (l *loop) gather(ctx context.Context) (string, error) {
 }
 
 // request issues one loop call and maps wire failures to turn errors.
-// The raw payload surfaces in the error so provider-empty (choices:null)
-// reads apart from our bugs.
 func (l *loop) request(ctx context.Context, step int) (openai.ChatCompletionMessage, error) {
 	params := l.params()
 	requestRaw, _ := jsonOf(params)
@@ -298,7 +287,7 @@ func assembleMessages(sysPrompt, userPrompt string, history []map[string]any) []
 
 // replayCalls expands one rebuilt assistant tool round into a real
 // assistant(tool_calls) turn plus N tool-result messages with fresh,
-// globally-unique call ids. Rounds with no named calls replay as nothing.
+// globally-unique call ids.
 func replayCalls(content string, steps []replayStep, seq *int) []openai.ChatCompletionMessageParamUnion {
 	text := content
 	if strings.TrimSpace(text) == "" {

@@ -20,9 +20,8 @@ import { FileOverlay } from '@/components/terminal/FileOverlay'
 import { CodeBlock } from '@/components/CodeBlock'
 import { Markdown } from '@/components/Markdown'
 
-// Suggestion chips double as the empty-state welcome (the assistant-ui
-// ThreadWelcome + Suggestions shape): they show what good input looks
-// like and prefill the composer. Free text stays for the odd traces.
+// Suggestion chips double as the empty-state welcome: they show what good
+// input looks like and prefill the composer.
 const PRESETS = [
   { label: 'Explain the current diff', prompt: 'Explain the current diff. Read git status and the diff, then walk through each changed file.' },
   { label: 'Map this repo', prompt: 'Map this repo. Find the entrypoints, key directories, and data flow, then summarize how it fits together.' },
@@ -30,9 +29,8 @@ const PRESETS = [
 
 type OverlaySel = { path: string; start: number; end: number; sha: string }
 
-// Steps shows the tool calls behind a turn: name plus full args, one row
-// each. Collapsed by default; this is the first place to look when an
-// answer looks wrong. Full outputs live in the Logs tab.
+// Steps shows the tool calls behind a turn. Collapsed by default; full
+// outputs live in the Logs tab.
 function Steps({ tools }: { tools: CodemapToolCall[] }) {
   const [open, setOpen] = useState(false)
   if (tools.length === 0) return null
@@ -92,7 +90,7 @@ function CopySnippet({ text }: { text: string }) {
 }
 
 // optimisticTitle mirrors the server's TitleFromPrompt (first line,
-// 60 chars) until the server truncation wins on response.
+// 60 chars) until the server truncation wins.
 function optimisticTitle(q: string): string {
   const first = q.split('\n')[0] ?? ''
   const flat = first.replace(/\s+/g, ' ').trim()
@@ -100,16 +98,12 @@ function optimisticTitle(q: string): string {
   return flat.length > 60 ? flat.slice(0, 60) + '…' : flat
 }
 
-// Codemap tab: ask-about-the-code over the agent loop, laid out like an
-// assistant-ui thread. One folder per thread server-side, many threads
-// per project — listed in the history menu. New chats stay local-only
-// until the first send; the server rebuilds context from the persisted
-// turns on every send.
+// Codemap tab: ask-about-the-code over the agent loop. One folder per
+// thread server-side; new chats stay local-only until the first send.
 export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigStatus | null }) {
   const [threads, setThreads] = useState<CodemapThreadSummary[]>([])
   // No localStorage: the server is the source of truth. Mount opens the
-  // newest thread (or the running one when remounting into a run); the
-  // composer starts empty every time.
+  // newest thread (or the running one when remounting into a run).
   const [activeId, setActiveId] = useState<string | null>(null)
   const [turns, setTurns] = useState<CodemapTurn[]>([])
   const [title, setTitle] = useState<string>('')
@@ -132,9 +126,8 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
   }, [activeId])
 
   // Mid-generation UI block (codemap tab only; other tabs free): while
-  // busy (own POST in flight) OR the open thread is someone else's run
-  // (remounted into it via runningThreadId), the composer +
-  // history-delete + retry buttons disable.
+  // busy OR the open thread is someone else's run (remounted via
+  // runningThreadId), the composer + history-delete + retry buttons disable.
   const blocked = busy || (activeId !== null && runningThreadId !== null && activeId === runningThreadId)
 
   const loadThreads = useCallback(async () => {
@@ -174,10 +167,8 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
     void (async () => {
       const loaded = await loadThreads()
       if (cancelled || !loaded) return
-      // Remount-into-run: the list carries runningThreadId (no new
-      // endpoint, mount-poll only). When set, open that thread and flag
-      // busy so the answer-less placeholder shows its spinner and the
-      // composer/delete/retry block until the next revisit.
+      // Remount-into-run: open the running thread and flag busy so the
+      // answer-less placeholder shows its spinner and blocks input.
       if (loaded.runningThreadId) {
         setBusy(true)
         void openThread(loaded.runningThreadId)
@@ -186,7 +177,6 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
       if (loaded.threads.length > 0) {
         void openThread(loaded.threads[0].id)
       }
-      // else: no chats yet — pending state until the first send
     })()
     return () => {
       cancelled = true
@@ -224,10 +214,9 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
           setBusy(false)
           void loadThreads()
         } catch (e) {
-          // Thread vanished mid-run (deleted elsewhere): drop the block
-          // and fall back to the list rather than spinning forever.
-          // Any other error (500, network blip) keeps polling: one
-          // transient failure must not unblock a still-running turn.
+          // Thread vanished mid-run (deleted elsewhere): drop the block.
+          // Any other error keeps polling: one transient failure must not
+          // unblock a still-running turn.
           if (e instanceof ApiError && e.status === 404) {
             clearInterval(id)
             setBusy(false)
@@ -239,11 +228,6 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
     return () => clearInterval(id)
   }, [busy, ownFlight, activeId, projectId, loadThreads])
 
-  // Shared response handling for generate() and retry(): success adopts
-  // threadId + threadTitle (server truncation wins), then reloads + opens.
-  // Failure with a threadId opens the failed placeholder the same way.
-  // The composer stays cleared throughout — retry is a button, not a
-  // composer resend.
   async function adoptResult(
     sendThreadId: string | null,
     d: { threadId?: string; threadTitle?: string },
@@ -265,10 +249,6 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
     }
   }
 
-  // One flight for generate() and retry(): busy/ownFlight guard the
-  // composer, a 409 refreshes the running marker so the UI blocks
-  // instead of letting the user hammer 409 in a loop, and a failure
-  // carrying a threadId opens the failed placeholder the same way.
   async function runTurn(sendThreadId: string | null, path: string, body: string) {
     setBusy(true)
     setOwnFlight(true)
@@ -344,9 +324,9 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
     return Number.isNaN(t.getTime()) ? '' : t.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
 
-  // SectionBlock renders one Devin-style flow step: a numbered, succinct
-  // explanation with its code refs nested beneath. Sections collapse so
-  // big discussions stay scannable; small answers stay fully open.
+  // SectionBlock renders one flow step: a numbered, succinct explanation
+  // with its code refs nested beneath. Sections collapse so big
+  // discussions stay scannable; small answers stay fully open.
   function SectionBlock({ s, index, sha, defaultOpen }: { s: CodemapSection; index: number; sha: string; defaultOpen: boolean }) {
     const [open, setOpen] = useState(defaultOpen)
     const refs = s.refs ?? []
@@ -432,8 +412,7 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
   }
 
   // FailCard is the shared failed/crashed bubble: title + optional error
-  // + hint + retry on the last turn only + tool trace. testids stay so
-  // e2e keeps finding the hint and the retry button in every branch.
+  // + hint + retry on the last turn only + tool trace.
   function FailCard({ title, error, hint, isLast, tools }: { title: string; error?: string | null; hint: string; isLast: boolean; tools?: CodemapToolCall[] | null }) {
     return (
       <div className="flex flex-col gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3">
@@ -455,10 +434,8 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
     )
   }
 
-  // renderTurnBody pins the §8 contract: failed turns (error string) get a
-  // failed bubble + hint + retry button on the last turn only;
-  // answer-less + error:null turns are in-flight (spinner) when their
-  // thread is the running one, else crashed/failed with a retry hint.
+  // renderTurnBody: failed turns get a failed bubble; answer-less turns
+  // are in-flight when their thread is the running one, else crashed.
   function renderTurnBody(t: CodemapTurn, isLast: boolean) {
     const hasError = t.error !== undefined && t.error !== null && t.error !== ''
     const answerless = (t.sections == null || t.sections.length === 0) && !hasError
@@ -466,11 +443,8 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
       return <FailCard title="This turn failed." error={t.error} hint="The failed turn is saved. Retry it with the button below." isLast={isLast} tools={t.tools} />
     }
     if (answerless) {
-      // Crash-vs-in-flight rides on runningThreadId alone: the
-      // project-wide busy flag cannot disambiguate cross-thread. The
-      // owner's own run never shows a placeholder pre-completion (no
-      // optimistic append), so a visible answer-less turn is in-flight
-      // only when its thread is the running one.
+      // Crash-vs-in-flight rides on runningThreadId alone: the project-wide
+      // busy flag cannot disambiguate cross-thread.
       const inFlight = activeId !== null && runningThreadId !== null && activeId === runningThreadId
       if (inFlight) {
         return (

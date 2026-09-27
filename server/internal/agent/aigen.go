@@ -1,8 +1,3 @@
-// One-shot structured generation: a single tools-free json_schema
-// completion for callers that need raw JSON (commit messages, PR
-// descriptions). maxAttempts=2 covers transport-level retries only; the
-// schema call itself is a single attempt with no raw-text fallback (same
-// contract as the extractor format call in format.go).
 package agent
 
 import (
@@ -14,6 +9,8 @@ import (
 	"github.com/openai/openai-go/v2/shared"
 )
 
+// One-shot structured generation: a single tools-free json_schema
+// completion for callers that need raw JSON (commit messages, PR bodies).
 func CompleteJSON(ctx context.Context, cfg Config, system, user, schemaName string, schema map[string]any) (json.RawMessage, error) {
 	if !cfg.Valid() {
 		return nil, fmt.Errorf("ai not configured")

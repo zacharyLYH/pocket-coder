@@ -194,13 +194,10 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 	if err != nil {
 		exitFrame(-1, err.Error())
 		return
-	}
-
-	// The pipe is synchronous: a write parks until the pty drains it, and
+	} // The pipe is synchronous: a write parks until the pty drains it, and
 	// once the exec ends nothing reads anymore. The ws reader therefore only
 	// enqueues and this pump owns the pipe, draining on stdin death so the
 	// reader always reaches its ReadMessage instead of wedging the handler.
-	// 64 frames is ample typing headroom.
 	inputs := make(chan string, 64)
 	go func() {
 		for data := range inputs {

@@ -136,7 +136,7 @@ func (d *Docker) Run(ctx context.Context, spec Spec) (string, error) {
 }
 
 // Stop stops a container, giving it timeout to exit before SIGKILL.
-// Stopping an already-stopped container is not an error (idempotent stop).
+// Stopping an already-stopped container is not an error.
 func (d *Docker) Stop(ctx context.Context, id string, timeout time.Duration) error {
 	err := d.c.StopContainerWithContext(id, uint(timeout.Seconds()), ctx)
 	if err != nil && !isAlreadyStopped(err) {

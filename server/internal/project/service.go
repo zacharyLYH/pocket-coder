@@ -20,9 +20,9 @@ import (
 	"pcoder/internal/textutil"
 )
 
-// ProjectImage is the shared project image. Built once from the embedded
-// Dockerfile if absent. The tag version bumps whenever the embedded
-// Dockerfile changes, so engines holding an older build rebuild it.
+// ProjectImage is the shared project image; the tag version bumps
+// whenever the embedded Dockerfile changes, so engines holding an older
+// build rebuild it.
 const ProjectImage = "pcoder-project:v3"
 
 const (
@@ -30,10 +30,9 @@ const (
 	stopWait   = 10 * time.Second
 )
 
-// Scope selects what a delete removes. The home volume is runtime state (tmux sessions, harness files),
-// so it goes with the container; the repo volume is the user's work.
-// Because the engine refuses to drop a volume referenced by any container,
-// scope=repo also removes the container (rootfs only — home survives).
+// Scope selects what a delete removes. The engine refuses to drop a
+// volume referenced by any container, so scope=repo also removes the
+// container (rootfs only — home survives).
 type Scope string
 
 const (
@@ -43,10 +42,9 @@ const (
 	ScopeAll       Scope = "all"       // everything
 )
 
-// ErrNotFound means no such project (metadata). ErrInvalidScope means a
-// delete scope that does not exist. ErrInvalidInput means a create request
-// the pipeline will not attempt. ErrConflict means the repo is already a
-// project (ids are owner/repo, so one repo is one project).
+// ErrNotFound means no such project; ErrInvalidScope a delete scope that
+// does not exist; ErrInvalidInput a create request the pipeline will not
+// attempt; ErrConflict an already-projected repo (ids are owner/repo).
 var (
 	ErrNotFound     = errors.New("project not found")
 	ErrInvalidScope = errors.New("invalid delete scope")
@@ -69,14 +67,12 @@ type Service struct {
 	sshKeys   *sshkeys.Store
 	git       func() (name, email, token string)
 	installer Installer
-	// codemaps is the codemap chat store. Chats are project-scoped
-	// artifacts: when the record goes, the chat files go with it. Wired
-	// via SetCodemaps (the SetSSHKeys pattern), so tests can leave it nil.
+	// codemaps is the codemap chat store; chats are project-scoped
+	// artifacts, so when the record goes the chat files go with it. Wired
+	// via SetCodemaps, so tests can leave it nil.
 	codemaps *codemapthreads.Store
-	// allowAnyRepo lifts the GitHub-only create requirement so test
-	// stacks can clone from a local git daemon. Set via SetAllowAnyRepo
-	// (wired from config in main, set directly by integration tests);
-	// production leaves it false.
+	// allowAnyRepo lifts the GitHub-only create requirement for test stacks
+	// cloning from a local git daemon. Never set in production.
 	allowAnyRepo bool
 }
 
@@ -136,10 +132,9 @@ func homeVolume(id string) string { return "pcoder-" + SanitizeName(id) + "-home
 
 // Create clones the repoURL into a new project and returns when it is
 // ready or failed. repoURL is required and must be a GitHub repository
-// URL — cloning is the only way to create a project. The project id is
-// the repo's owner/repo, so creating the same repo twice is a conflict.
-// A clone failure keeps the project running so the user can repair it
-// from the terminal — only the error surfaces here.
+// URL; the project id is the repo's owner/repo, so creating the same
+// repo twice is a conflict. A clone failure keeps the project running so
+// the user can repair it from the terminal — only the error surfaces here.
 // cloneMethod is "ssh" or "http" (empty defaults to "http").
 func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod string) (string, Project, error) {
 	repoURL = strings.TrimSpace(repoURL)
@@ -225,8 +220,7 @@ func (s *Service) injectSSHKeys(ctx context.Context, container string) error {
 	if s.sshKeys == nil {
 		return nil
 	}
-	// Single-user deployment: inject every registered key. Multi-user would
-	// scope to the project owner.
+	// Single-user deployment: inject every registered key.
 	allKeys, err := s.sshKeys.AllAuthorizedKeys()
 	if err != nil {
 		return err
@@ -234,7 +228,7 @@ func (s *Service) injectSSHKeys(ctx context.Context, container string) error {
 	if len(allKeys) == 0 {
 		return nil
 	}
-	// mkdir -p ~/.ssh then write authorized_keys. Exec is raw argv (no
+	// mkdir -p ~/.ssh, then write authorized_keys. Exec is raw argv (no
 	// shell), so the compound command goes through sh -c.
 	if res, err := s.dkr.Exec(ctx, container, []string{"sh", "-c", "mkdir -p /root/.ssh && chmod 700 /root/.ssh"}, false); err != nil {
 		return fmt.Errorf("mkdir .ssh: %w", err)
@@ -347,9 +341,8 @@ func (s *Service) Get(ctx context.Context, id string) (Project, Status, error) {
 // reusing those volumes — code and harness binaries live in volumes, so a
 // mid-run recreate loses nothing and needs no re-clone or reinstall.
 // Everything beyond the container (repo re-clone on a fresh engine, harness
-// installs) is boot's job, done by BringAllUp before the server accepts
-// requests. Exited/paused containers are left alone (the user can Start
-// explicitly); callers check State themselves.
+// installs) is boot's job (BringAllUp). Exited/paused containers are left
+// alone; callers check State themselves.
 func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error) {
 	ctx = obs.WithProject(ctx, id)
 	if _, err := s.store.Get(id); err != nil {
@@ -432,10 +425,9 @@ func (s *Service) provisionProject(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	// Fresh engine: the repo volume came up empty — nothing was recovered by
-	// recreating the container, so re-clone from the repo URL. Like Create,
-	// a clone failure keeps the project running (the user can repair it).
-	// cloneRepo owns its own lines (project.clone); only the trigger is here.
+	// Fresh engine: the repo volume came up empty — nothing was recovered
+	// by recreating the container, so re-clone from the repo URL. Like
+	// Create, a clone failure keeps the project running.
 	if p.Repo != "" {
 		cid := ContainerName(id)
 		if empty, err := s.repoVolumeEmpty(ctx, cid); err != nil {
@@ -455,8 +447,8 @@ func (s *Service) provisionProject(ctx context.Context, id string) error {
 
 // BringAllUp makes the live Docker state match state.json for EVERY project:
 // each container runs, repos are present, and recorded harnesses are
-// installed. Blocking by design — callers (main) run it before serving so
-// no request can ever observe a missing container or harness binary.
+// installed. Blocking by design — main runs it before serving, so no
+// request can ever observe a missing container or harness binary.
 // Per-project failures are logged and returned; they never abort the rest.
 func (s *Service) BringAllUp(ctx context.Context) error {
 	entries, err := s.store.List()
@@ -574,10 +566,9 @@ func (s *Service) Delete(ctx context.Context, id string, scope Scope) error {
 		}
 	}
 	// Volume removal requires the container to let go: stop it first when
-	// the scope takes volumes. A missing container is fine (already gone).
-	// The engine refuses to remove a volume referenced by ANY container
-	// (even stopped), so taking the repo also takes the container — its
-	// rootfs is disposable state; the home volume survives it.
+	// the scope takes volumes. The engine refuses to remove a volume
+	// referenced by ANY container (even stopped), so taking the repo also
+	// takes the container; the home volume survives it.
 	if scope != ScopeMetadata {
 		_ = s.dkr.Stop(ctx, ContainerName(id), stopWait)
 	}
@@ -591,16 +582,13 @@ func (s *Service) Delete(ctx context.Context, id string, scope Scope) error {
 		fail(s.dkr.RemoveVolume(ctx, repoVolume(id)))
 	}
 	// Only drop the record when docker cleanup actually succeeded: a
-	// half-deleted project must stay listed (and retryable) instead of
-	// becoming an invisible orphan the next cleanup can no longer see.
+	// half-deleted project must stay listed (and retryable), not become an
+	// invisible orphan.
 	if scope == ScopeAll && firstErr != nil {
 		return firstErr
 	}
 	if scope == ScopeMetadata || scope == ScopeAll {
 		fail(s.store.Delete(id))
-		// Chats are project-scoped: once the record is gone no request can
-		// reach them, so they must not linger on disk. Best effort — a
-		// failed file cleanup never blocks the project deletion itself.
 		if s.codemaps != nil {
 			if cerr := s.codemaps.DeleteProjectDir(id); cerr != nil {
 				obs.Warn(ctx, obs.ProjectDelete, "codemap cleanup failed: "+cerr.Error(),

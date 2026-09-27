@@ -1,6 +1,5 @@
-// Shared API client: one fetch wrapper so components stop hand-rolling
-// JSON headers, !ok handling, and error extraction. Shapes live in
-// lib/types.ts.
+// Shared API client: one fetch wrapper for JSON headers, !ok handling,
+// and error extraction.
 
 export function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -12,18 +11,15 @@ export function projectPath(id: string, suffix = ''): string {
   return `/api/projects/${encodeURIComponent(id)}${suffix}`
 }
 
-// PROBE_TIMEOUT_MS bounds provider probes client-side: the server allows
-// 60s per live check, so this only fires when the answer is already lost
-// and the button would otherwise sit on Testing... forever.
+// PROBE_TIMEOUT_MS bounds provider probes client-side: it only fires when
+// the answer is already lost.
 export const PROBE_TIMEOUT_MS = 90_000
 
-// probeSignal bounds provider probes client-side.
 export function probeSignal(): AbortSignal {
   return AbortSignal.timeout(PROBE_TIMEOUT_MS)
 }
 
-// probeErr maps a failed probe to a message: stalls surface as a timeout
-// hint instead of a bare DOM error.
+// probeErr maps a failed probe to a message with a timeout hint.
 export function probeErr(err: unknown): string {
   if (err instanceof DOMException && err.name === 'TimeoutError') {
     return `Timed out after ${PROBE_TIMEOUT_MS / 1000}s. The provider may be slow or unreachable.`
@@ -31,8 +27,8 @@ export function probeErr(err: unknown): string {
   return errMsg(err)
 }
 // ApiError carries the HTTP status and parsed body of a failed call, so
-// callers can recover server-provided identity (e.g. a codemap threadId
-// on a failed turn) instead of only seeing the message.
+// callers can recover server-provided identity (e.g. a threadId on a
+// failed turn).
 export class ApiError extends Error {
   status: number
   body: Record<string, unknown> | null
@@ -45,7 +41,7 @@ export class ApiError extends Error {
 }
 
 // api calls the JSON API and returns the parsed body, or throws an
-// ApiError carrying the server's message ("body.error") or the status.
+// ApiError carrying the server's message or the status.
 export async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,

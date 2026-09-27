@@ -293,11 +293,9 @@ func summarize(s string) string {
 
 // butlerHistory rebuilds the LLM conversation from persisted turns, the
 // way codemap's threadHistory does: each turn becomes user(prompt) plus
-// one assistant entry carrying the tool steps (replayed as real tool
-// calls with fresh ids) and the answer text. Failed turns and the
-// just-reserved placeholder contribute their prompt only. Context is
-// bounded to the last 20 turns and ~16KB estimated chars, same as
-// codemaps, so long threads cannot blow the context window.
+// one assistant entry carrying the tool steps and the answer text. Failed
+// turns contribute their prompt only. Context is bounded to the last 20
+// turns and ~16KB estimated chars.
 func butlerHistory(th butlerthreads.Thread, userPrompt string) []map[string]any {
 	turns := th.Turns
 	if len(turns) > 20 {

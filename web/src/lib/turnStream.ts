@@ -1,12 +1,10 @@
 // Shared SSE turn-stream client: parses status lines (data: {...}) via
-// onStatus, resolves with the single bare-JSON final. Any chatbot reuses
-// this; callers only supply path + body + final-shape check.
+// onStatus, resolves with the single bare-JSON final.
 import { ApiError } from '@/lib/api'
 
 export type StreamStatus = { tool: string; status: string }
 
-// isFinalShape is the shared final/error discriminator: a final answer
-// carries threadId+answer, an error body carries an error string.
+// isFinalShape is the shared final/error discriminator.
 export function isFinalShape(v: Record<string, unknown>): boolean {
   return typeof v.threadId === 'string' && typeof v.answer === 'string'
 }
@@ -31,7 +29,7 @@ export async function postTurnStream<TFinal>(
     if (t.startsWith('data:')) {
       // The server only ever writes statuses behind data:; the final is
       // a bare JSON line. Unparseable-after-prefix falls through to the
-      // whole-line parse below as a last resort.
+      // whole-line parse below.
       try {
         const parsed = JSON.parse(t.slice(5)) as Record<string, unknown>
         if (isFinal(parsed)) final = parsed as unknown as TFinal

@@ -9,11 +9,8 @@ import (
 	"github.com/openai/openai-go/v2/shared"
 )
 
-// Structured asks one tools-free question with a json_schema response and
-// returns the raw JSON text. One attempt only: callers decide what a
-// failure means (butler fails open into the tool loop, whose guide still
-// governs). Strict stays false like everywhere else: many user-brought
-// endpoints 400 on strict schemas.
+// Structured asks one tools-free question with a json_schema response.
+// One attempt only; callers decide what a failure means.
 func Structured(ctx context.Context, cfg Config, sysPrompt, userPrompt, schemaName string, schema map[string]any) (string, error) {
 	if !cfg.Valid() {
 		return "", fmt.Errorf("ai not configured")

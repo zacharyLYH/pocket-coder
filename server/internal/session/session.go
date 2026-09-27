@@ -1,6 +1,6 @@
-// Package session manages tmux sessions inside a project:
-// plain-shell sessions, and harness launches — install-on-demand, CLI
-// validation, and the `|| echo` failure story (PRD §5).
+// Package session manages tmux sessions inside a project: plain-shell
+// sessions and harness launches — install-on-demand, CLI validation, and
+// the `|| echo` failure marker.
 package session
 
 import (
@@ -22,8 +22,8 @@ import (
 // ErrInvalidName means a session name outside the allowed shape.
 var ErrInvalidName = errors.New("invalid session name")
 
-// ErrNotCLI is the PRD §5 rejection, verbatim: the probe hung, crashed, or
-// printed nothing, so the "command" is not a terminal program.
+// ErrNotCLI means the probe hung, crashed, or printed nothing: the
+// "command" is not a terminal program.
 var ErrNotCLI = errors.New("not a CLI — it looks like it wants a display (an IDE/GUI), and the platform only runs terminal programs.")
 
 // ErrNotInstalled means the harness binary is absent and installs are never
@@ -66,10 +66,9 @@ func splitSuffix(name string) (base string, n int, ok bool) {
 
 // ThemeArgs are the tmux commands appended to every session create so the
 // container's tmux matches the web terminal (TERM_THEME in
-// web/src/components/terminal/TerminalPane.tsx): truecolor passthrough, COLORTERM for
-// pane processes, and a status bar in the app palette instead of tmux's
-// default green. All global options, so applying them on every create is
-// idempotent and upgrades existing tmux servers too.
+// web/src/components/terminal/TerminalPane.tsx): truecolor passthrough,
+// COLORTERM for pane processes, and a status bar in the app palette.
+// All global options, so applying them on every create is idempotent.
 func ThemeArgs() []string {
 	return []string{
 		// Advertise RGB to the pane side (and the attach client, which runs
@@ -173,8 +172,7 @@ func newSessionArgs(name, dir string, cmd []string) []string {
 //
 // Every session zeroes tmux's escape-time (default 500ms): with a real
 // keyboard over the bridge, a lone ESC followed by any key within that
-// window is parsed as Meta-key and silently swallowed — unacceptable for
-// the vim-style CLIs this platform exists to run.
+// window is parsed as Meta-key and silently swallowed.
 func (s *Service) Create(ctx context.Context, container, name string) error {
 	if !ValidName(name) {
 		return fmt.Errorf("%w: %q", ErrInvalidName, name)
@@ -306,7 +304,7 @@ func (s *Service) commandPath(ctx context.Context, container, cmd string) (bool,
 	return res.ExitCode == 0, nil
 }
 
-// Launch runs the full PRD §5 flow for a harness plugin under the next free
+// Launch runs the harness-launch pipeline under the next free
 // <harnessID>-<n> name; see LaunchNamed for the pipeline.
 func (s *Service) Launch(ctx context.Context, container string, h harness.Harness) (string, error) {
 	name, err := s.nextName(ctx, container, h.ID)

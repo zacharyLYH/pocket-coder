@@ -39,9 +39,8 @@ const TERM_THEME = {
 
 // TerminalPane bridges one xterm.js instance to
 // /ws/projects/{id}/sessions/{name}. Frames: input/resize out, output/exit
-// in — the server owns the protocol (internal/httpapi/terminal.go).
-// Re-dials whenever session or redial changes; the host element is owned by
-// the parent view.
+// in. Re-dials whenever session or redial changes; the host element is
+// owned by the parent view.
 export function TerminalPane({ projectId, session, redial, fontSize, hostRef, onStatus, onError }: {
   projectId: string
   session: string

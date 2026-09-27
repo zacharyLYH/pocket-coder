@@ -10,10 +10,7 @@ import (
 	"github.com/openai/openai-go/v2/shared"
 )
 
-// extractorPrompt describes the tier's job and its success state: a flow
-// map in execution order, shaped like the example. The evidence fields
-// are named because only their semantics are ours to define; everything
-// enforceable lives in the response schema, not here.
+// extractorPrompt carries only what the response schema cannot enforce.
 const extractorPrompt = "You are the structuredExtractor tier. Produce only JSON matching the response schema. " +
 	"The evidence has two fields: answer holds the findings — section titles and summaries come from THIS; " +
 	"events is the tool log — use it only to preserve valid refs, never turn tool calls, reads, or searches into sections. " +
@@ -26,11 +23,9 @@ const extractorPrompt = "You are the structuredExtractor tier. Produce only JSON
 	`Example shape: {"sections":[{"title":"Login submits credentials","summary":"handleLogin() validates input and calls SessionService.create().","refs":[{"path":"src/auth.js","startLine":10,"endLine":14,"function":"handleLogin"}]},{"title":"Session is created","summary":"SessionService.create() writes the row and emits session.created.","refs":[{"path":"src/session.js","startLine":40,"endLine":52,"function":"create"}]}]}`
 
 // formatResult enforces the json_schema exactly once, on a tools-free
-// follow-up call. The tool loop must stay schema-free (providers null out
-// choices or skip tool calls when schema rides with tools); this call
-// carries no tools so the schema applies cleanly. Structured output is
-// never faked: exactly one schema-enforced attempt, no retry, no
-// schema-free conversion. Failure aborts the turn.
+// follow-up call (providers null out choices or skip tool calls when a
+// schema rides with tools). Structured output is never faked: one
+// schema-enforced attempt, no retry, no fallback. Failure aborts the turn.
 func formatResult(ctx context.Context, client openai.Client, cfg Config, schemaName string, schema map[string]any, out string, onTrace func(TraceEvent), lin *Lineage) (string, error) {
 	if schema == nil {
 		return out, nil
@@ -61,8 +56,7 @@ func formatResult(ctx context.Context, client openai.Client, cfg Config, schemaN
 			},
 		},
 	}
-	// One attempt only. Models without structured-output support fail
-	// deterministically. There is no raw-text fallback.
+	// One attempt only; no raw-text fallback.
 	freqRaw, _ := json.Marshal(fparams)
 	lin.record("format_request", func(ev *LineageEvent) {
 		ev.Payload = payloadOf(freqRaw)

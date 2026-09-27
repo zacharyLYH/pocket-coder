@@ -16,9 +16,8 @@ const HARNESS_RESPONSE = { harnesses: [{ id: 'helper', name: 'Helper', command: 
 // Track all fetch calls for assertions.
 let fetchCalls: FetchCall[] = []
 
-// Minimal WebSocket mock that captures open/message/close.
-// Does NOT auto-open to avoid triggering xterm.js term.open() which
-// needs a full browser environment (matchMedia, etc.).
+// Minimal WebSocket mock that captures open/message/close. Does NOT
+// auto-open to avoid triggering xterm.js term.open().
 let wsInstances: MockWebSocket[] = []
 class MockWebSocket {
   static CONNECTING = 0

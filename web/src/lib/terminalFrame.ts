@@ -1,8 +1,6 @@
-// Safe parsing for terminal WebSocket frames (see TerminalPane and
-// server/internal/httpapi/terminal.go). The server speaks JSON text frames,
-// but proxies, extensions, or a half-closed socket can deliver anything —
-// a single malformed message must never throw inside the socket handler and
-// take the terminal down with it. Malformed input returns null: ignore it.
+// Safe parsing for terminal WebSocket frames (JSON text frames from
+// server/internal/httpapi/terminal.go). A malformed message must never
+// throw inside the socket handler; malformed input returns null.
 export type TerminalFrame =
   | { type: 'output'; data: string }
   | { type: 'exit'; code?: number; data?: string }

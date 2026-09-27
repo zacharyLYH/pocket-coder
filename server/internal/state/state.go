@@ -1,15 +1,12 @@
 // Package state owns state.json — the single source of truth for all
-// desired app state: the user's identity, SMTP credentials, projects,
-// harness plugins (with their native CLI configs), and SSH public keys.
+// desired app state: identity, SMTP credentials, projects, harness
+// plugins, and SSH public keys. Live state (Docker containers, tmux
+// sessions) stays in Docker/tmux and is reconciled against this file.
 //
-// Everything here is DESIRED state ("what should exist"). Live state
-// (Docker containers, tmux sessions) stays in Docker/tmux and is
-// reconciled against this file (see project.Service.EnsureContainer).
-//
-// The whole document is one JSON file with owner-only permissions,
-// rewritten atomically (temp + rename) on every mutation. It is small by
-// construction — history lives in events.log, workspace bytes in docker
-// volumes — so synchronous saves are fine.
+// One JSON file with owner-only permissions, rewritten atomically (temp
+// + rename) on every mutation. Small by construction — history lives in
+// events.log, workspace bytes in docker volumes — so synchronous saves
+// are fine.
 package state
 
 import (
@@ -49,7 +46,7 @@ type SMTP struct {
 
 // Shortcut is one user-defined terminal shortcut: a named value that is
 // either injected into the session as a command or sent as raw key input,
-// resolved from the value at run time. One list, one editor, one fetch.
+// resolved from the value at run time.
 type Shortcut struct {
 	ID      string `json:"id"`
 	Alias   string `json:"alias"` // label shown in the shortcuts modal
@@ -60,7 +57,7 @@ type Shortcut struct {
 
 // Project is one project. Only what cannot be defaulted; the id is the
 // repo's owner/repo (the display name), and the container/volumes are
-// derived from it and reconciled from here.
+// derived from it.
 type Project struct {
 	Repo        string             `json:"repo"`
 	Branch      string             `json:"branch,omitempty"`
@@ -78,8 +75,7 @@ type Session struct {
 }
 
 // Harness is a CLI plugin: a global entry in "+ New Session". The map key
-// is the slug id; ID is kept in sync on load/save and exists so API
-// responses can carry it.
+// is the slug id; ID is kept in sync on load/save.
 type Harness struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -88,7 +84,7 @@ type Harness struct {
 	// ConfigPath + Config are the CLI's OWN native configuration, verbatim:
 	// at launch the platform writes Config into the container at exactly
 	// ConfigPath. API keys live inside it because that is how those tools
-	// take keys — so they live here too, in the one state file.
+	// take keys.
 	ConfigPath string          `json:"configPath,omitempty"`
 	Config     json.RawMessage `json:"config,omitempty"`
 }
@@ -163,8 +159,7 @@ type Store struct {
 }
 
 // Open loads state.json from dataDir, creating an empty one when absent
-// (seed values fill empty fields, so env config acts as the initial default
-// only).
+// (seed values fill empty fields only — existing values always win).
 func Open(dataDir string, seed Bootstrap) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", dataDir, err)
@@ -237,8 +232,8 @@ func normalize(doc *Document) {
 	}
 }
 
-// deepcopy round-trips through JSON: the document is small and plain, so
-// this is cheap and impossible to get subtly wrong.
+// deepcopy round-trips through JSON: the document is small and plain,
+// so this is impossible to get subtly wrong.
 func deepcopy(doc Document) (Document, error) {
 	raw, err := json.Marshal(doc)
 	if err != nil {

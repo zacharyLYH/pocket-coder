@@ -7,18 +7,11 @@ import { terminalUrl } from './helpers'
 
 // Butler LIVE-backend e2e: everything is real — Go server, transcript
 // store, SSE streaming — except the LLM, which is a scripted
-// OpenAI-compatible stub on the host. The container reaches it via
-// host.docker.internal (extra_hosts in docker-compose.e2e.yml).
+// OpenAI-compatible stub on the host reached via host.docker.internal.
 //
-// The stub plays a BIG turn: 4 slow tool rounds then a multi-section
-// briefing, so ~6 SSE status lines stream over ~3.5s and the pending
-// skeleton is observable mid-run before the final answer lands.
-//
-// The rounds are a real OpenAI tool round-trip: the request declares the
-// ckpt-5 read tools and each tool_calls message is followed by tool-role
-// result messages, so the server loop executes it as designed. (The
-// current checkpoint wires zero server tools, so each call comes back
-// "unknown tool" — still a completed round for the loop.)
+// The stub plays a big turn: 4 slow tool rounds then a multi-section
+// briefing, so the pending skeleton is observable mid-run before the final
+// answer lands.
 const FAKE_ID = 'e2e/butler-live'
 const PROMPT = 'Brief me on all my projects: which ones need attention, and what is the session and preview state?'
 
@@ -44,8 +37,8 @@ function toolResult(id: string, content: string) {
   return { role: 'tool', tool_call_id: id, content }
 }
 
-// The ckpt-5 read tools the rounds name. Declared on every request: the
-// loop needs a non-empty tools array to accept tool_calls at all.
+// The read tools the rounds name. Declared on every request: the loop
+// needs a non-empty tools array to accept tool_calls at all.
 const TOOLS = ['list_projects', 'events_tail', 'project_detail', 'health'].map((name) => ({
   type: 'function',
   function: { name, description: `e2e stub tool ${name}`, parameters: { type: 'object', properties: {} } },
