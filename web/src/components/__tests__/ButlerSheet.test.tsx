@@ -74,6 +74,32 @@ describe('ButlerSheet', () => {
     await waitFor(() => expect(screen.queryByTestId('butler-pending')).not.toBeInTheDocument())
   })
 
+  it('renders confirm cards with blast radius, Confirm and Discard', async () => {
+    const final = `{"threadId":"${THREAD}","threadTitle":"Brief me","turnId":"t1","answer":"Ready to stop.","steps":[],"confirms":[{"id":"c1","tool":"stop","summary":"Stop project a/b?","blastRadius":"Stops its container and preview. Sessions end."}],"time":"2026-09-02T10:00:00Z"}\n`
+    const fetchMock = mockFetch((url, init) => {
+      if (url === '/api/butler/threads' && (!init?.method || init.method === 'GET'))
+        return { status: 200, body: { threads: [], runningThreadId: null } }
+      if (url === `/api/butler/threads/${THREAD}`)
+        return { status: 200, body: { thread: { id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', turns: [{ turnId: 't1', prompt: 'Stop it', answer: 'Ready to stop.', steps: [], time: '2026-09-02T10:00:00Z', error: null }] } } }
+      if (url === '/api/butler/confirms/c1/discard' && init?.method === 'POST')
+        return { status: 200, body: { ok: true } }
+      return undefined
+    })
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url) === '/api/butler/turn') return new Response(`data: {"tool":"done","status":"answered"}\n\n` + final, { status: 200 })
+      return fetchMock(String(url), init)
+    }))
+    render(<ButlerSheet projectHint={null} onClearHint={vi.fn()} onClose={vi.fn()} />)
+    await screen.findByTestId('butler-sheet')
+    fireEvent.change(screen.getByTestId('butler-prompt'), { target: { value: 'Stop it' } })
+    fireEvent.click(screen.getByTestId('butler-send'))
+    expect(await screen.findByTestId('butler-confirm')).toBeInTheDocument()
+    expect(screen.getByTestId('butler-confirm-blast')).toHaveTextContent('Stops its container')
+    expect(screen.getByTestId('butler-confirm-ok')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('butler-confirm-no'))
+    await waitFor(() => expect(screen.queryByTestId('butler-confirm')).not.toBeInTheDocument())
+  })
+
   it('clears the hint chip', async () => {
     mockAll('')
     const onClear = vi.fn()

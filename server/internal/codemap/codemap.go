@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"pcoder/internal/agent"
+	"pcoder/internal/prompt"
 )
 
 // Ref is one clickable snippet: a file plus an exact line range, with
@@ -37,24 +38,9 @@ type Result struct {
 	Sections []Section `json:"sections"`
 }
 
-const systemPrompt = `
-This is CodeMaps, a feature in Pocket-Coder that provides users a curated and highly user friendly UX while coding AI native on the move. The job of CodeMaps is to answer questions about this repo. 
-
-This is your goal:
-Read the user's question carefully, use tool calls to gather sufficient context, and answer the user's question succintly while sacrificing some grammar for concision.
-
-
-These are your rules:
-1. Use a casual laid back tone when replying to prompts, even if it sacrifices concision
-2. Not enforcing best grammar will help cut out bridge words that users can infer easily
-3. Use tools heavily, but use tools extremely judiciously. Use them often to get all the context you need, but not more than you really need. 
-4. Loop as many rounds as you need to get sufficient context, don't be shy.
-5. All tool paths are relative to the repo root (e.g. "src/main.jsx"), never absolute paths starting with "/".
-6. Think aloud: every message that calls tools also states in one short sentence what you are checking and why, so each round steers the next.
-7. Work efficiently: batch independent tool calls in one block, never re-read a file you already read this turn, and stop calling tools as soon as you can answer.
-8. Close with findings, not actions: your final answer names what the code does and the exact files involved, never the steps you took to find it.
-
-`
+// systemPrompt is the repo-QA system prompt, assembled from the shared
+// prompt blocks (product context, prose) plus codemap's loop rules.
+var systemPrompt = prompt.CodemapGuide()
 
 // schemaJSON is the json_schema for the final answer. Output shape and
 // style live here — in the structured contract, not in prompt prose:

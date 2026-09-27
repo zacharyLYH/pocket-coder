@@ -24,7 +24,7 @@ const (
 // it once through the schema-enforcing format call. The loop never
 // carries a schema (providers drop tool calls or null out choices when
 // json_schema rides with tools); the format call never carries tools.
-func Run(ctx context.Context, cfg Config, sysPrompt, userPrompt string, history []map[string]any, tools []Tool, schemaName string, schema map[string]any, maxSteps int, onTrace func(TraceEvent), lin *Lineage) (string, error) {
+func Run(ctx context.Context, cfg Config, sysPrompt, userPrompt string, history []map[string]any, tools []Tool, schemaName string, schema map[string]any, maxSteps int, onTrace func(TraceEvent), lin *Lineage, opts ...RunOption) (string, error) {
 	if !cfg.Valid() {
 		return "", fmt.Errorf("ai not configured")
 	}
@@ -35,11 +35,39 @@ func Run(ctx context.Context, cfg Config, sysPrompt, userPrompt string, history 
 	if lin != nil {
 		lin.InitialRequest = map[string]any{"userPrompt": userPrompt, "model": cfg.Model}
 	}
-	answer, err := newLoop(client, cfg, tools, assembleMessages(sysPrompt, userPrompt, history), maxSteps, onTrace, lin).gather(ctx)
+	l := newLoop(client, cfg, tools, assembleMessages(sysPrompt, userPrompt, history), maxSteps, onTrace, lin)
+	for _, o := range opts {
+		o(l)
+	}
+	answer, err := l.gather(ctx)
 	if err != nil {
 		return "", err
 	}
 	return formatResult(ctx, client, cfg, schemaName, schema, answer, onTrace, lin)
+}
+
+// RunOption tweaks one loop. Variadic on Run so existing callers keep
+// working untouched.
+type RunOption func(*loop)
+
+// WithoutGroundingNudge disables the one-time repo-verification nudge.
+// Codemap keeps it; the butler opts out (its questions are rarely about
+// repo code, and its guide already directs tool use).
+func WithoutGroundingNudge() RunOption {
+	return func(l *loop) { l.groundNudged = true }
+}
+
+// WithLeadIn inserts one developer message right after the system prompt:
+// a second prompt that loads only on this run, never stored in history.
+// Butler uses it for workflow examples, which refused turns never pay
+// for and follow-ups never replay.
+func WithLeadIn(text string) RunOption {
+	return func(l *loop) {
+		if strings.TrimSpace(text) == "" || len(l.msgs) == 0 {
+			return
+		}
+		l.msgs = append([]openai.ChatCompletionMessageParamUnion{l.msgs[0], devMsg(text)}, l.msgs[1:]...)
+	}
 }
 
 // loop carries one gather phase: the message list plus the per-turn

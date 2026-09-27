@@ -21,14 +21,15 @@ Out of scope for v1: preview automation and log tail ingestion.
 Read tools:
 
 * `list_projects` lists ids, branches, and container status.
-* `project_detail` returns one project plus live container status.
-* `list_sessions` returns tmux sessions per project.
-* `preview_state` returns preview slots and listening ports.
-* `git_meta` returns branch, changed file counts, and ahead or behind state. It returns no paths and no hunks.
+* `project_detail` returns one project plus live container status and preview slot.
+* `list_sessions` returns session names plus alive and harness per session.
+* `preview_state` returns preview slots (`stopped`, `degraded`, `ready`) and listening ports.
+* `git_meta` returns branch, changed file counts, upstream, ahead or behind state, unborn, and detached. It returns no paths and no hunks.
 * `events_tail` reads the event log with a limit and a since filter.
-* `health` returns disk free, uptime, docker ping, and server version.
+* `health` returns disk free, uptime, docker ping, and server version, plus per-project CPU, memory, and disk numbers when given a project.
 * `harness_inventory` lists harnesses plus per-project install state.
 * `env_names`, `config_status` return names and booleans only.
+* `architecture` returns the architecture notes whole or by section (overview, state, projects, sessions, previews, harnesses, butler). Read it when a question needs design context.
 
 Write tools, each behind a confirm card with a Confirm button:
 
@@ -77,7 +78,7 @@ Ordered. Each lands with tests. No big bang. Phase 2 stays out.
 
 5. Read tools. `list_projects`, `project_detail`, `list_sessions`, `preview_state`, `git_meta`, `events_tail`, `health`, `harness_inventory`, `env_names`, `config_status`. Names and counts only, no paths, no hunks, no secret values. Example: "brief me" chains `list_projects` plus `events_tail` then stops. Unit: each tool against fakes. Smoke: `go -C server test ./internal/butler -run TestReadTools`. E2e: mocked read flow renders one summary.
 
-6. Bounds wall. No `/workspace/repo`, no file content, no diff hunks, no `tmux capture-pane`, no `tmux load-buffer`, no app source, no secret values. Repo path in a tool call fails. Code ask refuses and points at Codemap. Example: "read main.go" gets "I cannot read code. Open the Codemap tab." Unit: denied path fails. Smoke: test pins the refusal string. E2e: chat shows refusal plus redirect.
+6. Bounds wall. No `/workspace/repo`, no file content, no diff hunks, no `tmux capture-pane`, no `tmux load-buffer`, no app source, no secret values. Repo path in a tool call fails. Code ask refuses and points at Codemap. Example: "read main.go" gets "Sorry, I am firewalled from reading source code by design. As a butler, I help manage the smooth running of all your projects. For source code related queries, ask your own LLM or CodeMaps." Unit: denied path fails. Smoke: test pins the refusal string. E2e: chat shows refusal plus redirect.
 
 7. Confirm card and safe writes. Writes need a Confirm tap, no typed confirm. Card states blast radius. This checkpoint covers `create_project`, `start`, `stop`, `restart`, `session_create`, `session_kill`, `session_restart`, `session_rename`, `preview_start`, `preview_close`, `git_pull`, `git_push`, `git_switch`. Example: "Delete project api? This removes the container and 3 sessions. Volumes stay." Unit: write without confirm never runs. Smoke: confirm then apply, discard does nothing. E2e: card shows old and new value with Confirm and Discard.
 
@@ -91,13 +92,17 @@ Ordered. Each lands with tests. No big bang. Phase 2 stays out.
 
 Usage stats land on the nerdy stuff page, not in the butler sheet. Inference time split by codemaps and butler, time per harness from session age, token counts where the provider reports them, lines changed over time from diff numstat. Reads come from the event log plus harness-native records. No new collection exists. The butler reads the same numbers when asked "how much am I using?"
 
+## Phase 3 (planned)
+
+Todo lists for longer-horizon tasks, in butler and codemaps. Early-ish in the agent loop the model emits the list via structured outputs, and later rounds steer by it: which steps are done, what is next, what is blocked. The list persists beside the thread and surfaces in both UIs (butler sheet, codemap tab) as a compact checklist, collapsed by default like the steps row. No new backend beyond the structured emit plus the transcript field; no auto-execution, no cross-thread todos. Tackled after v1, not here.
+
 ## Issues
 
 When the wall looks like a bug or a missing feature, the butler offers to file it. Flow: butler confirms it cannot do the thing, shows a one-line issue draft (title plus two-line body), and asks "File this on GitHub?" On yes, the server runs one sync task that creates the issue with the stored git token and returns the issue URL. No drafts without asking. No silent filing. Duplicates are fine to file; triage happens on GitHub.
 
 ## Workflows
 
-Typical workflows live in the guide: lifecycle, sessions, run-things, keys and models, status briefs, git ops, setup and shortcuts, triage, issues. Each entry holds an intent plus high-level steps, never exact API names. The list grows with the product. Workflow capture from live turns stays out of v1.
+Typical workflows ride a second prompt on in-scope turns, after the scope gate: lifecycle, sessions, run-things, keys and models, status briefs, git ops, setup and shortcuts, triage, issues. Each entry holds an intent plus high-level steps, never exact API names — examples Butler may extend, not rules it must follow. Refused turns never pay for them, and follow-ups never replay them. The list grows with the product. Workflow capture from live turns stays out of v1.
 
 ## Models, git, and keys
 
@@ -121,7 +126,9 @@ The server stores transcripts long term under `data/butler/<threadID>/` with the
 
 ## Agency
 
-The butler runs a bounded tool loop per turn, up to 6 steps. It can chain reads, then propose, then apply after confirm. It takes no action without a user message. It starts no background work.
+Responsibility invariant: the butler reads more than it writes. Reads are free and broad, for monitoring the health and running of all projects. Writes manage health, monitoring, and day-to-day operation only — always behind a Confirm card, never for repo content or code.
+
+Each turn opens with one structured scope check (`can_help` under a pinned schema): out-of-scope asks get the pinned refusal with no tool rounds. The gate only ever refutes; anything unparseable falls through to the loop. The butler then runs a bounded tool loop per turn, up to 6 steps. It can chain reads, then propose, then apply after confirm. It takes no action without a user message. It starts no background work.
 
 Example: "brief me" chains `list_projects` and `events_tail`, then writes one summary and stops.
 

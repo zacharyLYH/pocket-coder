@@ -201,6 +201,8 @@ func New(d Deps) http.Handler {
 		authed("GET", "/api/butler/threads/{tid}", handleButlerThreadGet)
 		authed("DELETE", "/api/butler/threads/{tid}", handleButlerThreadDelete)
 		authed("POST", "/api/butler/turn", handleButlerTurn)
+		authed("POST", "/api/butler/confirms/{id}/apply", handleButlerConfirmApply)
+		authed("POST", "/api/butler/confirms/{id}/discard", handleButlerConfirmDiscard)
 	}
 	return obs.Middleware(mux)
 }

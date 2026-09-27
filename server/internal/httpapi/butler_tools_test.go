@@ -1,0 +1,717 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/mock"
+
+	"pcoder/internal/docker"
+	"pcoder/internal/project"
+	"pcoder/internal/prompt"
+	"pcoder/internal/state"
+)
+
+// butlerToolByName finds one tool in a registry by name.
+func butlerToolByName(t *testing.T, d Deps, name string, created *[]butlerCard) func(ctx context.Context, args string) (string, error) {
+	t.Helper()
+	for _, tl := range append(butlerReadTools(d), butlerWriteTools(d, created)...) {
+		if tl.Name == name {
+			return tl.Run
+		}
+	}
+	t.Fatalf("no such butler tool %q", name)
+	return nil
+}
+
+// Full read-tool pass against fakes: names and counts only — no paths,
+// no hunks, no secret values.
+func TestButlerReadTools(t *testing.T) {
+	d, md, pinOut, st := newSessionDeps(t)
+	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git", Branch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	md.EXPECT().Inspect(mock.Anything, "pcoder-a-b").Return(docker.Container{Running: true, Status: "running"}, nil)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	byName := map[string]func(ctx context.Context, args string) (string, error){}
+	for _, tl := range butlerReadTools(d) {
+		byName[tl.Name] = tl.Run
+	}
+	if len(byName) != 11 {
+		t.Fatalf("read tools = %d, want 10", len(byName))
+	}
+
+	// list_projects: ids, branches, container status — no repo URLs.
+	out, err := byName[butlerToolListProjects](context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("list_projects: %v", err)
+	}
+	if !strings.Contains(out, `"a/b"`) || !strings.Contains(out, `"main"`) || !strings.Contains(out, `"running"`) {
+		t.Fatalf("list_projects = %s, want id+branch+status", out)
+	}
+	if strings.Contains(out, "github.com") {
+		t.Fatalf("list_projects leaks repo URL: %s", out)
+	}
+
+	// project_detail: one project, no paths.
+	md.EXPECT().Inspect(mock.Anything, "pcoder-a-b").Return(docker.Container{Running: true, Status: "running"}, nil)
+	out, err = byName[butlerToolProjectDetail](context.Background(), `{"project":"a/b"}`)
+	if err != nil {
+		t.Fatalf("project_detail: %v", err)
+	}
+	if !strings.Contains(out, `"a/b"`) || !strings.Contains(out, `"preview":"stopped"`) {
+		t.Fatalf("project_detail = %s, want id + preview slot", out)
+	}
+
+	// list_sessions: names plus alive + harness, no paths.
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b",
+		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "one\ntwo\n"}, nil)
+	for _, name := range []string{"one", "two"} {
+		md.EXPECT().Exec(mock.Anything, "pcoder-a-b", mock.MatchedBy(func(argv []string) bool {
+			return len(argv) == 3 && strings.Contains(argv[2], "has-session -t "+name)
+		}), false).Return(docker.ExecResult{ExitCode: 0}, nil)
+	}
+	out, err = byName[butlerToolListSessions](context.Background(), `{"project":"a/b"}`)
+	if err != nil {
+		t.Fatalf("list_sessions: %v", err)
+	}
+	var sess []struct {
+		Name  string `json:"name"`
+		Alive bool   `json:"alive"`
+	}
+	if err := json.Unmarshal([]byte(out), &sess); err != nil {
+		t.Fatalf("list_sessions not JSON: %v (%s)", err, out)
+	}
+	if len(sess) != 2 || !sess[0].Alive || !sess[1].Alive {
+		t.Fatalf("list_sessions = %s, want names + alive", out)
+	}
+
+	// preview_state: readiness slots + ports, no endpoints or tokens.
+	md.EXPECT().Inspect(mock.Anything, "pcoder-a-b").Return(docker.Container{Running: true, Status: "running"}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b", mock.MatchedBy(func(argv []string) bool {
+		return len(argv) == 3 && strings.Contains(argv[2], "ss -tlnp")
+	}), mock.Anything).Return(docker.ExecResult{ExitCode: 0, Output: ""}, nil)
+	out, err = byName[butlerToolPreviewState](context.Background(), `{"project":"a/b"}`)
+	if err != nil {
+		t.Fatalf("preview_state: %v", err)
+	}
+	if !strings.Contains(out, `"stopped"`) || strings.Contains(out, "token") {
+		t.Fatalf("preview_state = %s, want stopped slot, never tokens", out)
+	}
+
+	// git_meta: counts + upstream + unborn/detached, no paths or hunks.
+	md.EXPECT().Inspect(mock.Anything, "pcoder-a-b").Return(docker.Container{Running: true, Status: "running"}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b", []string{"test", "-d", "/workspace/repo/.git"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b", mock.MatchedBy(func(argv []string) bool {
+		return len(argv) == 3 && strings.Contains(argv[2], "rev-parse --abbrev-ref @{u}")
+	}), false).Return(docker.ExecResult{ExitCode: 0, Output: "origin/main"}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b", mock.MatchedBy(func(argv []string) bool {
+		return len(argv) == 3 && strings.Contains(argv[2], "rev-parse --abbrev-ref")
+	}), false).Return(docker.ExecResult{ExitCode: 0, Output: "main"}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b", mock.MatchedBy(func(argv []string) bool {
+		return len(argv) == 3 && strings.Contains(argv[2], "status --porcelain")
+	}), false).Return(docker.ExecResult{ExitCode: 0, Output: "META-BEGIN\n M a\nM  b\n"}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b", mock.MatchedBy(func(argv []string) bool {
+		return len(argv) == 3 && strings.Contains(argv[2], "rev-list --left-right")
+	}), false).Return(docker.ExecResult{ExitCode: 0, Output: "1 2"}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b", mock.MatchedBy(func(argv []string) bool {
+		return len(argv) == 3 && strings.Contains(argv[2], "rev-parse --verify --quiet HEAD")
+	}), false).Return(docker.ExecResult{ExitCode: 0, Output: "0"}, nil)
+	out, err = byName[butlerToolGitMeta](context.Background(), `{"project":"a/b"}`)
+	if err != nil {
+		t.Fatalf("git_meta: %v", err)
+	}
+	var meta struct {
+		Branch       string `json:"branch"`
+		Upstream     string `json:"upstream"`
+		ChangedFiles int    `json:"changedFiles"`
+		Ahead        int    `json:"ahead"`
+		Behind       int    `json:"behind"`
+		Unborn       bool   `json:"unborn"`
+		Detached     bool   `json:"detached"`
+	}
+	if err := json.Unmarshal([]byte(out), &meta); err != nil {
+		t.Fatalf("git_meta not JSON: %v (%s)", err, out)
+	}
+	if meta.Branch != "main" || meta.Upstream != "origin/main" || meta.ChangedFiles != 2 ||
+		meta.Ahead != 2 || meta.Behind != 1 || meta.Unborn || meta.Detached {
+		t.Fatalf("git_meta = %s", out)
+	}
+
+	// events_tail: types + times only.
+	if _, err := d.Events.Append("butler.turn", map[string]any{"threadId": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err = byName[butlerToolEventsTail](context.Background(), `{"limit":5}`)
+	if err != nil {
+		t.Fatalf("events_tail: %v", err)
+	}
+	if !strings.Contains(out, `"butler.turn"`) || strings.Contains(out, "threadId") {
+		t.Fatalf("events_tail = %s, want types only", out)
+	}
+
+	// health: version + docker + uptime + disk, no secrets.
+	out, err = byName[butlerToolHealth](context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+	if !strings.Contains(out, `"version"`) || !strings.Contains(out, `"diskFreeBytes"`) {
+		t.Fatalf("health = %s", out)
+	}
+
+	// harness_inventory: names + hasInstall, no commands.
+	out, err = byName[butlerToolHarnessInventory](context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("harness_inventory: %v", err)
+	}
+	if !strings.Contains(out, `"Fake"`) || strings.Contains(out, "fakecli") && strings.Contains(out, `"command"`) {
+		t.Fatalf("harness_inventory = %s, want names only", out)
+	}
+
+	// env_names + config_status: names and booleans only — key values
+	// never render even though the state file holds them.
+	out, err = byName[butlerToolEnvNames](context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("env_names: %v", err)
+	}
+	if !strings.Contains(out, "SMTP_PASSWORD") {
+		t.Fatalf("env_names = %s", out)
+	}
+	out, err = byName[butlerToolConfigStatus](context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("config_status: %v", err)
+	}
+	var cfgStatus map[string]any
+	if err := json.Unmarshal([]byte(out), &cfgStatus); err != nil {
+		t.Fatalf("config_status not JSON: %v", err)
+	}
+	for _, v := range cfgStatus {
+		if _, ok := v.(bool); !ok {
+			t.Fatalf("config_status = %s, want booleans only", out)
+		}
+	}
+	if strings.Contains(out, "test-token") || strings.Contains(out, `"k"`) {
+		t.Fatalf("config_status leaks secrets: %s", out)
+	}
+	_ = cookie
+	_ = h
+}
+
+// The consts drive everything: the read/write registries build in const
+// order, so the lists and the registries cannot drift.
+func TestButlerToolNames(t *testing.T) {
+	d, _, _, _ := newSessionDeps(t)
+	if len(butlerReadNames) != 11 || len(butlerWriteNames) != 23 {
+		t.Fatalf("consts = %d reads + %d writes, want 11 + 23",
+			len(butlerReadNames), len(butlerWriteNames))
+	}
+	var built []string
+	for _, tl := range butlerReadTools(d) {
+		built = append(built, tl.Name)
+	}
+	for _, def := range butlerWriteTable {
+		built = append(built, def.name)
+	}
+	want := append(append([]string{}, butlerReadNames...), butlerWriteNames...)
+	if strings.Join(built, ",") != strings.Join(want, ",") {
+		t.Fatalf("registry order = %v, consts = %v: registries build from the consts", built, want)
+	}
+	seen := map[string]bool{}
+	for _, n := range want {
+		if seen[n] {
+			t.Fatalf("duplicate tool name %q", n)
+		}
+		seen[n] = true
+	}
+}
+
+// The guide locks the scope: it carries the yes/no question, every tool
+// name, the non-goals, and the pinned refusal. Built from the same
+// consts, so a new tool documents itself in the prompt. Workflows are
+// not in here: they ride the second prompt (TestButlerTurnSecondPrompt).
+func TestButlerGuideLocksScope(t *testing.T) {
+	names := append(append([]string{}, butlerReadNames...), butlerWriteNames...)
+	for _, n := range names {
+		if !strings.Contains(butlerGuide, n) {
+			t.Fatalf("guide omits tool %q: registry and guide drifted", n)
+		}
+	}
+	for _, want := range []string{
+		"is this something you can help with", // the yes/no lockdown
+		"read more than you can write",        // the responsibility invariant
+		"terminal coding CLIs",                // product context
+		"texting a friend",                    // prose guidance
+		"/workspace/repo",                     // non-goal: never open repos
+		"capture tmux",                        // non-goal: no pane capture
+		"Secret values",                       // non-goal: names only
+		"repo-modifying",                      // exec tools stay generic
+		"no transcript search or export",
+		prompt.ButlerRefusal,
+	} {
+		if !strings.Contains(butlerGuide, want) {
+			t.Fatalf("guide omits %q", want)
+		}
+	}
+	for _, n := range names { // no file-read tool may ever exist
+		for _, banned := range []string{"read_file", "file_content", "read_code", "capture", "diff", "hunk"} {
+			if strings.Contains(n, banned) {
+				t.Fatalf("tool %q looks like repo access: the wall is structural", n)
+			}
+		}
+	}
+	// The scope gate inherits the same role: one Butler description, not two.
+	if !strings.Contains(prompt.ButlerScopePrompt(), "setup assistant for the Pocket Coder app") {
+		t.Fatal("scope prompt drifted from the shared role block")
+	}
+	if strings.Contains(butlerGuide, "Typical usage examples") {
+		t.Fatal("workflows belong to the second prompt, not the guide")
+	}
+	// The second prompt shows typical usage as examples Butler may extend.
+	if wf := prompt.ButlerWorkflows(); !strings.Contains(wf, "invent new ones") || !strings.Contains(wf, butlerToolFanoutExec) {
+		t.Fatalf("workflows = %q, want examples naming real tools", cut(wf, 120))
+	}
+}
+
+// Code asks hit the structured scope gate first: the fake scripts exactly
+// one call, so any tool-loop call would fail the test. The gate verdict
+// refuses with the pinned string and burns no tool rounds.
+func TestButlerScopeGateRefuses(t *testing.T) {
+	d, _, pinOut, st := newSessionDeps(t)
+	var gateBody map[string]any
+	f := newFakeModel(t,
+		func(w http.ResponseWriter, body map[string]any) {
+			gateBody = body
+			scopeDeny(w, body)
+		},
+	)
+	seedAI(t, st, f.srv.URL)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	rec := butlerPost(t, h, cookie, `{"prompt":"read main.go for me"}`, http.StatusOK)
+	statuses, last := splitSSEBody(t, rec.Body.String())
+	if last["answer"] != prompt.ButlerRefusal {
+		t.Fatalf("answer = %v, want the pinned refusal", last["answer"])
+	}
+	if len(statuses) != 1 || statuses[0]["tool"] != "done" {
+		t.Fatalf("statuses = %v, want only the terminal done line (no tool rounds)", statuses)
+	}
+	// Structured, not prose: the gate carries a json_schema and no tools.
+	rf, _ := gateBody["response_format"].(map[string]any)
+	js, _ := rf["json_schema"].(map[string]any)
+	if rf["type"] != "json_schema" || js["name"] != "butler_scope" {
+		t.Fatalf("gate response_format = %v, want the pinned butler_scope schema", gateBody["response_format"])
+	}
+	if tools, ok := gateBody["tools"].([]any); ok && len(tools) > 0 {
+		t.Fatalf("gate carried %d tools, want a tools-free verdict", len(tools))
+	}
+}
+
+// A garbled gate verdict fails open into the loop, whose guide still
+// governs: the turn proceeds instead of refusing or erroring.
+func TestButlerScopeGateMalformedFallsThrough(t *testing.T) {
+	d, _, pinOut, st := newSessionDeps(t)
+	f := newFakeModel(t,
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", "maybe?", nil) // not JSON: no verdict
+		},
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", "All three projects are healthy.", nil)
+		},
+	)
+	seedAI(t, st, f.srv.URL)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	rec := butlerPost(t, h, cookie, `{"prompt":"brief me"}`, http.StatusOK)
+	_, last := splitSSEBody(t, rec.Body.String())
+	if last["answer"] != "All three projects are healthy." {
+		t.Fatalf("final = %v, want the loop answer after a garbled gate", last)
+	}
+}
+
+// Writes never run in the turn: proposing stores the work and returns a
+// card; only Confirm applies it. Discard drops it silently.
+func TestButlerWriteNeedsConfirm(t *testing.T) {
+	d, md, pinOut, st := newSessionDeps(t)
+	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
+		t.Fatal(err)
+	}
+	butlerResetPendings()
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	var created []butlerCard
+	stop := butlerToolByName(t, d, butlerToolStop, &created)
+
+	// Proposing runs nothing: no Stop expectation is set, so any docker
+	// call would fail the mock — and the pending card exists instead.
+	raw, err := stop(context.Background(), `{"project":"a/b"}`)
+	if err != nil {
+		t.Fatalf("propose: %v", err)
+	}
+	var prop struct {
+		NeedsConfirm bool   `json:"needsConfirm"`
+		ConfirmID    string `json:"confirmId"`
+		Summary      string `json:"summary"`
+		BlastRadius  string `json:"blastRadius"`
+	}
+	if err := json.Unmarshal([]byte(raw), &prop); err != nil || !prop.NeedsConfirm || prop.ConfirmID == "" {
+		t.Fatalf("proposal = %s (err %v), want needsConfirm + confirmId", raw, err)
+	}
+	if prop.BlastRadius == "" || len(created) != 1 || created[0].ID != prop.ConfirmID {
+		t.Fatalf("proposal = %s, want a blast-radius card", raw)
+	}
+	if n := butlerPendingCount(); n != 1 {
+		t.Fatalf("pendings = %d, want 1", n)
+	}
+
+	// Confirm applies: now the docker call is expected and runs.
+	md.EXPECT().Stop(mock.Anything, "pcoder-a-b", mock.Anything).Return(nil)
+	rec := authedPost(t, h, cookie, "/api/butler/confirms/"+prop.ConfirmID+"/apply", `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply: got %d %q", rec.Code, rec.Body.String())
+	}
+	if n := butlerPendingCount(); n != 0 {
+		t.Fatalf("pendings after apply = %d, want 0", n)
+	}
+
+	// Discard does nothing: propose again, discard, pending gone, no call.
+	raw2, err := stop(context.Background(), `{"project":"a/b"}`)
+	if err != nil {
+		t.Fatalf("propose 2: %v", err)
+	}
+	var prop2 struct {
+		ConfirmID string `json:"confirmId"`
+	}
+	if err := json.Unmarshal([]byte(raw2), &prop2); err != nil {
+		t.Fatal(err)
+	}
+	rec = authedPost(t, h, cookie, "/api/butler/confirms/"+prop2.ConfirmID+"/discard", `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("discard: got %d %q", rec.Code, rec.Body.String())
+	}
+	if n := butlerPendingCount(); n != 0 {
+		t.Fatalf("pendings after discard = %d, want 0", n)
+	}
+}
+
+// Every write tool proposes: valid args store a blast-radius card and run
+// nothing; invalid args fail with no card. One row per tool, shared
+// fixture (only delete_project's blast touches docker, for its session
+// count — everything else is pure validation or state reads).
+func TestButlerWriteProposeAll(t *testing.T) {
+	d, md, _, st := newSessionDeps(t)
+	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
+		t.Fatal(err)
+	}
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b",
+		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "one\n"}, nil)
+	butlerResetPendings()
+	defer butlerResetPendings()
+
+	rows := []struct{ tool, args string }{
+		{butlerToolCreateProject, `{"repoUrl":"https://github.com/x/y.git","branch":"main"}`},
+		{butlerToolStart, `{"project":"a/b"}`},
+		{butlerToolStop, `{"project":"a/b"}`},
+		{butlerToolRestart, `{"project":"a/b"}`},
+		{butlerToolSessionCreate, `{"project":"a/b","name":"dev"}`},
+		{butlerToolSessionKill, `{"project":"a/b","name":"dev"}`},
+		{butlerToolSessionRestart, `{"project":"a/b","name":"dev"}`},
+		{butlerToolSessionRename, `{"project":"a/b","old":"dev","new":"dev2"}`},
+		{butlerToolPreviewStart, `{"project":"a/b","port":3000}`},
+		{butlerToolPreviewClose, `{"project":"a/b"}`},
+		{butlerToolGitPull, `{"project":"a/b"}`},
+		{butlerToolGitPush, `{"project":"a/b"}`},
+		{butlerToolGitSwitch, `{"project":"a/b","branch":"dev"}`},
+		{butlerToolDeleteProject, `{"project":"a/b","scope":"container"}`},
+		{butlerToolCreateHarness, `{"name":"H","command":"hcli"}`},
+		{butlerToolInstallHarness, `{"harness":"fake","projects":["a/b"]}`},
+		{butlerToolDeleteHarness, `{"id":"fake"}`},
+		{butlerToolFanoutExec, `{"projects":["a/b"],"command":"echo hi"}`},
+		{butlerToolProposeEnvFix, `{"name":"SMTP_PASSWORD"}`},
+		{butlerToolSwitchModel, `{"harness":"fake","model":"gpt-4o"}`},
+		{butlerToolSaveShortcut, `{"project":"a/b","alias":"retest","kind":"cmd","command":"npm test"}`},
+		{butlerToolSaveGitIdentity, `{"project":"a/b","identityId":"default"}`},
+		{butlerToolAddSSHKey, `{"publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF AKEL","label":"laptop"}`},
+	}
+	if len(rows) != len(butlerWriteTable) {
+		t.Fatalf("table rows = %d, write tools = %d: add the new tool here", len(rows), len(butlerWriteTable))
+	}
+	var created []butlerCard
+	for _, row := range rows {
+		run := butlerToolByName(t, d, row.tool, &created)
+		raw, err := run(context.Background(), row.args)
+		if err != nil {
+			t.Fatalf("%s propose: %v", row.tool, err)
+		}
+		var prop struct {
+			NeedsConfirm bool   `json:"needsConfirm"`
+			ConfirmID    string `json:"confirmId"`
+			Summary      string `json:"summary"`
+			BlastRadius  string `json:"blastRadius"`
+		}
+		if err := json.Unmarshal([]byte(raw), &prop); err != nil || !prop.NeedsConfirm || prop.ConfirmID == "" {
+			t.Fatalf("%s proposal = %s, want needsConfirm + confirmId", row.tool, raw)
+		}
+		if prop.Summary == "" || prop.BlastRadius == "" {
+			t.Fatalf("%s proposal = %s, want summary + blast radius", row.tool, raw)
+		}
+	}
+	if n := butlerPendingCount(); n != len(rows) {
+		t.Fatalf("pendings = %d, want %d (nothing ran, everything stored)", n, len(rows))
+	}
+	if len(created) != len(rows) {
+		t.Fatalf("cards = %d, want one per proposal", len(created))
+	}
+
+	bad := []struct{ tool, args string }{
+		{butlerToolCreateProject, `{}`},
+		{butlerToolStart, `{}`},
+		{butlerToolSessionCreate, `{"project":"a/b","name":"bad name!"}`},
+		{butlerToolPreviewStart, `{"project":"a/b","port":0}`},
+		{butlerToolGitSwitch, `{"project":"a/b"}`},
+		{butlerToolInstallHarness, `{"harness":"fake","projects":[]}`},
+		{butlerToolFanoutExec, `{"projects":[],"command":"echo hi"}`},
+		{butlerToolProposeEnvFix, `{}`},
+		{butlerToolSaveShortcut, `{"project":"a/b","alias":"x","kind":"bogus"}`},
+		{butlerToolAddSSHKey, `{"publicKey":"not-a-key"}`},
+	}
+	before := butlerPendingCount()
+	for _, row := range bad {
+		run := butlerToolByName(t, d, row.tool, nil)
+		if _, err := run(context.Background(), row.args); err == nil {
+			t.Fatalf("%s with %s: want validation error", row.tool, row.args)
+		}
+	}
+	if n := butlerPendingCount(); n != before {
+		t.Fatalf("pendings = %d, want %d (invalid args store nothing)", n, before)
+	}
+}
+
+// State-only applies: propose, take, run — then the registry shows it.
+// No docker involved: harnesses, shortcuts, model lines, keys.
+func TestButlerWriteApplyStateOnly(t *testing.T) {
+	d, _, _, st := newSessionDeps(t)
+	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Mutate(func(doc *state.Document) error {
+		doc.User.Email = "me@example.com"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	butlerResetPendings()
+	defer butlerResetPendings()
+
+	apply := func(tool, args string) string {
+		t.Helper()
+		run := butlerToolByName(t, d, tool, nil)
+		raw, err := run(context.Background(), args)
+		if err != nil {
+			t.Fatalf("%s propose: %v", tool, err)
+		}
+		var prop struct {
+			ConfirmID string `json:"confirmId"`
+		}
+		if err := json.Unmarshal([]byte(raw), &prop); err != nil {
+			t.Fatal(err)
+		}
+		p, ok := butlerTake(prop.ConfirmID)
+		if !ok {
+			t.Fatalf("%s: pending vanished", tool)
+		}
+		out, err := p.run(context.Background(), "")
+		if err != nil {
+			t.Fatalf("%s apply: %v", tool, err)
+		}
+		return out
+	}
+
+	apply(butlerToolCreateHarness, `{"name":"H","command":"hcli","install":"npm i -g hcli"}`)
+	if _, err := d.Harnesses.Get("h"); err != nil {
+		t.Fatalf("harness h missing after apply: %v", err)
+	}
+	apply(butlerToolSwitchModel, `{"harness":"h","model":"gpt-4o"}`)
+	h, _ := d.Harnesses.Get("h")
+	if got := butlerConfigModel(h.Config); got != "gpt-4o" {
+		t.Fatalf("harness model = %q, want gpt-4o", got)
+	}
+	apply(butlerToolSaveShortcut, `{"project":"a/b","alias":"retest","kind":"cmd","command":"npm test"}`)
+	var shortcuts []state.Shortcut
+	st.View(func(doc *state.Document) { shortcuts = doc.Projects["a/b"].Shortcuts })
+	if len(shortcuts) != 1 || shortcuts[0].Alias != "retest" || shortcuts[0].Command != "npm test" {
+		t.Fatalf("shortcuts = %+v, want the saved row", shortcuts)
+	}
+	fp := apply(butlerToolAddSSHKey, `{"publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF AKEL","label":"laptop"}`)
+	if !strings.HasPrefix(fp, "Added ") {
+		t.Fatalf("add_ssh_key = %q", fp)
+	}
+	apply(butlerToolDeleteHarness, `{"id":"h"}`)
+	if _, err := d.Harnesses.Get("h"); err == nil {
+		t.Fatal("harness h survives delete apply")
+	}
+}
+
+// Container applies: start, session_create, and git_pull run their docker
+// calls only after Confirm (propose sets no expectations, so any early
+// call would fail the mock).
+func TestButlerWriteApplyContainer(t *testing.T) {
+	d, md, _, st := newSessionDeps(t)
+	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
+		t.Fatal(err)
+	}
+	butlerResetPendings()
+	defer butlerResetPendings()
+
+	apply := func(tool, args string) {
+		t.Helper()
+		run := butlerToolByName(t, d, tool, nil)
+		raw, err := run(context.Background(), args)
+		if err != nil {
+			t.Fatalf("%s propose: %v", tool, err)
+		}
+		var prop struct {
+			ConfirmID string `json:"confirmId"`
+		}
+		if err := json.Unmarshal([]byte(raw), &prop); err != nil {
+			t.Fatal(err)
+		}
+		p, ok := butlerTake(prop.ConfirmID)
+		if !ok {
+			t.Fatalf("%s: pending vanished", tool)
+		}
+		if _, err := p.run(context.Background(), ""); err != nil {
+			t.Fatalf("%s apply: %v", tool, err)
+		}
+	}
+
+	md.EXPECT().Start(mock.Anything, "pcoder-a-b").Return(nil)
+	apply(butlerToolStart, `{"project":"a/b"}`)
+
+	md.EXPECT().Inspect(mock.Anything, "pcoder-a-b").Return(docker.Container{Running: true, Status: "running"}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b", []string{"test", "-d", "/workspace/repo/.git"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b", mock.MatchedBy(func(argv []string) bool {
+		return len(argv) > 1 && argv[0] == "tmux" && argv[1] == "new-session"
+	}), false).Return(docker.ExecResult{ExitCode: 0}, nil)
+	apply(butlerToolSessionCreate, `{"project":"a/b","name":"dev"}`)
+
+	md.EXPECT().Inspect(mock.Anything, "pcoder-a-b").Return(docker.Container{Running: true, Status: "running"}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b", []string{"test", "-d", "/workspace/repo/.git"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b", mock.MatchedBy(func(argv []string) bool {
+		return len(argv) == 3 && strings.Contains(argv[2], "pull --ff-only")
+	}), false).Return(docker.ExecResult{ExitCode: 0, Output: "Already up to date."}, nil)
+	apply(butlerToolGitPull, `{"project":"a/b"}`)
+}
+
+// Sensitive writes: the delete card states the blast radius (sessions +
+// volumes), unknown confirm ids never run anything, and the masked env
+// value never appears in results, events, or errors.
+func TestButlerSensitiveWrites(t *testing.T) {
+	d, md, pinOut, st := newSessionDeps(t)
+	butlerResetPendings()
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete card: blast radius names sessions and volumes.
+	md.EXPECT().Exec(mock.Anything, "pcoder-a-b",
+		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "one\ntwo\nthree\n"}, nil)
+	var created []butlerCard
+	del := butlerToolByName(t, d, butlerToolDeleteProject, &created)
+	raw, err := del(context.Background(), `{"project":"a/b","scope":"container"}`)
+	if err != nil {
+		t.Fatalf("propose delete: %v", err)
+	}
+	var prop struct {
+		ConfirmID   string `json:"confirmId"`
+		BlastRadius string `json:"blastRadius"`
+	}
+	if err := json.Unmarshal([]byte(raw), &prop); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prop.BlastRadius, "3 sessions") || !strings.Contains(prop.BlastRadius, "Volumes stay") {
+		t.Fatalf("blast radius = %q, want sessions + volumes", prop.BlastRadius)
+	}
+
+	// Destructive tooling needs the explicit id: a wrong one 404s.
+	rec := authedPost(t, h, cookie, "/api/butler/confirms/deadbeefdeadbeefdeadbeef/apply", `{}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown confirm apply: got %d %q, want 404", rec.Code, rec.Body.String())
+	}
+
+	// Masked env value: apply carries it, nothing echoes it.
+	env := butlerToolByName(t, d, butlerToolProposeEnvFix, nil)
+	envRaw, err := env(context.Background(), `{"name":"SMTP_PASSWORD"}`)
+	if err != nil {
+		t.Fatalf("propose env fix: %v", err)
+	}
+	var envProp struct {
+		ConfirmID string `json:"confirmId"`
+	}
+	if err := json.Unmarshal([]byte(envRaw), &envProp); err != nil {
+		t.Fatal(err)
+	}
+	const secret = "s3cr3t-masked-value"
+	rec = authedPost(t, h, cookie, "/api/butler/confirms/"+envProp.ConfirmID+"/apply", `{"value":"`+secret+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("env apply: got %d %q", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), secret) {
+		t.Fatalf("apply response echoes the masked value: %q", rec.Body.String())
+	}
+	evs, err := d.Events.Read(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range evs {
+		rawEv, _ := json.Marshal(e)
+		if strings.Contains(string(rawEv), secret) {
+			t.Fatalf("event log holds the masked value: %s", rawEv)
+		}
+	}
+
+	// One-line model diff: the switch card shows old -> new.
+	switchTool := butlerToolByName(t, d, butlerToolSwitchModel, nil)
+	swRaw, err := switchTool(context.Background(), `{"harness":"fake","model":"gpt-4o"}`)
+	if err != nil {
+		t.Fatalf("propose switch: %v", err)
+	}
+	if !strings.Contains(swRaw, "gpt-4o") {
+		t.Fatalf("switch proposal = %s, want the one-line diff", swRaw)
+	}
+	butlerResetPendings()
+}
+
+// The fanout example proposes first: "update opencode everywhere" runs
+// nowhere until Confirm.
+func TestButlerFanoutProposesOnly(t *testing.T) {
+	d, _, _, _ := newSessionDeps(t)
+	butlerResetPendings()
+	var created []butlerCard
+	fanout := butlerToolByName(t, d, butlerToolFanoutExec, &created)
+	raw, err := fanout(context.Background(), `{"projects":["a/b"],"command":"npm i -g opencode-ai@latest"}`)
+	if err != nil {
+		t.Fatalf("propose fanout: %v", err)
+	}
+	if !strings.Contains(raw, "needsConfirm") || len(created) != 1 {
+		t.Fatalf("fanout = %s, want a confirm card, no execution", raw)
+	}
+	if n := butlerPendingCount(); n != 1 {
+		t.Fatalf("pendings = %d, want 1 (nothing ran)", n)
+	}
+	butlerResetPendings()
+}

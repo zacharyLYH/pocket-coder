@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Bot, Plus, Send, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Avatar } from '@/components/ui/avatar'
+import { ButlerConfirm } from '@/components/ButlerConfirm'
 import { ButlerSteps } from '@/components/ButlerSteps'
 import { api, errMsg } from '@/lib/api'
 import { postButlerTurn, type ButlerStatus } from '@/lib/butler'
-import type { ButlerThread, ButlerThreadSummary, ButlerTurn } from '@/lib/types'
+import type { ButlerConfirm as ButlerCard, ButlerThread, ButlerThreadSummary, ButlerTurn } from '@/lib/types'
 
 const PRESETS = [
   { label: 'Brief me', prompt: 'Brief me on my projects: what needs attention?' },
@@ -23,6 +24,8 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [statuses, setStatuses] = useState<ButlerStatus[]>([])
+  const [confirms, setConfirms] = useState<ButlerCard[]>([])
+  const [applied, setApplied] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -59,13 +62,14 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
   async function send(text: string) {
     const p = text.trim()
     if (!p || busy) return
-    setBusy(true); setError(null); setStatuses([])
+    setBusy(true); setError(null); setStatuses([]); setConfirms([])
     const optimistic: ButlerTurn = { turnId: 'pending', prompt: p, projectHint: projectHint ?? undefined }
     const curId = thread?.id && thread.id !== 'new' ? thread.id : undefined
     setThread((t) => t ? { ...t, turns: [...t.turns, optimistic] } : { id: 'new', title: 'New chat', createdAt: '', updatedAt: '', turns: [optimistic] })
     setPrompt('')
     try {
       const r = await postButlerTurn({ prompt: p, threadId: curId, projectHint: projectHint ?? undefined }, (s) => setStatuses((prev) => [...prev, s]))
+      setConfirms(r.confirms ?? [])
       const d = await api<{ thread: ButlerThread }>(`/api/butler/threads/${encodeURIComponent(r.threadId)}`)
       setThread(d.thread)
       void refreshList()
@@ -135,6 +139,19 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
               </div>
             )}
           </div>
+        ))}
+        {confirms.map((c) => (
+          <ButlerConfirm
+            key={c.id}
+            card={c}
+            onDone={(result) => {
+              setConfirms((prev) => prev.filter((x) => x.id !== c.id))
+              if (result) setApplied((prev) => [...prev, result])
+            }}
+          />
+        ))}
+        {applied.map((a, i) => (
+          <p key={i} className="text-xs text-muted-foreground" data-testid="butler-applied">{a}</p>
         ))}
         {busy && (
           <div className="flex flex-col gap-2" data-testid="butler-pending">

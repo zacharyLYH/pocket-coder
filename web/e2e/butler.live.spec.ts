@@ -52,11 +52,11 @@ const TOOLS = ['list_projects', 'events_tail', 'project_detail', 'health'].map((
 }))
 
 // startFakeLLM serves /chat/completions with a scripted plan: call 0 is
-// the model-create probe, calls 1-4 are slow tool rounds (one SSE status
-// line each on the backend), call 5 is the final briefing. Each round
-// responds with tool_calls; the server executes them (unknown-tool
-// replies today) and posts back tool results, which the stub ignores —
-// the plan is fixed regardless of what came back.
+// the model-create probe, call 1 is the structured scope gate (allow
+// verdict), calls 2-5 are slow tool rounds (one SSE status line each on
+// the backend), call 6 is the final briefing. Each round responds with
+// tool_calls; the server executes them and posts back tool results, which
+// the stub ignores — the plan is fixed regardless of what came back.
 async function startFakeLLM(): Promise<{ server: Server; url: string; calls: () => number }> {
   let calls = 0
   const rounds: { calls: ToolCall[]; results: ReturnType<typeof toolResult>[] }[] = [
@@ -75,10 +75,12 @@ async function startFakeLLM(): Promise<{ server: Server; url: string; calls: () 
       void (async () => {
         const n = calls++
         const isProbe = n === 0
-        const round = !isProbe && n <= rounds.length ? rounds[n - 1] : null
+        const isScope = n === 1
+        const round = !isProbe && !isScope && n <= rounds.length + 1 ? rounds[n - 2] : null
         await new Promise((r) => setTimeout(r, isProbe ? 0 : 700))
+        const scopeContent = '{"can_help":true}'
         const message: { role: string; content: string; tool_calls?: ToolCall[] } =
-          round ? { role: 'assistant', content: '', tool_calls: round.calls } : { role: 'assistant', content: isProbe ? '{"ok":true}' : ANSWER }
+          round ? { role: 'assistant', content: '', tool_calls: round.calls } : { role: 'assistant', content: isProbe ? '{"ok":true}' : isScope ? scopeContent : ANSWER }
         const choice: Record<string, unknown> = { index: 0, finish_reason: round ? 'tool_calls' : 'stop', message }
         if (round) choice.tool_results = round.results // consumed by the harness below
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -127,11 +129,11 @@ test.describe('butler live backend', () => {
       await expect(page.getByTestId('butler-answer')).toContainText('Suggested next step')
       await expect(page).toHaveScreenshot('butler-live-answer.png')
 
-      // The turn really persisted server-side: probe + 4 rounds + final.
+      // The turn really persisted server-side: probe + scope + 4 rounds + final.
       const listed = await page.request.get('/api/butler/threads')
       const threads = (((await listed.json()) as { threads: unknown[] }).threads ?? [])
       expect(threads).toHaveLength(1)
-      expect(llm.calls()).toBeGreaterThanOrEqual(6)
+      expect(llm.calls()).toBeGreaterThanOrEqual(7)
     } finally {
       // Keep the shared backend pristine for the other specs in this
       // group (e.g. codemap's no-key test needs zero models).

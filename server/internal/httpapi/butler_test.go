@@ -8,6 +8,18 @@ import (
 	"testing"
 )
 
+// scopeAllow scripts the structured scope gate's allow verdict: every turn
+// opens with one tools-free classifier call, so each fake script below
+// leads with it before the loop's own rounds.
+func scopeAllow(w http.ResponseWriter, _ map[string]any) {
+	writeCompletion(w, "stop", `{"can_help":true}`, nil)
+}
+
+// scopeDeny scripts the gate's refuse verdict.
+func scopeDeny(w http.ResponseWriter, _ map[string]any) {
+	writeCompletion(w, "stop", `{"can_help":false}`, nil)
+}
+
 // butlerPost posts one turn body and pins the expected status.
 func butlerPost(t *testing.T, h http.Handler, cookie *http.Cookie, body string, want int) *httptest.ResponseRecorder {
 	t.Helper()
@@ -23,7 +35,7 @@ func butlerPost(t *testing.T, h http.Handler, cookie *http.Cookie, body string, 
 // Framing order is pinned via splitSSEBody (shared contract in sse_test.go).
 func TestButlerTurnRoundTrip(t *testing.T) {
 	d, _, pinOut, st := newSessionDeps(t)
-	f := newFakeModel(t,
+	f := newFakeModel(t, scopeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
 			writeCompletion(w, "stop", "All three projects are healthy.", nil)
 		},
@@ -86,7 +98,7 @@ func TestButlerTurnRoundTrip(t *testing.T) {
 
 	// Follow-up replays history: the fake sees the prior answer.
 	var sawHistory bool
-	f2 := newFakeModel(t,
+	f2 := newFakeModel(t, scopeAllow,
 		func(w http.ResponseWriter, body map[string]any) {
 			raw, _ := json.Marshal(body)
 			if strings.Contains(string(raw), "All three projects are healthy.") {
@@ -157,8 +169,9 @@ func TestButlerTurnFailurePersistsAndStreamsError(t *testing.T) {
 	empty := func(w http.ResponseWriter, _ map[string]any) {
 		writeCompletion(w, "stop", "", nil) // empty answer → loop error
 	}
-	// Completion retries an empty answer up to 3 attempts, so script all 3.
-	f := newFakeModel(t, empty, empty, empty)
+	// Completion retries an empty answer up to 3 attempts, so script all 3
+	// (after the scope gate's allow verdict).
+	f := newFakeModel(t, scopeAllow, empty, empty, empty)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
@@ -194,18 +207,19 @@ func TestButlerTurnFailurePersistsAndStreamsError(t *testing.T) {
 
 // The loop cap: a model that always answers with tool calls (and never a
 // final text) still terminates and streams one model status per round.
-// Zero tools here means every "tool call" is unknown, so the loop must burn
-// its budget and close out — never hang, never loop forever.
+// The loop must burn its budget and close out — never hang, never loop
+// forever.
 func TestButlerTurnLoopCapsAtMaxSteps(t *testing.T) {
 	d, _, pinOut, st := newSessionDeps(t)
 	calls := 0
 	toolRound := func(w http.ResponseWriter, _ map[string]any) {
 		calls++
-		writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("c1", "list_projects", "{}")})
+		writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("c1", butlerToolListProjects, "{}")})
 	}
-	steps := make([]func(w http.ResponseWriter, _ map[string]any), 0, 7)
+	steps := make([]func(w http.ResponseWriter, _ map[string]any), 0, 8)
+	steps = append(steps, scopeAllow) // the gate first, then the 6 capped rounds
 	for i := 0; i < 6; i++ {
-		steps = append(steps, toolRound) // the 6 capped rounds
+		steps = append(steps, toolRound)
 	}
 	steps = append(steps, func(w http.ResponseWriter, _ map[string]any) {
 		calls++
@@ -221,8 +235,8 @@ func TestButlerTurnLoopCapsAtMaxSteps(t *testing.T) {
 	if last["answer"] != "gave up" {
 		t.Fatalf("final = %v, want the close-out answer", last)
 	}
-	// The tool calls never run (no tools in this slice) but each round still
-	// streams a model status; the cap bounds rounds at 6.
+	// Each executed round streams a model status; the cap bounds tool
+	// rounds at 6 (the scope gate is silent and streams nothing).
 	modelStatuses := 0
 	for _, s := range statuses {
 		if s["tool"] == "model" {
@@ -233,6 +247,6 @@ func TestButlerTurnLoopCapsAtMaxSteps(t *testing.T) {
 		t.Fatalf("model statuses = %d, want bounded by the 6-step cap", modelStatuses)
 	}
 	if calls != 7 {
-		t.Fatalf("model calls = %d, want exactly 6 capped rounds + 1 close-out", calls)
+		t.Fatalf("model calls = %d, want 6 capped rounds + 1 close-out (plus the uncounted scope gate)", calls)
 	}
 }
