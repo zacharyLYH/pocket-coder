@@ -16,8 +16,8 @@ import (
 
 	"pcoder/internal/agent"
 	"pcoder/internal/codemap"
-	"pcoder/internal/codemapthreads"
 	"pcoder/internal/obs"
+	"pcoder/internal/threads"
 )
 
 // codemapBusy serializes one run per project: a second POST while one is
@@ -159,7 +159,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 			// read), excluding the new placeholder reserved below.
 			history = threadHistory(th)
 			sha := repoSHA(d, r, container, dir)
-			n, tid, rerr := st.ReserveFollowup(id, threadID, prompt, sha)
+			n, tid, rerr := st.ReserveFollowup(id, threadID, prompt, sha, nil)
 			if rerr != nil {
 				if rerr.Error() == "unknown thread" {
 					writeUnknownThread(w)
@@ -173,7 +173,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 			obs.Info(r.Context(), obs.CodemapTurnReserved, fmt.Sprintf("[%s] turn %d reserved before generation", tid, n), map[string]any{"turnId": tid, "threadId": threadID, "turn": n, "stage": "reserve_turn"})
 		} else {
 			sha := repoSHA(d, r, container, dir)
-			tid, turn, rerr := st.ReserveNewThread(id, prompt, sha)
+			tid, turn, rerr := st.ReserveNewThread(id, prompt, sha, nil)
 			if rerr != nil {
 				obs.Error(r.Context(), obs.CodemapTurn, "thread initialization failed: "+rerr.Error(), map[string]any{"stage": "reserve_thread", "error": rerr.Error()})
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "create thread: " + rerr.Error(), "stage": "reserve_thread"})
@@ -182,7 +182,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 			threadID = tid
 			turnID = turn
 			turnN = 1
-			threadTitle = codemapthreads.TitleFromPrompt(prompt)
+			threadTitle = threads.TitleFromPrompt(prompt)
 			codemapSet(id, threadID)
 			obs.Info(r.Context(), obs.CodemapThreadInitialized, fmt.Sprintf("[%s] thread + turn 1 reserved before generation; waiting for turn", threadID), map[string]any{"threadId": threadID, "title": threadTitle, "stage": "reserve_thread"})
 		}
@@ -241,15 +241,16 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 			return
 		}
 		last := th.Turns[len(th.Turns)-1]
-		if last.Error == nil && len(last.Sections) > 0 && string(last.Sections) != "null" {
+		lastPayload := codemapPayloadOf(last)
+		if last.Error == nil && len(lastPayload.Sections) > 0 && string(lastPayload.Sections) != "null" {
 			err = errors.New("retry only failed turns")
 			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
 		// History is turns 1..N-1 only: the failed attempt never feeds
 		// its own rerun.
-		history := threadHistory(codemapthreads.Thread{
-			ID: th.ID, Project: th.Project, Title: th.Title,
+		history := threadHistory(threads.Thread{
+			ID: th.ID, Title: th.Title,
 			CreatedAt: th.CreatedAt, UpdatedAt: th.UpdatedAt,
 			Turns: th.Turns[:len(th.Turns)-1],
 		})
@@ -273,7 +274,7 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 // turn and persists via Complete/Fail. Post-manifest errors keep
 // threadId+title so FE can open the failed placeholder. Callers hold the
 // codemapBusy slot.
-func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, container, dir string, cfg agent.Config, st *codemapthreads.Store, threadID, threadTitle string, turnN int, turnID, prompt string, history []map[string]any) {
+func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, container, dir string, cfg agent.Config, st *threads.Store, threadID, threadTitle string, turnN int, turnID, prompt string, history []map[string]any) {
 	r = r.WithContext(obs.WithProject(r.Context(), id))
 	sha := repoSHA(d, r, container, dir)
 	runStart := time.Now()
@@ -340,9 +341,10 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 		// The placeholder stays visible with its error so the turn is
 		// retryable; the failure graph lands beside it in lineage.
 		now := time.Now().UTC()
-		if ferr := st.FailTurn(id, threadID, turnN, codemapthreads.Turn{
-			TurnID: turnID, SHA: sha, Prompt: prompt, Time: now,
-		}, err.Error(), lineageRaw); ferr != nil {
+		msg := err.Error()
+		if ferr := st.CompleteTurn(id, threadID, turnN, threads.Turn{
+			TurnID: turnID, SHA: sha, Prompt: prompt, Time: now, Error: &msg,
+		}, lineageRaw); ferr != nil {
 			obs.Error(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] fail persist failed: %s", turnID, ferr), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "fail_turn", "error": ferr.Error()})
 		} else {
 			obs.Info(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] failed turn persisted with error", turnID), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "fail_turn"})
@@ -369,10 +371,10 @@ func executeReservedTurn(d Deps, w http.ResponseWriter, r *http.Request, id, con
 		return
 	}
 	now := time.Now().UTC()
-	if cerr := st.CompleteTurn(id, threadID, turnN, codemapthreads.Turn{
+	if cerr := st.CompleteTurn(id, threadID, turnN, threads.Turn{
 		TurnID: turnID, SHA: sha, Prompt: prompt,
-		Sections: json.RawMessage(sectionsRaw), Tools: json.RawMessage(toolsRaw),
-		Time: now,
+		Payload: codemapPayload(sectionsRaw, toolsRaw),
+		Time:    now,
 	}, lineageRaw); cerr != nil {
 		obs.Error(r.Context(), obs.CodemapTurn, fmt.Sprintf("[%s] turn complete failed: %s", turnID, cerr), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "complete_turn", "error": cerr.Error()})
 		if cerr.Error() == "unknown thread" {
@@ -490,15 +492,35 @@ func sectionsTranscript(sections []codemap.Section) string {
 // files only — lineage files are NEVER read for context). Failed/crashed
 // turns contribute their prompt only. Context is bounded to the last 20
 // turns and ~16KB estimated chars.
-func threadHistory(th codemapthreads.Thread) []map[string]any {
+// codemapPayload is codemap's opaque turn payload (stored in the shared
+// threads envelope): sections + tool rounds, marshaled once at complete.
+func codemapPayload(sections, tools json.RawMessage) json.RawMessage {
+	raw, err := json.Marshal(map[string]json.RawMessage{"sections": sections, "tools": tools})
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+// codemapPayloadOf decodes one envelope turn's codemap payload.
+func codemapPayloadOf(t threads.Turn) (p struct {
+	Sections json.RawMessage `json:"sections"`
+	Tools    json.RawMessage `json:"tools"`
+}) {
+	_ = json.Unmarshal(t.Payload, &p)
+	return p
+}
+
+func threadHistory(th threads.Thread) []map[string]any {
 	turns := th.Turns
 	if len(turns) > 20 {
 		turns = turns[len(turns)-20:]
 	}
 	// Byte-budget from the tail: drop oldest until estimated chars fit.
 	const maxChars = 16 * 1024
-	size := func(t codemapthreads.Turn) int {
-		return len(t.Prompt) + len(t.Sections) + len(t.Tools)
+	size := func(t threads.Turn) int {
+		p := codemapPayloadOf(t)
+		return len(t.Prompt) + len(p.Sections) + len(p.Tools)
 	}
 	total := 0
 	for _, t := range turns {
@@ -513,7 +535,8 @@ func threadHistory(th codemapthreads.Thread) []map[string]any {
 
 	var out []map[string]any
 	for _, t := range turns {
-		if strings.TrimSpace(t.Prompt) == "" && len(t.Sections) == 0 && len(t.Tools) == 0 {
+		p := codemapPayloadOf(t)
+		if strings.TrimSpace(t.Prompt) == "" && len(p.Sections) == 0 && len(p.Tools) == 0 {
 			continue
 		}
 		if strings.TrimSpace(t.Prompt) != "" {
@@ -524,8 +547,8 @@ func threadHistory(th codemapthreads.Thread) []map[string]any {
 		if t.Error != nil {
 			continue
 		}
-		if len(t.Tools) > 0 {
-			for _, r := range parseRounds(t.Tools) {
+		if len(p.Tools) > 0 {
+			for _, r := range parseRounds(p.Tools) {
 				hasOutput := false
 				for _, s := range r.Steps {
 					if strings.TrimSpace(s.Output) != "" || strings.TrimSpace(s.Err) != "" {
@@ -553,9 +576,9 @@ func threadHistory(th codemapthreads.Thread) []map[string]any {
 				})
 			}
 		}
-		if raw := strings.TrimSpace(string(t.Sections)); raw != "" && raw != "null" {
+		if raw := strings.TrimSpace(string(p.Sections)); raw != "" && raw != "null" {
 			var sections []codemap.Section
-			if err := json.Unmarshal(t.Sections, &sections); err == nil && len(sections) > 0 {
+			if err := json.Unmarshal(p.Sections, &sections); err == nil && len(sections) > 0 {
 				out = append(out, map[string]any{"role": "assistant", "content": sectionsTranscript(sections)})
 			} else {
 				out = append(out, map[string]any{"role": "assistant", "content": raw})

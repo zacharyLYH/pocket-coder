@@ -20,6 +20,12 @@ func scopeDeny(w http.ResponseWriter, _ map[string]any) {
 	writeCompletion(w, "stop", `{"can_help":false}`, nil)
 }
 
+// codeAllow scripts the codemap gate's allow verdict, same contract as
+// scopeAllow: the classifier call precedes the loop's rounds.
+func codeAllow(w http.ResponseWriter, _ map[string]any) {
+	writeCompletion(w, "stop", `{"about_code":true}`, nil)
+}
+
 // butlerPost posts one turn body and pins the expected status.
 func butlerPost(t *testing.T, h http.Handler, cookie *http.Cookie, body string, want int) *httptest.ResponseRecorder {
 	t.Helper()
@@ -196,17 +202,44 @@ func TestButlerTurnFailurePersistsAndStreamsError(t *testing.T) {
 	}
 
 	// The failed turn is on disk with its error, so a retry has history.
-	th, gerr := d.Butler.Get(tid)
+	th, gerr := d.Butler.Get(butlerScope, tid)
 	if gerr != nil {
 		t.Fatalf("failed turn not readable: %v", gerr)
 	}
-	if len(th.Turns) != 1 || th.Turns[0].Error == nil || th.Turns[0].Answer != "" {
+	if len(th.Turns) != 1 || th.Turns[0].Error == nil {
 		t.Fatalf("persisted turn = %+v", th.Turns)
 	}
-	if lineage, err := d.Butler.ReadTurnLineage(tid, 1); err != nil || !strings.Contains(string(lineage), `"error"`) {
+	if lineage, err := d.Butler.ReadTurnLineage(butlerScope, tid, 1); err != nil || !strings.Contains(string(lineage), `"error"`) {
 		t.Fatalf("failed-turn lineage = %s, err=%v", lineage, err)
 	}
-	// Single logging is structural now: the deferred ask-log is gone, so
+
+	// Retry reruns the failed turn in place: same turnId, fresh answer.
+	// The retry stream opens with the scope gate again.
+	f2 := newFakeModel(t, scopeAllow, func(w http.ResponseWriter, _ map[string]any) {
+		writeCompletion(w, "stop", "Recovered answer.", nil)
+	})
+	seedAI(t, st, f2.srv.URL)
+	rec3 := authedPost(t, h, cookie, "/api/butler/threads/"+tid+"/retry", `{}`)
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("retry: got %d %q", rec3.Code, rec3.Body)
+	}
+	th2, gerr := d.Butler.Get(butlerScope, tid)
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if len(th2.Turns) != 1 || th2.Turns[0].Error != nil {
+		t.Fatalf("after retry turns = %+v, want 1 rewritten, error cleared", th2.Turns)
+	}
+	var rp butlerPayload
+	_ = json.Unmarshal(th2.Turns[0].Payload, &rp)
+	if rp.Answer != "Recovered answer." {
+		t.Fatalf("retry answer = %q", rp.Answer)
+	}
+	// Retrying a successful thread 409s.
+	rec4 := authedPost(t, h, cookie, "/api/butler/threads/"+tid+"/retry", `{}`)
+	if rec4.Code != http.StatusConflict {
+		t.Fatalf("retry success: got %d %q, want 409", rec4.Code, rec4.Body)
+	}
 	// each error return below carries its only obsFail. (Project-less
 	// butler entries reach slog only — emit drops them from the store by
 	// design — so there is no countable assertion here.)

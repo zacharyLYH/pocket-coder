@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"pcoder/internal/agent"
-	"pcoder/internal/butlerthreads"
 	"pcoder/internal/obs"
 	"pcoder/internal/prompt"
+	"pcoder/internal/threads"
 )
 
 // butlerGuide is the turn system prompt, assembled from the shared prompt
@@ -26,7 +26,11 @@ var butlerGuide = prompt.ButlerGuide(butlerReadNames, butlerWriteNames)
 // leaves a stray thread behind.
 var butlerBusy atomic.Bool
 
-func butlerStoreOr500(w http.ResponseWriter, d Deps) (*butlerthreads.Store, bool) {
+// butlerScope is the thread-store scope for butler: one global history,
+// no project prefix.
+const butlerScope = ""
+
+func butlerStoreOr500(w http.ResponseWriter, d Deps) (*threads.Store, bool) {
 	if d.Butler == nil {
 		writeInternalErr(w, "butler store", errors.New("butler store not configured"))
 		return nil, false
@@ -49,13 +53,13 @@ func handleButlerThreads(d Deps) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		summaries, err := st.List()
+		summaries, err := st.List(butlerScope)
 		if err != nil {
 			writeInternalErr(w, "list butler threads", err)
 			return
 		}
 		if summaries == nil {
-			summaries = []butlerthreads.Summary{}
+			summaries = []threads.Summary{}
 		}
 		var running any // no busy-id tracking; remount-into-run is codemap-only
 		writeJSON(w, http.StatusOK, map[string]any{"threads": summaries, "runningThreadId": running})
@@ -68,7 +72,7 @@ func handleButlerThreadGet(d Deps) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		th, err := st.Get(r.PathValue("tid"))
+		th, err := st.Get(butlerScope, r.PathValue("tid"))
 		if err != nil {
 			writeErr(w, http.StatusNotFound, "unknown thread")
 			return
@@ -90,7 +94,7 @@ func handleButlerThreadDelete(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusConflict, "butler busy — wait for the current run")
 			return
 		}
-		if err := st.Delete(tid); err != nil {
+		if err := st.Delete(butlerScope, tid); err != nil {
 			writeInternalErr(w, "delete butler thread", err)
 			return
 		}
@@ -99,22 +103,24 @@ func handleButlerThreadDelete(d Deps) http.HandlerFunc {
 	}
 }
 
-func butlerThreadJSON(th butlerthreads.Thread) any {
+func butlerThreadJSON(th threads.Thread) any {
 	turns := make([]any, 0, len(th.Turns))
 	for _, t := range th.Turns {
 		var turnErr any
 		if t.Error != nil {
 			turnErr = *t.Error
 		}
+		var p butlerPayload
+		_ = json.Unmarshal(t.Payload, &p)
 		turns = append(turns, map[string]any{
-			"turnId": t.TurnID, "prompt": t.Prompt, "answer": t.Answer,
-			"steps": t.Steps, "projectHint": t.ProjectHint, "error": turnErr,
+			"turnId": t.TurnID, "prompt": t.Prompt, "answer": p.Answer,
+			"steps": p.Steps, "projectHint": t.ProjectHint, "error": turnErr,
 			"time": t.Time.Format(time.RFC3339),
 		})
 	}
 	approvals := make([]butlerCard, 0, len(th.Approvals))
 	for _, a := range th.Approvals {
-		if a.Status != "" && a.Status != butlerthreads.ApprovalPending {
+		if a.Status != "" && a.Status != threads.ApprovalPending {
 			continue
 		}
 		approvals = append(approvals, butlerCard{ID: a.ID, Tool: a.Tool, Summary: a.Summary, BlastRadius: a.BlastRadius})
@@ -126,6 +132,89 @@ func butlerThreadJSON(th butlerthreads.Thread) any {
 		"turns":     turns,
 		"approvals": approvals,
 	}
+}
+
+// handleButlerRetry reruns the LAST turn of a thread, which must be
+// failed. The turn is rewritten in place (same turnId/prompt, fresh time)
+// and the pipeline reruns over the same SSE stream as a normal turn.
+// Safe for butler's propose-only writes: a replayed intent can only
+// produce a confirm card, never a mutation. Blocked while busy or while a
+// confirm card is pending.
+func handleButlerRetry(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cfg := aiConfig(d, aiBody{})
+		if !cfg.Valid() {
+			writeErr(w, http.StatusConflict, "ai not configured")
+			return
+		}
+		st, ok := butlerStoreOr500(w, d)
+		if !ok {
+			return
+		}
+		tid := r.PathValue("tid")
+		th, gerr := st.Get(butlerScope, tid)
+		if gerr != nil {
+			writeErr(w, http.StatusNotFound, "unknown thread")
+			return
+		}
+		if len(th.Turns) == 0 || th.Turns[len(th.Turns)-1].Error == nil {
+			writeErr(w, http.StatusConflict, "retry only failed turns")
+			return
+		}
+		if !butlerBusy.CompareAndSwap(false, true) {
+			writeErr(w, http.StatusConflict, "butler busy — wait for the current run")
+			return
+		}
+		defer func() { butlerBusy.Store(false) }()
+		n, turnID, prompt, rerr := st.BeginRetry(butlerScope, tid, "")
+		if rerr != nil {
+			writeTurnErr(w, http.StatusInternalServerError, "retry reserve: "+rerr.Error(), tid, th.Title)
+			return
+		}
+		runButlerSSE(w, r, d, st, butlerSSETurn{
+			threadID: tid, threadTitle: th.Title, turnN: n, turnID: turnID,
+			prompt: prompt, projectHint: th.Turns[len(th.Turns)-1].ProjectHint,
+		})
+	}
+}
+
+// butlerSSETurn is one reserved turn ready to stream: the shared back
+// half of the turn and retry handlers (reserve differs; everything after
+// is identical).
+type butlerSSETurn struct {
+	threadID, threadTitle, turnID, prompt, projectHint string
+	turnN int
+}
+
+// runButlerSSE streams one butler turn over SSE and persists it: the
+// stream is already 200 before the model runs, so failures ride the
+// stream as the final line with thread identity intact (retryable),
+// never a dropped 500.
+func runButlerSSE(w http.ResponseWriter, r *http.Request, d Deps, st *threads.Store, t butlerSSETurn) {
+	cfg := aiConfig(d, aiBody{})
+	emit, final := sseTurn(w)
+	answer, steps, confirms, lineage, runErr := runButlerTurn(r, d, cfg, st, t.threadID, t.turnID, t.prompt, emit, true, true)
+	turn := butlerTurn(t.turnID, t.prompt, t.projectHint, answer, steps)
+	if runErr != nil {
+		msg := runErr.Error()
+		turn.Error = &msg
+		_ = st.CompleteTurn(butlerScope, t.threadID, t.turnN, turn, butlerLineage(lineage, t.turnID, t.threadID, t.prompt, msg))
+		obsFail(r, obs.ButlerTurn, "butler turn failed", runErr, map[string]any{"threadId": t.threadID})
+		final(map[string]any{"error": msg, "threadId": t.threadID, "threadTitle": t.threadTitle})
+		return
+	}
+	if cerr := st.CompleteTurn(butlerScope, t.threadID, t.turnN, turn, butlerLineage(lineage, t.turnID, t.threadID, t.prompt, "")); cerr != nil {
+		obsFail(r, obs.ButlerTurn, "complete butler turn failed", cerr, map[string]any{"threadId": t.threadID})
+		final(map[string]any{"error": errInternal, "threadId": t.threadID, "threadTitle": t.threadTitle})
+		return
+	}
+	_, _ = d.Events.Append("butler.turn", map[string]any{"threadId": t.threadID})
+	final(map[string]any{
+		"threadId": t.threadID, "threadTitle": t.threadTitle,
+		"turnId": t.turnID, "answer": answer,
+		"steps": steps, "confirms": confirms,
+		"time": turn.Time.Format(time.RFC3339),
+	})
 }
 
 func handleButlerTurn(d Deps) http.HandlerFunc {
@@ -165,26 +254,26 @@ func handleButlerTurn(d Deps) http.HandlerFunc {
 		var n int
 		newThread := body.ThreadID == ""
 		if newThread {
-			tid, turn, rerr := st.ReserveNewThread(body.Prompt, body.ProjectHint)
+			tid, turn, rerr := st.ReserveNewThread(butlerScope, body.Prompt, "", nil)
 			if rerr != nil {
 				obsFail(r, obs.ButlerTurn, "reserve butler thread failed", rerr, nil)
 				writeTurnErr(w, http.StatusInternalServerError, errInternal, "", "")
 				return
 			}
 			threadID, turnID, n = tid, turn, 1
-			threadTitle = butlerthreads.TitleFromPrompt(body.Prompt)
+			threadTitle = threads.TitleFromPrompt(body.Prompt)
 		} else {
-			th, gerr := st.Get(body.ThreadID)
+			th, gerr := st.Get(butlerScope, body.ThreadID)
 			if gerr != nil {
 				writeTurnErr(w, http.StatusNotFound, "unknown thread", "", "")
 				return
 			}
 			threadID, threadTitle = th.ID, th.Title
 			var rerr error
-			n, turnID, rerr = st.ReserveFollowup(threadID, body.Prompt, body.ProjectHint)
+			n, turnID, rerr = st.ReserveFollowup(butlerScope, threadID, body.Prompt, "", nil)
 			if rerr != nil {
 				obsFail(r, obs.ButlerTurn, "reserve butler turn failed", rerr, map[string]any{"threadId": threadID})
-				if errors.Is(rerr, butlerthreads.ErrPendingApproval) {
+				if errors.Is(rerr, threads.ErrPendingApproval) {
 					writeTurnErr(w, http.StatusConflict, "pending confirmation — confirm or discard it before continuing", threadID, threadTitle)
 					return
 				}
@@ -192,37 +281,9 @@ func handleButlerTurn(d Deps) http.HandlerFunc {
 				return
 			}
 		}
-		emit, final := sseTurn(w)
-		answer, steps, confirms, lineage, runErr := runButlerTurn(r, d, cfg, st, threadID, turnID, body.Prompt, emit, true, true)
-		turn := butlerthreads.Turn{TurnID: turnID, Prompt: body.Prompt, Answer: answer,
-			Steps: steps, ProjectHint: body.ProjectHint, Time: time.Now().UTC(),
-		}
-		if runErr != nil {
-			msg := runErr.Error()
-			turn.Error = &msg
-			_ = st.CompleteTurn(threadID, n, turn, butlerLineage(lineage, turnID, threadID, body.Prompt, msg))
-			obsFail(r, obs.ButlerTurn, "butler turn failed", runErr, map[string]any{"threadId": threadID})
-			// The stream is already 200: a second WriteHeader would be dropped
-			// and the client would read a bare error as the answer. Failures
-			// ride the stream as the final line, identity intact, so the
-			// user sees the failure transparently and can retry in-thread.
-			final(map[string]any{"error": msg, "threadId": threadID, "threadTitle": threadTitle})
-			return
-		}
-		if cerr := st.CompleteTurn(threadID, n, turn, butlerLineage(lineage, turnID, threadID, body.Prompt, "")); cerr != nil {
-			obsFail(r, obs.ButlerTurn, "complete butler turn failed", cerr, map[string]any{"threadId": threadID})
-			// Same stream-already-200 story as above: the answer exists but
-			// the persist failed, so the failure rides the stream with the
-			// thread identity for a retry instead of a dropped 500.
-			final(map[string]any{"error": errInternal, "threadId": threadID, "threadTitle": threadTitle})
-			return
-		}
-		_, _ = d.Events.Append("butler.turn", map[string]any{"threadId": threadID})
-		final(map[string]any{
-			"threadId": threadID, "threadTitle": threadTitle,
-			"turnId": turnID, "answer": answer,
-			"steps": turn.Steps, "confirms": confirms,
-			"time": turn.Time.Format(time.RFC3339),
+		runButlerSSE(w, r, d, st, butlerSSETurn{
+			threadID: threadID, threadTitle: threadTitle, turnN: n, turnID: turnID,
+			prompt: body.Prompt, projectHint: body.ProjectHint,
 		})
 	}
 }
@@ -252,73 +313,136 @@ func butlerScopeParse(raw string) bool {
 // confirm cards proposed during the turn. A structured scope check opens
 // the turn: out-of-scope asks get the pinned refusal with no tool rounds.
 // The gate only ever refutes — any gate failure falls through to the loop.
-func runButlerTurn(r *http.Request, d Deps, cfg agent.Config, st *butlerthreads.Store, threadID, turnID, userPrompt string, emit func(tool, msg string), checkScope, allowWrites bool) (string, []butlerthreads.Step, []butlerCard, *agent.Lineage, error) {
+func runButlerTurn(r *http.Request, d Deps, cfg agent.Config, st *threads.Store, threadID, turnID, userPrompt string, emit func(tool, msg string), checkScope, allowWrites bool) (string, []butlerStep, []butlerCard, *agent.Lineage, error) {
 	lineage := &agent.Lineage{}
+	var confirms []butlerCard
+	var scope *agent.ScopeGate
 	if checkScope {
-		if scoped, serr := agent.Structured(r.Context(), cfg, prompt.ButlerScopePrompt(), userPrompt, "butler_scope", prompt.ButlerScopeSchema(), lineage); serr == nil && !butlerScopeParse(scoped) {
-			emit("done", "answered")
-			return prompt.ButlerRefusal, []butlerthreads.Step{}, []butlerCard{}, lineage, nil
+		scope = &agent.ScopeGate{
+			Prompt: prompt.ButlerScopePrompt(), SchemaName: "butler_scope", Schema: prompt.ButlerScopeSchema(),
+			Refused: func(verdict string) bool { return !butlerScopeParse(verdict) },
+			Refusal: prompt.ButlerRefusal,
 		}
 	}
-	th, _ := st.Get(threadID)
-	history := butlerHistory(th, userPrompt)
-	var steps []butlerthreads.Step
-	onTrace := func(ev agent.TraceEvent) {
+	tools := append([]agent.Tool{agent.TodoTool(lineage)}, butlerReadTools(d)...)
+	if allowWrites {
+		tools = append(tools, butlerWriteTools(d, st, threadID, turnID, &confirms)...)
+	}
+	pipe := agent.Pipeline{
+		Scope: scope,
+		Context: func(_ string) []map[string]any {
+			th, _ := st.Get(butlerScope, threadID)
+			return agent.BuildHistory(butlerViews(th), userPrompt, agent.HistoryOpts{MaxTurns: 20, MaxChars: 16 * 1024})
+		},
+		Run: agent.TurnSpec{
+			System: func() string { return butlerGuide },
+			Tools:  tools, MaxSteps: 6,
+			Opts: []agent.RunOption{agent.WithoutGroundingNudge(), agent.WithLeadIn(prompt.ButlerWorkflows())},
+		},
+		OnTrace: butlerStream(emit),
+	}
+	res := pipe.Execute(r.Context(), cfg, lineage, userPrompt)
+	if res.Refused {
+		emit("done", "answered")
+		return res.Answer, []butlerStep{}, []butlerCard{}, res.Lineage, nil
+	}
+	steps := butlerSteps(res.Rounds)
+	if res.Err != nil {
+		return "", steps, confirms, res.Lineage, res.Err
+	}
+	emit("done", "answered")
+	return res.Answer, steps, confirms, res.Lineage, nil
+}
+
+// butlerStream maps live trace events onto SSE status lines.
+func butlerStream(emit func(tool, msg string)) func(agent.TraceEvent) {
+	return func(ev agent.TraceEvent) {
 		switch ev.Kind {
 		case "round":
 			emit("model", "running")
 		case "tool_start":
 			emit(ev.Tool, "running")
 		case "tool_done":
-			step := butlerthreads.Step{Tool: ev.Tool, Args: ev.Args, Result: summarize(ev.Result)}
-			if ev.Err != "" {
-				step.Result, step.Error = "", ev.Err
-			}
-			steps = append(steps, step)
 			emit(ev.Tool, "done")
 		case "model_error":
 			emit("model", "error")
 		}
 	}
-	var confirms []butlerCard
-	tools := append([]agent.Tool{agent.TodoTool(lineage)}, butlerReadTools(d)...)
-	if allowWrites {
-		tools = append(tools, butlerWriteTools(d, st, threadID, turnID, &confirms)...)
-	}
-	answer, err := agent.Run(r.Context(), cfg, butlerGuide, userPrompt, history, tools, "", nil, 6, onTrace, lineage,
-		agent.WithoutGroundingNudge(), agent.WithLeadIn(prompt.ButlerWorkflows()))
-	if err != nil {
-		return "", steps, confirms, lineage, err
-	}
-	if steps == nil {
-		steps = []butlerthreads.Step{}
-	}
-	if confirms == nil {
-		confirms = []butlerCard{}
-	}
-	emit("done", "answered")
-	return answer, steps, confirms, lineage, nil
 }
 
-func runButlerClosure(r *http.Request, d Deps, threadID string, approval butlerthreads.Approval) (string, error) {
+// butlerStep is butler's persisted step shape (the FE contract).
+type butlerStep struct {
+	Tool   string `json:"tool"`
+	Args   string `json:"args,omitempty"`
+	Result string `json:"result,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// butlerPayload is butler's opaque turn payload, stored in the shared
+// threads envelope and rebuilt on read.
+type butlerPayload struct {
+	Answer string        `json:"answer,omitempty"`
+	Steps  []butlerStep  `json:"steps,omitempty"`
+}
+
+// butlerTurn builds the store envelope for one finished butler turn.
+func butlerTurn(turnID, prompt, projectHint, answer string, steps []butlerStep) threads.Turn {
+	payload, err := json.Marshal(butlerPayload{Answer: answer, Steps: steps})
+	if err != nil {
+		payload = nil
+	}
+	return threads.Turn{TurnID: turnID, Prompt: prompt, ProjectHint: projectHint, Payload: payload, Time: time.Now().UTC()}
+}
+
+// butlerSteps maps the transcript to the persisted step shape.
+func butlerSteps(rounds []agent.Round) []butlerStep {
+	steps := []butlerStep{}
+	for _, r := range rounds {
+		for _, s := range r.Steps {
+			out := butlerStep{Tool: s.Tool, Args: s.Args, Result: summarize(s.Output)}
+			if s.Err != "" {
+				out.Result, out.Error = "", s.Err
+			}
+			steps = append(steps, out)
+		}
+	}
+	return steps
+}
+
+// butlerViews maps persisted turns onto the shared history view.
+func butlerViews(th threads.Thread) []agent.TurnView {
+	out := make([]agent.TurnView, 0, len(th.Turns))
+	for _, t := range th.Turns {
+		var p butlerPayload
+		_ = json.Unmarshal(t.Payload, &p)
+		v := agent.TurnView{Prompt: t.Prompt, Answer: p.Answer, Failed: t.Error != nil}
+		for _, s := range p.Steps {
+			v.Steps = append(v.Steps, agent.Step{Tool: s.Tool, Args: s.Args, Output: s.Result, Err: s.Error})
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func runButlerClosure(r *http.Request, d Deps, threadID string, approval threads.Approval) (string, error) {
 	st := d.Butler
 	if st == nil {
 		return "", errors.New("butler store not configured")
 	}
 	promptText := "The user discarded this proposed action: " + approval.Summary + ". Do not call any write tools. Ask the user what they would like to do next."
-	n, turnID, err := st.ReserveFollowup(threadID, promptText, "")
+	n, turnID, err := st.ReserveFollowup(butlerScope, threadID, promptText, "", nil)
 	if err != nil {
 		return "", err
 	}
 	cfg := aiConfig(d, aiBody{})
 	emit := func(string, string) {}
 	answer, steps, _, lineage, runErr := runButlerTurn(r, d, cfg, st, threadID, turnID, promptText, emit, false, false)
-	turn := butlerthreads.Turn{TurnID: turnID, Prompt: promptText, Answer: answer, Steps: steps, Time: time.Now().UTC()}
+	turn := butlerTurn(turnID, promptText, "", answer, steps)
 	if runErr != nil {
 		msg := runErr.Error()
 		turn.Error = &msg
 	}
-	if err := st.CompleteTurn(threadID, n, turn, butlerLineage(lineage, turnID, threadID, promptText, turnError(turn))); err != nil {
+	if err := st.CompleteTurn(butlerScope, threadID, n, turn, butlerLineage(lineage, turnID, threadID, promptText, turnErrorMessage(turn))); err != nil {
 		return "", err
 	}
 	if runErr != nil {
@@ -327,7 +451,7 @@ func runButlerClosure(r *http.Request, d Deps, threadID string, approval butlert
 	return answer, nil
 }
 
-func turnError(turn butlerthreads.Turn) string {
+func turnErrorMessage(turn threads.Turn) string {
 	if turn.Error == nil {
 		return ""
 	}
@@ -348,77 +472,4 @@ func butlerLineage(l *agent.Lineage, turnID, threadID, prompt, errMsg string) []
 
 func summarize(s string) string {
 	return strings.TrimSpace(cut(s, 120))
-}
-
-// butlerHistory rebuilds the LLM conversation from persisted turns, the
-// way codemap's threadHistory does: each turn becomes user(prompt) plus
-// one assistant entry carrying the tool steps and the answer text. Failed
-// turns contribute their prompt only. Context is bounded to the last 20
-// turns and ~16KB estimated chars.
-func butlerHistory(th butlerthreads.Thread, userPrompt string) []map[string]any {
-	turns := th.Turns
-	if len(turns) > 20 {
-		turns = turns[len(turns)-20:]
-	}
-	const maxChars = 16 * 1024
-	size := func(t butlerthreads.Turn) int {
-		n := len(t.Prompt) + len(t.Answer)
-		for _, s := range t.Steps {
-			n += len(s.Result) + len(s.Error)
-		}
-		return n
-	}
-	total := 0
-	for _, t := range turns {
-		total += size(t)
-	}
-	start := 0
-	for total > maxChars && start < len(turns) {
-		total -= size(turns[start])
-		start++
-	}
-	turns = turns[start:]
-
-	var out []map[string]any
-	for _, t := range turns {
-		if t.TurnID == "" {
-			continue
-		}
-		// The just-reserved placeholder replays as agent.Run's
-		// userPrompt, not history.
-		if t.Answer == "" && t.Error == nil && t.Prompt == userPrompt {
-			continue
-		}
-		if strings.TrimSpace(t.Prompt) == "" && strings.TrimSpace(t.Answer) == "" && len(t.Steps) == 0 {
-			continue
-		}
-		if strings.TrimSpace(t.Prompt) != "" {
-			out = append(out, map[string]any{"role": "user", "content": t.Prompt})
-		}
-		if t.Error != nil {
-			continue
-		}
-		var toolSteps []any
-		for _, s := range t.Steps {
-			if strings.TrimSpace(s.Tool) == "" {
-				continue
-			}
-			if strings.TrimSpace(s.Result) == "" && strings.TrimSpace(s.Error) == "" {
-				continue
-			}
-			toolSteps = append(toolSteps, map[string]any{
-				"tool": s.Tool, "args": s.Args,
-				"output": s.Result, "error": s.Error,
-			})
-		}
-		if len(toolSteps) > 0 {
-			out = append(out, map[string]any{
-				"role": "assistant", "content": t.Answer,
-				"toolSteps": toolSteps,
-			})
-		} else if strings.TrimSpace(t.Answer) != "" {
-			out = append(out, map[string]any{"role": "assistant", "content": t.Answer})
-		}
-	}
-	return out
 }

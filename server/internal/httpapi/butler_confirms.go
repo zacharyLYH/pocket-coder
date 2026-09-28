@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"pcoder/internal/butlerthreads"
 	"pcoder/internal/obs"
+	"pcoder/internal/threads"
 )
 
 // butlerCard is the public confirm card: what the UI renders.
@@ -23,10 +23,10 @@ type butlerCard struct {
 
 // butlerPropose stores the approval on the owning thread and returns its
 // confirm id. created collects the public card for the turn response.
-func butlerPropose(st *butlerthreads.Store, threadID, turnID, tool, args, summary, blast string, created *[]butlerCard) (string, error) {
-	id := butlerthreads.MintID()
+func butlerPropose(st *threads.Store, threadID, turnID, tool, args, summary, blast string, created *[]butlerCard) (string, error) {
+	id := threads.MintID()
 	card := butlerCard{ID: id, Tool: tool, Summary: summary, BlastRadius: blast}
-	err := st.AddApproval(threadID, butlerthreads.Approval{ID: id, TurnID: turnID, Status: butlerthreads.ApprovalPending, Tool: tool, Args: []byte(args), Summary: summary, BlastRadius: blast, CreatedAt: time.Now().UTC()})
+	err := st.AddApproval(threadID, threads.Approval{ID: id, TurnID: turnID, Status: threads.ApprovalPending, Tool: tool, Args: []byte(args), Summary: summary, BlastRadius: blast, CreatedAt: time.Now().UTC()})
 	if err != nil {
 		return "", err
 	}
@@ -61,7 +61,7 @@ func handleButlerConfirmApply(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusNotFound, "unknown confirm — propose it again from chat")
 			return
 		}
-		if a.Status != "" && a.Status != butlerthreads.ApprovalPending {
+		if a.Status != "" && a.Status != threads.ApprovalPending {
 			writeErr(w, http.StatusConflict, "approval already resolved")
 			return
 		}
@@ -84,7 +84,7 @@ func handleButlerConfirmApply(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		if err := d.Butler.ResolveApproval(threadID, id, butlerthreads.ApprovalApproved); err != nil {
+		if err := d.Butler.ResolveApproval(threadID, id, threads.ApprovalApproved); err != nil {
 			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
@@ -105,11 +105,11 @@ func handleButlerConfirmDiscard(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusNotFound, "unknown confirm — propose it again from chat")
 			return
 		}
-		if a.Status != "" && a.Status != butlerthreads.ApprovalPending {
+		if a.Status != "" && a.Status != threads.ApprovalPending {
 			writeErr(w, http.StatusConflict, "approval already resolved")
 			return
 		}
-		if err := d.Butler.ResolveApproval(threadID, id, butlerthreads.ApprovalDiscarded); err != nil {
+		if err := d.Butler.ResolveApproval(threadID, id, threads.ApprovalDiscarded); err != nil {
 			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}

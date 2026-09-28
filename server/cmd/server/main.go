@@ -15,8 +15,7 @@ import (
 	"time"
 
 	"pcoder/internal/auth"
-	"pcoder/internal/butlerthreads"
-	"pcoder/internal/codemapthreads"
+	"pcoder/internal/threads"
 	"pcoder/internal/config"
 	"pcoder/internal/docker"
 	"pcoder/internal/events"
@@ -109,7 +108,7 @@ func main() {
 
 	// Codemap chats are project-scoped artifacts: deleting a project
 	// deletes its chats (threads + lineage) from the data dir.
-	codemapStore := codemapthreads.New(filepath.Join(cfg.DataDir, "codemaps"))
+	codemapStore := threads.New(filepath.Join(cfg.DataDir, "codemaps"), false)
 	svc.SetCodemaps(codemapStore)
 
 	sessions := session.New(dkr)
@@ -140,7 +139,7 @@ func main() {
 		Sessions: sessions, Harnesses: harnesses,
 		SSHKeys: sshKeyStore, State: st, Preview: previewManager,
 		Obs: observe, Docker: dkr, Codemaps: codemapStore,
-		Butler: butlerthreads.New(filepath.Join(cfg.DataDir, "butler")),
+		Butler: threads.New(filepath.Join(cfg.DataDir, "butler"), true),
 	})}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

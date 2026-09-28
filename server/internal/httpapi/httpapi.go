@@ -12,8 +12,8 @@ import (
 	"os"
 
 	"pcoder/internal/auth"
-	"pcoder/internal/butlerthreads"
-	"pcoder/internal/codemapthreads"
+	"pcoder/internal/threads"
+
 	"pcoder/internal/docker"
 	"pcoder/internal/events"
 	"pcoder/internal/harness"
@@ -46,8 +46,8 @@ type Deps struct {
 	Harnesses *harness.Store
 	SSHKeys   *sshkeys.Store
 	State     *state.Store
-	Codemaps  *codemapthreads.Store
-	Butler    *butlerthreads.Store
+	Codemaps  *threads.Store
+	Butler    *threads.Store
 }
 
 // New returns the HTTP handler for the whole server. Login/PIN routes are
@@ -201,6 +201,7 @@ func New(d Deps) http.Handler {
 		authed("GET", "/api/butler/threads/{tid}", handleButlerThreadGet)
 		authed("DELETE", "/api/butler/threads/{tid}", handleButlerThreadDelete)
 		authed("POST", "/api/butler/turn", handleButlerTurn)
+		authed("POST", "/api/butler/threads/{tid}/retry", handleButlerRetry)
 		authed("POST", "/api/butler/confirms/{id}/apply", handleButlerConfirmApply)
 		authed("POST", "/api/butler/confirms/{id}/discard", handleButlerConfirmDiscard)
 	}

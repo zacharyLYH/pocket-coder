@@ -35,7 +35,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"pcoder/internal/auth"
-	"pcoder/internal/codemapthreads"
+	"pcoder/internal/threads"
 	"pcoder/internal/docker"
 	"pcoder/internal/events"
 	"pcoder/internal/harness"
@@ -92,7 +92,7 @@ func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docke
 	ob := installObs(t, dataDir, ev)
 	h := New(Deps{Events: ev, Version: "itest", Auth: authSvc, Projects: svc, Obs: ob,
 		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore, State: st,
-		Codemaps: codemapthreads.New(filepath.Join(dataDir, "codemaps"))})
+		Codemaps: threads.New(filepath.Join(dataDir, "codemaps"), false)})
 	return h, dkr, svc, &pinOut, ev, st
 }
 

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"pcoder/internal/codemapthreads"
+	"pcoder/internal/threads"
 	"pcoder/internal/obs"
 )
 
@@ -108,7 +108,7 @@ func handleGitExplain(d Deps) http.HandlerFunc {
 		// Thread + turn 1 placeholder persist synchronously: a crash
 		// still leaves a retryable failed turn (same as the sync path).
 		sha := repoSHA(d, r, container, dir)
-		threadID, turnID, rerr := st.ReserveNewThread(id, prompt, sha)
+		threadID, turnID, rerr := st.ReserveNewThread(id, prompt, sha, nil)
 		if rerr != nil {
 			codemapDone(id)
 			err = rerr
@@ -119,7 +119,7 @@ func handleGitExplain(d Deps) http.HandlerFunc {
 		// GET /codemap/threads reports runningThreadId and CodemapTab's
 		// remount-into-run effect opens the thread.
 		codemapSet(id, threadID)
-		threadTitle := codemapthreads.TitleFromPrompt(prompt)
+		threadTitle := threads.TitleFromPrompt(prompt)
 		obs.Info(ctx, obs.GitExplain, "explain run started: "+threadID,
 			map[string]any{"threadId": threadID, "turnId": turnID, "mode": body.Mode})
 
@@ -133,10 +133,11 @@ func handleGitExplain(d Deps) http.HandlerFunc {
 						"explain run panicked: "+fmt.Sprint(rec),
 						map[string]any{"threadId": threadID, "stage": "panic"})
 					// Persist the failed turn so it stays retryable.
-					if ferr := st.FailTurn(id, threadID, 1, codemapthreads.Turn{
+					msg := fmt.Sprint(rec)
+					if ferr := st.CompleteTurn(id, threadID, 1, threads.Turn{
 						TurnID: turnID, SHA: sha, Prompt: prompt,
-						Time: time.Now().UTC(),
-					}, fmt.Sprint(rec), nil); ferr != nil {
+						Time: time.Now().UTC(), Error: &msg,
+					}, nil); ferr != nil {
 						obs.Error(context.Background(), obs.CodemapTurn, "explain panic persist failed: "+ferr.Error(), nil)
 					}
 				}

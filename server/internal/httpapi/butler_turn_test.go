@@ -11,10 +11,17 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"pcoder/internal/butlerthreads"
+	"pcoder/internal/agent"
 	"pcoder/internal/docker"
 	"pcoder/internal/project"
+	"pcoder/internal/threads"
 )
+
+// butlerTurnFixture builds one envelope turn with butler's payload shape.
+func butlerTurnFixture(turnID, prompt, answer string, steps []butlerStep) threads.Turn {
+	payload, _ := json.Marshal(butlerPayload{Answer: answer, Steps: steps})
+	return threads.Turn{TurnID: turnID, Prompt: prompt, Payload: payload}
+}
 
 // Second-turn context aligns with codemaps: tool steps replay as real
 // tool calls (result mapped to output) alongside the answer text, failed
@@ -22,13 +29,12 @@ import (
 // dropped, and history is bounded to the last 20 turns.
 func TestButlerHistoryReplaysToolSteps(t *testing.T) {
 	errMsg := "boom"
-	th := butlerthreads.Thread{ID: "th", Turns: []butlerthreads.Turn{
-		{TurnID: "t1", Prompt: "brief me", Answer: "Healthy.",
-			Steps: []butlerthreads.Step{{Tool: butlerToolListProjects, Args: "{}", Result: `[{"id":"a/b"}]`}}},
-		{TurnID: "t2", Prompt: "stop it", Answer: "", Error: &errMsg},
-		{TurnID: "t3", Prompt: "and now?", Answer: ""}, // the reserved placeholder
+	th := threads.Thread{ID: "th", Turns: []threads.Turn{
+		butlerTurnFixture("t1", "brief me", "Healthy.", []butlerStep{{Tool: butlerToolListProjects, Args: "{}", Result: `[{"id":"a/b"}]`}}),
+		{TurnID: "t2", Prompt: "stop it", Error: &errMsg},
+		{TurnID: "t3", Prompt: "and now?"}, // the reserved placeholder
 	}}
-	h := butlerHistory(th, "and now?")
+	h := agent.BuildHistory(butlerViews(th), "and now?", agent.HistoryOpts{MaxTurns: 20, MaxChars: 16 * 1024})
 	if len(h) != 3 {
 		t.Fatalf("history = %v, want user + assistant(steps) + failed prompt", h)
 	}
@@ -48,11 +54,11 @@ func TestButlerHistoryReplaysToolSteps(t *testing.T) {
 	}
 
 	// Bound: 21 turns keep the last 20.
-	var many []butlerthreads.Turn
+	var many []threads.Turn
 	for i := 0; i < 21; i++ {
-		many = append(many, butlerthreads.Turn{TurnID: fmt.Sprint(i), Prompt: fmt.Sprintf("q%d", i), Answer: fmt.Sprintf("a%d", i)})
+		many = append(many, butlerTurnFixture(fmt.Sprint(i), fmt.Sprintf("q%d", i), fmt.Sprintf("a%d", i), nil))
 	}
-	h = butlerHistory(butlerthreads.Thread{ID: "th", Turns: many}, "current")
+	h = agent.BuildHistory(butlerViews(threads.Thread{ID: "th", Turns: many}), "current", agent.HistoryOpts{MaxTurns: 20, MaxChars: 16 * 1024})
 	if len(h) != 40 {
 		t.Fatalf("bounded history = %d entries, want 20 turns x user+assistant", len(h))
 	}
@@ -134,22 +140,27 @@ func TestButlerTurnBriefMeFlow(t *testing.T) {
 
 	// Transcript: one turn, two recorded steps, redacted results.
 	tid, _ := last["threadId"].(string)
-	th, err := d.Butler.Get(tid)
+	th, err := d.Butler.Get(butlerScope, tid)
 	if err != nil {
 		t.Fatalf("transcript missing: %v", err)
 	}
-	if len(th.Turns) != 1 || len(th.Turns[0].Steps) != 2 {
-		t.Fatalf("turns = %+v, want 1 turn with 2 steps", th.Turns)
+	var transcript butlerPayload
+	if len(th.Turns) != 1 {
+		t.Fatalf("turns = %+v, want 1 turn", th.Turns)
 	}
-	if th.Turns[0].Steps[0].Tool != butlerToolListProjects || th.Turns[0].Steps[1].Tool != butlerToolEventsTail {
-		t.Fatalf("steps = %+v", th.Turns[0].Steps)
+	_ = json.Unmarshal(th.Turns[0].Payload, &transcript)
+	if len(transcript.Steps) != 2 {
+		t.Fatalf("steps = %+v, want 2", transcript.Steps)
 	}
-	for _, s := range th.Turns[0].Steps {
+	if transcript.Steps[0].Tool != butlerToolListProjects || transcript.Steps[1].Tool != butlerToolEventsTail {
+		t.Fatalf("steps = %+v", transcript.Steps)
+	}
+	for _, s := range transcript.Steps {
 		if len([]rune(s.Result)) > 121 { // summarize cuts at 120 + "…"
 			t.Fatalf("step %q result not summarized: %q", s.Tool, s.Result)
 		}
 	}
-	lineageRaw, err := d.Butler.ReadTurnLineage(tid, 1)
+	lineageRaw, err := d.Butler.ReadTurnLineage(butlerScope, tid, 1)
 	if err != nil {
 		t.Fatalf("lineage missing: %v", err)
 	}
@@ -197,7 +208,7 @@ func TestButlerTodoLifecyclePersistsCheckedItems(t *testing.T) {
 	}
 
 	tid, _ := last["threadId"].(string)
-	raw, err := d.Butler.ReadTurnLineage(tid, 1)
+	raw, err := d.Butler.ReadTurnLineage(butlerScope, tid, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +239,7 @@ func TestButlerRejectsBlankPrompt(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "1-2000") {
 		t.Fatalf("body = %q, want the length error", rec.Body.String())
 	}
-	threads, err := d.Butler.List()
+	threads, err := d.Butler.List(butlerScope)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +253,7 @@ func TestButlerRejectsBlankPrompt(t *testing.T) {
 func TestButlerCompleteTurnFailureStreamsError(t *testing.T) {
 	d, _, pinOut, st := newSessionDeps(t)
 	butlerDir := t.TempDir()
-	d.Butler = butlerthreads.New(butlerDir)
+	d.Butler = threads.New(butlerDir, true)
 	f := newFakeModel(t,
 		func(w http.ResponseWriter, body map[string]any) {
 			// Sabotage the just-reserved thread before answering: the
@@ -307,15 +318,20 @@ func TestButlerTurnProposeFlow(t *testing.T) {
 		t.Fatalf("card = %v, want tool + summary + blast radius + id", card)
 	}
 	tid, _ := last["threadId"].(string)
-	th, err := d.Butler.Get(tid)
+	th, err := d.Butler.Get(butlerScope, tid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(th.Turns) != 1 || len(th.Turns[0].Steps) != 1 {
-		t.Fatalf("turns = %+v, want the propose step recorded", th.Turns)
+	var propose butlerPayload
+	if len(th.Turns) != 1 {
+		t.Fatalf("turns = %+v, want the propose turn", th.Turns)
 	}
-	if !strings.Contains(th.Turns[0].Steps[0].Result, card["id"].(string)) {
-		t.Fatalf("step result = %q, want the confirm id", th.Turns[0].Steps[0].Result)
+	_ = json.Unmarshal(th.Turns[0].Payload, &propose)
+	if len(propose.Steps) != 1 {
+		t.Fatalf("steps = %+v, want the propose step recorded", propose.Steps)
+	}
+	if !strings.Contains(propose.Steps[0].Result, card["id"].(string)) {
+		t.Fatalf("step result = %q, want the confirm id", propose.Steps[0].Result)
 	}
 	blocked := authedPost(t, h, cookie, "/api/butler/turn", `{"prompt":"what now?","threadId":"`+tid+`"}`)
 	if blocked.Code != http.StatusConflict || !strings.Contains(blocked.Body.String(), "pending confirmation") {

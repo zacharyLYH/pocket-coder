@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bot, Plus, Send, Trash2, X } from 'lucide-react'
+import { Bot, Plus, RotateCcw, Send, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Avatar } from '@/components/ui/avatar'
 import { ButlerConfirm } from '@/components/ButlerConfirm'
 import { ButlerSteps } from '@/components/ButlerSteps'
 import { Markdown } from '@/components/Markdown'
 import { api, errMsg } from '@/lib/api'
-import { postButlerTurn, type ButlerStatus } from '@/lib/butler'
+import { postButlerRetry, postButlerTurn, type ButlerStatus } from '@/lib/butler'
 import type { ButlerConfirm as ButlerCard, ButlerThread, ButlerThreadSummary, ButlerTurn } from '@/lib/types'
 
 const PRESETS = [
@@ -93,6 +93,23 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
   }
 
   const turns = thread?.turns ?? []
+  // Retry reruns the last failed turn in place (same prompt, same thread).
+  const lastFailedTurn = !busy && thread && thread.id !== 'new' && turns.length > 0 && turns[turns.length - 1].error ? turns[turns.length - 1] : null
+  async function retry() {
+    if (!lastFailedTurn || busy || !thread || thread.id === 'new') return
+    setBusy(true); setError(null); setStatuses([])
+    try {
+      const r = await postButlerRetry(thread.id, (s) => setStatuses((prev) => [...prev, s]))
+      const d = await api<{ thread: ButlerThread }>(`/api/butler/threads/${encodeURIComponent(r.threadId)}`)
+      setThread(d.thread)
+      void refreshList()
+    } catch (e) {
+      setError(errMsg(e))
+      void openThread(thread.id)
+      void refreshList()
+    } finally { setBusy(false) }
+  }
+
   const lastStatus = statuses.length > 0 ? statuses[statuses.length - 1] : null
   const approvalPending = confirms.length > 0
 
@@ -145,6 +162,11 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
                     {t.error ? (<p className="text-sm text-destructive" data-testid="butler-error">{t.error}</p>)
                       : t.answer ? (<div data-testid="butler-answer"><Markdown className="text-sm" text={t.answer} /></div>)
                       : !busy ? (<p className="text-sm text-muted-foreground">…</p>) : null}
+                    {lastFailedTurn?.turnId === t.turnId && (
+                      <Button variant="outline" size="sm" className="mt-2" onClick={() => void retry()} disabled={busy} data-testid="butler-retry">
+                        <RotateCcw className="size-3.5" /> Retry
+                      </Button>
+                    )}
                   </div>
                   {t.steps && t.steps.length > 0 && <ButlerSteps steps={t.steps} />}
                 </div>

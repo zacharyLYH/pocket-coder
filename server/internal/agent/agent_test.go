@@ -469,7 +469,9 @@ func TestRunRepeatFailureEscalates(t *testing.T) {
 	}))
 	defer srv.Close()
 	boom := Tool{Name: "switch", Description: "s", Schema: map[string]any{"type": "object"},
-		Run: func(_ context.Context, _ string) (string, error) { return "", errors.New("model \"liquid\" is not configured") }}
+		Run: func(_ context.Context, _ string) (string, error) {
+			return "", errors.New("model \"liquid\" is not configured")
+		}}
 	out, err := Run(context.Background(),
 		Config{BaseURL: srv.URL, APIKey: "k", Model: "m"},
 		"sys", "hi", nil, []Tool{boom}, "s", nil, 4, nil, nil)

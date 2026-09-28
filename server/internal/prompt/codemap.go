@@ -21,3 +21,20 @@ func CodemapGuide() string {
 		CodemapLoopRules(),
 	}, " ")
 }
+
+// CodemapScopePrompt is the codemap gate, the mirror of Butler's: true
+// when the query is about this repo's code, false for ops asks (lifecycle,
+// models, keys) that belong to Butler instead.
+func CodemapScopePrompt() string {
+	return Product() + ` Decide whether a user query is a question about this repo's code that CodeMaps can answer. Answer only JSON matching the response schema. about_code is true for questions about code, architecture, behavior, or files of this repo. It is false for operational requests (start, stop, models, keys, shortcuts) and anything not about this repo.`
+}
+
+// CodemapScopeSchema pins the classifier output: one required boolean.
+func CodemapScopeSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"properties":           map[string]any{"about_code": map[string]any{"type": "boolean"}},
+		"required":             []string{"about_code"},
+		"additionalProperties": false,
+	}
+}

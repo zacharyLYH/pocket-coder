@@ -274,6 +274,7 @@ func TestGitExplainFireAndForget(t *testing.T) {
 	// The explainer runs the full codemap loop: one grounded tool round,
 	// a final text answer, then the schema-enforcing format call.
 	fm := newFakeModel(t,
+		codeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
 			writeCompletion(w, "tool_calls", "", []map[string]any{
 				toolCall("c1", "git_status", `{}`),

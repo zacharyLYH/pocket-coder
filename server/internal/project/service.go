@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"pcoder/internal/codemapthreads"
+	"pcoder/internal/threads"
 	"pcoder/internal/docker"
 	"pcoder/internal/obs"
 	"pcoder/internal/sshkeys"
@@ -70,7 +70,7 @@ type Service struct {
 	// codemaps is the codemap chat store; chats are project-scoped
 	// artifacts, so when the record goes the chat files go with it. Wired
 	// via SetCodemaps, so tests can leave it nil.
-	codemaps *codemapthreads.Store
+	codemaps *threads.Store
 	// allowAnyRepo lifts the GitHub-only create requirement for test stacks
 	// cloning from a local git daemon. Never set in production.
 	allowAnyRepo bool
@@ -89,7 +89,7 @@ func (s *Service) SetSSHKeys(sk *sshkeys.Store) { s.sshKeys = sk }
 func (s *Service) SetGit(fn func() (string, string, string)) { s.git = fn }
 
 // SetCodemaps attaches the codemap chat store for delete cascades.
-func (s *Service) SetCodemaps(cs *codemapthreads.Store) { s.codemaps = cs }
+func (s *Service) SetCodemaps(cs *threads.Store) { s.codemaps = cs }
 
 // SetInstaller attaches a harness installer for eager recovery.
 func (s *Service) SetInstaller(ins Installer) { s.installer = ins }
@@ -590,7 +590,7 @@ func (s *Service) Delete(ctx context.Context, id string, scope Scope) error {
 	if scope == ScopeMetadata || scope == ScopeAll {
 		fail(s.store.Delete(id))
 		if s.codemaps != nil {
-			if cerr := s.codemaps.DeleteProjectDir(id); cerr != nil {
+			if cerr := s.codemaps.DeleteScope(id); cerr != nil {
 				obs.Warn(ctx, obs.ProjectDelete, "codemap cleanup failed: "+cerr.Error(),
 					map[string]any{"scope": string(scope), "stage": "cleanup_codemaps", "error": cerr.Error()})
 			}

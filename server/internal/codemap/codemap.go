@@ -400,84 +400,67 @@ func repoOrientation(exec Executor, ctx context.Context, container, repoDir stri
 	return capOutput(strings.TrimSpace(out), 2*1024)
 }
 
-func Ask(ctx context.Context, cfg agent.Config, exec Executor, container, repoDir, prompt string, history []map[string]any, onTrace func(agent.TraceEvent)) (Result, []ToolRound, *agent.Lineage, error) {
-	var rounds []ToolRound
-	var pending []ToolStep
+func Ask(ctx context.Context, cfg agent.Config, exec Executor, container, repoDir, question string, history []map[string]any, onTrace func(agent.TraceEvent)) (Result, []ToolRound, *agent.Lineage, error) {
 	lin := &agent.Lineage{}
 	sys := systemPrompt
 	if listing := repoOrientation(exec, ctx, container, repoDir); listing != "" {
 		sys += "\n\nRepo root orientation (top-level files/dirs of this project — use it to pick stack-appropriate first searches, e.g. package.json/src means JS, not Python):\n" + listing
 	}
 	tools := append([]agent.Tool{agent.TodoTool(lin)}, Tools(exec, container, repoDir)...)
-	out, err := agent.Run(ctx, cfg, sys, prompt, history, tools, "codemap", schemaJSON(), 8,
-		func(ev agent.TraceEvent) {
-			switch ev.Kind {
-			case "round":
-				rounds = append(rounds, ToolRound{Thought: ev.Text})
-			case "tool_start":
-				pending = append(pending, ToolStep{Tool: ev.Tool, Args: ev.Args})
-			case "tool_done":
-				var st ToolStep
-				if len(pending) > 0 {
-					st = pending[0]
-					pending = pending[1:]
-				} else {
-					// Unknown-tool path or out-of-order event: fall
-					// back to the done event's own identity.
-					st = ToolStep{Tool: ev.Tool, Args: ev.Args}
-				}
-				if ev.Err != "" {
-					st.Err = capOutput(ev.Err, 4000)
-				} else {
-					st.Output = capOutput(ev.Result, 8000)
-				}
-				if len(rounds) == 0 {
-					rounds = append(rounds, ToolRound{})
-				}
-				cur := &rounds[len(rounds)-1]
-				cur.Steps = append(cur.Steps, st)
-			}
-			if onTrace != nil {
-				onTrace(ev)
-			}
-		}, lin)
-	if err != nil {
-		return Result{}, nil, lin, err
+	pipe := agent.Pipeline{
+		Scope: &agent.ScopeGate{
+			Prompt: prompt.CodemapScopePrompt(), SchemaName: "codemap_scope", Schema: prompt.CodemapScopeSchema(),
+			Refused: func(verdict string) bool { return !codemapScopeParse(verdict) },
+			Refusal: `This looks like an ops or non-code request — CodeMaps answers questions about this repo's code.`,
+		},
+		Context: func(string) []map[string]any { return history },
+		Run: agent.TurnSpec{
+			System: func() string { return sys },
+			Tools:  tools, MaxSteps: 8,
+			Schema: schemaJSON(), SchemaName: "codemap",
+		},
+		OnTrace: capTrace(onTrace),
 	}
-	var res Result
+	res := pipe.Execute(ctx, cfg, lin, question)
+	if res.Err != nil {
+		return Result{}, nil, lin, res.Err
+	}
+	rounds := capRounds(res.Rounds)
+	out := res.Answer
+	var parsed Result
 	dec := json.NewDecoder(strings.NewReader(out))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&res); err != nil {
+	if err := dec.Decode(&parsed); err != nil {
 		return Result{}, nil, lin, fmt.Errorf("structuredExtractor returned invalid codemap JSON: %w (output: %s)", err, excerpt(out))
 	}
-	if len(res.Sections) == 0 {
+	if len(parsed.Sections) == 0 {
 		return Result{}, nil, lin, fmt.Errorf("model returned no sections (output: %s)", excerpt(out))
 	}
 	// Clamp junk: many sections or giant ranges bloat the thread file.
 	// Snippets are resolved deterministically below (never model-copied):
 	// refs the repo cannot back are dropped, not displayed.
-	if len(res.Sections) > 12 {
-		res.Sections = res.Sections[:12]
+	if len(parsed.Sections) > 12 {
+		parsed.Sections = parsed.Sections[:12]
 	}
 	// Collect every ref first, then resolve all snippets in one batched
 	// shell round trip (one sed over all files instead of one exec per
 	// ref): a 10-ref answer costs 1 container exec instead of 10.
 	var all []*Ref
-	for i := range res.Sections {
-		if len(res.Sections[i].Refs) > 10 {
-			res.Sections[i].Refs = res.Sections[i].Refs[:10]
+	for i := range parsed.Sections {
+		if len(parsed.Sections[i].Refs) > 10 {
+			parsed.Sections[i].Refs = parsed.Sections[i].Refs[:10]
 		}
-		for j := range res.Sections[i].Refs {
-			all = append(all, &res.Sections[i].Refs[j])
+		for j := range parsed.Sections[i].Refs {
+			all = append(all, &parsed.Sections[i].Refs[j])
 		}
 	}
 	if len(all) > 0 {
 		hydrateRefs(ctx, exec, container, repoDir, all, onTrace)
 	}
 	// Drop refs the repo cannot back after hydration.
-	for i := range res.Sections {
-		kept := res.Sections[i].Refs[:0]
-		for _, r := range res.Sections[i].Refs {
+	for i := range parsed.Sections {
+		kept := parsed.Sections[i].Refs[:0]
+		for _, r := range parsed.Sections[i].Refs {
 			if r.Snippet != "" {
 				kept = append(kept, r)
 			} else if onTrace != nil {
@@ -485,9 +468,9 @@ func Ask(ctx context.Context, cfg agent.Config, exec Executor, container, repoDi
 					Args: fmt.Sprintf("%d-%d", r.StartLine, r.EndLine), Result: "unresolvable"})
 			}
 		}
-		res.Sections[i].Refs = kept
+		parsed.Sections[i].Refs = kept
 	}
-	return shapeResult(res), rounds, lin, nil
+	return shapeResult(parsed), rounds, lin, nil
 }
 
 // shapeResult deterministically enforces the house rules the schema can
@@ -517,6 +500,59 @@ func shapeResult(res Result) Result {
 
 func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+// codemapScopeParse reads the gate verdict. False only on a clean parse
+// of about_code=false; anything unparseable fails open into the loop.
+func codemapScopeParse(raw string) bool {
+	s := strings.TrimSpace(raw)
+	if i := strings.Index(s, "{"); i > 0 {
+		if j := strings.LastIndex(s, "}"); j > i {
+			s = s[i : j+1]
+		}
+	}
+	var v struct {
+		AboutCode *bool `json:"about_code"`
+	}
+	if err := json.Unmarshal([]byte(s), &v); err != nil || v.AboutCode == nil {
+		return true
+	}
+	return *v.AboutCode
+}
+
+// capRounds maps the shared transcript onto codemap's persisted round
+// shape, applying output/err caps as it goes.
+func capRounds(rounds []agent.Round) []ToolRound {
+	out := make([]ToolRound, 0, len(rounds))
+	for _, r := range rounds {
+		tr := ToolRound{Thought: r.Thought}
+		for _, s := range r.Steps {
+			tr.Steps = append(tr.Steps, ToolStep{
+				Tool: s.Tool, Args: s.Args,
+				Output: capOutput(s.Output, 8000),
+				Err:    capOutput(s.Err, 4000),
+			})
+		}
+		out = append(out, tr)
+	}
+	return out
+}
+
+// capTrace passes live events through to the caller's observer with the
+// codemap-specific fields capped for logging.
+func capTrace(onTrace func(agent.TraceEvent)) func(agent.TraceEvent) {
+	if onTrace == nil {
+		return nil
+	}
+	return func(ev agent.TraceEvent) {
+		if ev.Err != "" {
+			ev.Err = capOutput(ev.Err, 4000)
+		}
+		if ev.Result != "" {
+			ev.Result = capOutput(ev.Result, 8000)
+		}
+		onTrace(ev)
+	}
 }
 
 // hydrateRefs resolves every ref's snippet in one batched shell pass:

@@ -240,7 +240,7 @@ func finalCodemapJSON() string {
 // per-turn asserts verify the persisted shape carries no extractor keys.
 func mustReadTurnFile(t *testing.T, d Deps, project, threadID string, n int) []byte {
 	t.Helper()
-	th, err := d.Codemaps.Get(project, threadID)
+	th, err := d.Codemaps.Get("abc", threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,6 +260,7 @@ func TestCodemapSuccess(t *testing.T) {
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockSearchRead(md, "main.go:10:func main() {\n", "func main() {\n")
 	f := newFakeModel(t,
+		codeAllow,
 		func(w http.ResponseWriter, body map[string]any) {
 			// Tool loop stays schema-free: providers null out choices
 			// or skip tool calls when json_schema rides with tools.
@@ -421,13 +422,14 @@ func TestCodemapSuccess(t *testing.T) {
 	if stored.TurnID == "" || stored.SHA != "abc123" || stored.Prompt != "where is main?" || stored.Time.IsZero() {
 		t.Fatalf("stored turn meta incomplete: %+v", stored)
 	}
+	storedP := codemapPayloadOf(stored)
 	var storedSections []map[string]any
-	if err := json.Unmarshal(stored.Sections, &storedSections); err != nil || len(storedSections) != 1 {
-		t.Fatalf("stored sections invalid: %s (%v)", string(stored.Sections), err)
+	if err := json.Unmarshal(storedP.Sections, &storedSections); err != nil || len(storedSections) != 1 {
+		t.Fatalf("stored sections invalid: %s (%v)", string(storedP.Sections), err)
 	}
 	var storedRounds []map[string]any
-	if err := json.Unmarshal(stored.Tools, &storedRounds); err != nil || len(storedRounds) != 3 {
-		t.Fatalf("stored tools invalid: %s (%v)", string(stored.Tools), err)
+	if err := json.Unmarshal(storedP.Tools, &storedRounds); err != nil || len(storedRounds) != 3 {
+		t.Fatalf("stored tools invalid: %s (%v)", string(storedP.Tools), err)
 	}
 	for i, r := range storedRounds {
 		steps, _ := r["steps"].([]any)
@@ -506,6 +508,7 @@ func TestCodemapTodoLifecyclePersistsCheckedItems(t *testing.T) {
 	mockHydrate(md, "func main() {\n")
 	var secondRound map[string]any
 	f := newFakeModel(t,
+		codeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
 			writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("todo-1", "todo", `{"todos":[{"content":"Map entrypoints","status":"in_progress","priority":"high"},{"content":"Summarize flow","status":"pending","priority":"medium"}]}`)})
 		},
@@ -562,6 +565,7 @@ func TestCodemapModelBadJSON(t *testing.T) {
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	f := newFakeModel(t,
+		codeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
 			writeCompletion(w, "stop", "not json at all", nil)
 		},
@@ -622,6 +626,7 @@ func TestCodemapBusy(t *testing.T) {
 	mockHydrate(md, "func main() {\n")
 	var once sync.Once
 	f := newFakeModel(t,
+		codeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
 			<-release
 			writeCompletion(w, "stop", finalCodemapJSON(), nil)

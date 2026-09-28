@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"pcoder/internal/agent"
-	"pcoder/internal/butlerthreads"
+	"pcoder/internal/threads"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
 	"pcoder/internal/session"
@@ -153,7 +153,7 @@ func butlerConstrainSchema(schema map[string]any, props map[string][]string) map
 
 // butlerWriteTools wraps the table: wall check, blast, propose. Schemas
 // are constrained with live-state ids before shipping to the model.
-func butlerWriteTools(d Deps, st *butlerthreads.Store, threadID, turnID string, created *[]butlerCard) []agent.Tool {
+func butlerWriteTools(d Deps, st *threads.Store, threadID, turnID string, created *[]butlerCard) []agent.Tool {
 	byName := make(map[string]butlerWriteDef, len(butlerWriteTable))
 	for _, def := range butlerWriteTable {
 		byName[def.name] = def

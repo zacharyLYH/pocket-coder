@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"pcoder/internal/agent"
-	"pcoder/internal/butlerthreads"
+	"pcoder/internal/threads"
 	"pcoder/internal/docker"
 	"pcoder/internal/project"
 	"pcoder/internal/prompt"
@@ -21,7 +21,7 @@ import (
 // butlerToolByName finds one tool in a registry by name.
 func butlerToolByName(t *testing.T, d Deps, name string, created *[]butlerCard) func(ctx context.Context, args string) (string, error) {
 	t.Helper()
-	threadID, _, err := d.Butler.ReserveNewThread("test approval", "")
+	threadID, _, err := d.Butler.ReserveNewThread(butlerScope, "test approval", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,16 +281,16 @@ func TestButlerGuideLocksScope(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"is this something you can help with", // the yes/no lockdown
-		"read more than you can write",        // the responsibility invariant
+		"is this something you can help with",   // the yes/no lockdown
+		"read more than you can write",          // the responsibility invariant
 		"never improvise with an adjacent tool", // the no-matching-tool escape hatch
-		"todo checklist first",                // todo before the first tool call
-		"terminal coding CLIs",                // product context
-		"texting a friend",                    // prose guidance
-		"/workspace/repo",                     // non-goal: never open repos
-		"capture tmux",                        // non-goal: no pane capture
-		"Secret values",                       // non-goal: names only
-		"repo-modifying",                      // exec tools stay generic
+		"todo checklist first",                  // todo before the first tool call
+		"terminal coding CLIs",                  // product context
+		"texting a friend",                      // prose guidance
+		"/workspace/repo",                       // non-goal: never open repos
+		"capture tmux",                          // non-goal: no pane capture
+		"Secret values",                         // non-goal: names only
+		"repo-modifying",                        // exec tools stay generic
 		"no transcript search or export",
 		prompt.ButlerRefusal,
 	} {
@@ -443,11 +443,15 @@ func TestButlerWriteNeedsConfirm(t *testing.T) {
 		t.Fatalf("pendings after discard = %d, want 0", n)
 	}
 	a, threadID, err := d.Butler.FindApproval(prop2.ConfirmID)
-	if err != nil || a.Status != butlerthreads.ApprovalDiscarded {
+	if err != nil || a.Status != threads.ApprovalDiscarded {
 		t.Fatalf("discarded approval = %+v, err=%v", a, err)
 	}
-	thread, err := d.Butler.Get(threadID)
-	if err != nil || len(thread.Turns) != 2 || !strings.Contains(thread.Turns[1].Answer, "What would you like") {
+	thread, err := d.Butler.Get(butlerScope, threadID)
+	var closure butlerPayload
+	if err == nil && len(thread.Turns) == 2 {
+		_ = json.Unmarshal(thread.Turns[1].Payload, &closure)
+	}
+	if err != nil || len(thread.Turns) != 2 || !strings.Contains(closure.Answer, "What would you like") {
 		t.Fatalf("discard closure thread = %+v, err=%v", thread, err)
 	}
 }
@@ -778,7 +782,7 @@ func applyButlerTestApproval(t *testing.T, d Deps, id, secret string) (string, e
 		if butlerWriteTable[i].name == a.Tool {
 			out, err := butlerWriteTable[i].exec(context.Background(), d, butlerArgs(string(a.Args)), secret)
 			if err == nil {
-				err = d.Butler.ResolveApproval(threadID, id, butlerthreads.ApprovalApproved)
+				err = d.Butler.ResolveApproval(threadID, id, threads.ApprovalApproved)
 			}
 			return out, err
 		}

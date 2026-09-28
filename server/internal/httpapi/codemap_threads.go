@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"time"
 
-	"pcoder/internal/codemapthreads"
 	"pcoder/internal/obs"
+	"pcoder/internal/threads"
 )
 
 // errStoreUnconfigured surfaces a missing thread store as a 500.
@@ -20,7 +20,7 @@ var errStoreUnconfigured = errors.New("codemap store not configured")
 
 // threadsOr500 resolves the thread store or answers 500. Every handler
 // starts with it, so none repeats the nil check.
-func threadsOr500(w http.ResponseWriter, d Deps) (*codemapthreads.Store, bool) {
+func threadsOr500(w http.ResponseWriter, d Deps) (*threads.Store, bool) {
 	if d.Codemaps == nil {
 		writeInternalErr(w, "codemap store", errStoreUnconfigured)
 		return nil, false
@@ -55,7 +55,7 @@ func handleCodemapThreads(d Deps) http.HandlerFunc {
 			return
 		}
 		if summaries == nil {
-			summaries = []codemapthreads.Summary{}
+			summaries = []threads.Summary{}
 		}
 		var running any
 		if tid, busy := codemapRunning(id); busy && tid != "" {
@@ -131,17 +131,18 @@ func handleCodemapThreadDelete(d Deps) http.HandlerFunc {
 // (turnId/sha/prompt/sections/tools/time/error) so the frontend reuses
 // the type verbatim. No extractorOutput: N.json is the user-facing side.
 // Sections default to [] (never null) so the client sees one shape.
-func threadJSON(th codemapthreads.Thread) any {
+func threadJSON(th threads.Thread) any {
 	turns := make([]any, 0, len(th.Turns))
 	for _, t := range th.Turns {
+		p := codemapPayloadOf(t)
 		var sections any = []any{}
-		if len(t.Sections) > 0 {
+		if len(p.Sections) > 0 {
 			var decoded any
-			if err := json.Unmarshal(t.Sections, &decoded); err == nil && decoded != nil {
+			if err := json.Unmarshal(p.Sections, &decoded); err == nil && decoded != nil {
 				sections = decoded
 			}
 		}
-		tools := flattenRounds(parseRounds(t.Tools))
+		tools := flattenRounds(parseRounds(p.Tools))
 		var turnErr any
 		if t.Error != nil {
 			turnErr = *t.Error
@@ -153,7 +154,7 @@ func threadJSON(th codemapthreads.Thread) any {
 		})
 	}
 	return map[string]any{
-		"id": th.ID, "project": th.Project, "title": th.Title,
+		"id": th.ID, "title": th.Title,
 		"createdAt": th.CreatedAt.Format(time.RFC3339),
 		"updatedAt": th.UpdatedAt.Format(time.RFC3339),
 		"turns":     turns,

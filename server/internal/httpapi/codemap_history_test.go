@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"pcoder/internal/codemapthreads"
+	"pcoder/internal/threads"
 	"pcoder/internal/docker"
 )
 
@@ -87,6 +87,8 @@ func TestCodemapFollowupReplaysThread(t *testing.T) {
 		mu.Unlock()
 	}
 	f := newFakeModel(t,
+		// Turn 1: gate, loop, loop-final, format (schema on, tools off).
+		codeAllow,
 		func(w http.ResponseWriter, body map[string]any) {
 			capture(w, body)
 			writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("c1", "search_code", `{"pattern":"main"}`)})
@@ -95,21 +97,20 @@ func TestCodemapFollowupReplaysThread(t *testing.T) {
 			capture(w, body)
 			writeCompletion(w, "stop", finalCodemapJSON(), nil)
 		},
-		// Format call for turn 1: schema on, tools off.
 		func(w http.ResponseWriter, body map[string]any) {
 			capture(w, body)
 			writeCompletion(w, "stop", finalCodemapJSON(), nil)
 		},
+		// Turn 2: gate, loop (answers with no tools), grounding nudge, format.
+		codeAllow,
 		func(w http.ResponseWriter, body map[string]any) {
 			capture(w, body)
 			writeCompletion(w, "stop", `{"sections":[{"title":"Follow","summary":"Tests live nearby.","refs":[]}]}`+"\n", nil)
 		},
-		// Grounding nudge for turn 2 (its loop answered with no tools).
 		func(w http.ResponseWriter, body map[string]any) {
 			capture(w, body)
 			writeCompletion(w, "stop", `{"sections":[{"title":"Follow","summary":"Tests live nearby.","refs":[]}]}`+"\n", nil)
 		},
-		// Format call for turn 2.
 		func(w http.ResponseWriter, body map[string]any) {
 			capture(w, body)
 			writeCompletion(w, "stop", `{"sections":[{"title":"Follow","summary":"Tests live nearby.","refs":[]}]}`+"\n", nil)
@@ -146,11 +147,11 @@ func TestCodemapFollowupReplaysThread(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
+	// The gate calls aren't captured (only loop/format steps are): 3 per
+	// turn — loop, loop-final, format — across two turns.
 	if len(seen) != 6 {
-		t.Fatalf("model calls = %d, want 6 (turn1: 2 loop + format, turn2: loop + nudge-loop + format)", len(seen))
+		t.Fatalf("model calls = %d, want 6 captured (turn1: 2 loop + format, turn2: loop + nudge-loop + format)", len(seen))
 	}
-	// Loop calls carry no schema; format calls do. The follow-up loop
-	// call is index 3 (turn1: 0 loop, 1 loop-final, 2 format).
 	for i, wantSchema := range []bool{false, false, true, false, false, true} {
 		_, has := seen[i]["response_format"]
 		if has != wantSchema {
@@ -201,7 +202,7 @@ func TestCodemapFreshChatHasNoHistory(t *testing.T) {
 		writeCompletion(w, "stop", finalCodemapJSON(), nil)
 	}
 	// Loop final, grounding-nudge loop (zero tool rounds), format.
-	f := newFakeModel(t, remember, remember, remember)
+	f := newFakeModel(t, codeAllow, remember, remember, remember)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
@@ -261,6 +262,7 @@ func TestCodemapDeleteBusy(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	f := newFakeModel(t,
+		codeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
 			<-release
 			writeCompletion(w, "stop", finalCodemapJSON(), nil)
@@ -278,11 +280,11 @@ func TestCodemapDeleteBusy(t *testing.T) {
 	cookie := loginCookie(t, h, pinOut)
 
 	// Seed two threads directly in the store (folder per thread).
-	thA, _, err := d.Codemaps.ReserveNewThread("abc", "a?", "s")
+	thA, _, err := d.Codemaps.ReserveNewThread("abc", "a?", "s", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	thB, _, err := d.Codemaps.ReserveNewThread("abc", "b?", "s")
+	thB, _, err := d.Codemaps.ReserveNewThread("abc", "b?", "s", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,8 +348,8 @@ func TestThreadHistoryRoundsAndTranscript(t *testing.T) {
 			{"tool": "read_file", "args": `{"path":"auth.go"}`, "output": "func handleLogin() {"},
 		}},
 	})
-	th := codemapthreads.Thread{ID: "t", Project: "abc", Turns: []codemapthreads.Turn{
-		{TurnID: "r1", Prompt: "where is login?", Sections: sections, Tools: tools},
+	th := threads.Thread{ID: "t", Turns: []threads.Turn{
+		codemapTurnFixture("r1", "where is login?", sections, tools, ""),
 	}}
 	h := threadHistory(th)
 	if len(h) != 4 {
@@ -378,7 +380,7 @@ func TestCodemapResponseHasTime(t *testing.T) {
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
-	f := newFakeModel(t, respondCodemap, respondCodemap, respondCodemap)
+	f := newFakeModel(t, codeAllow, respondCodemap, respondCodemap, respondCodemap)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
@@ -414,7 +416,7 @@ func TestCodemapNullChoicesKeepsNewThread(t *testing.T) {
 	}
 	// Three nulls: initial call plus step retries, so the turn fails
 	// with the no-choices cause instead of a fake-exhaustion 500.
-	f := newFakeModel(t, nullChoices, nullChoices, nullChoices)
+	f := newFakeModel(t, codeAllow, nullChoices, nullChoices, nullChoices)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
@@ -447,8 +449,8 @@ func TestCodemapNullChoicesKeepsNewThread(t *testing.T) {
 	if th.Turns[0].Error == nil || !strings.Contains(*th.Turns[0].Error, "no choices") {
 		t.Fatalf("placeholder error missing cause: %+v", th.Turns[0])
 	}
-	if len(th.Turns[0].Sections) > 0 && string(th.Turns[0].Sections) != "null" {
-		t.Fatalf("failed placeholder must have no sections: %s", th.Turns[0].Sections)
+	if failedPayload := codemapPayloadOf(th.Turns[0]); len(failedPayload.Sections) > 0 && string(failedPayload.Sections) != "null" {
+		t.Fatalf("failed placeholder must have no sections: %s", failedPayload.Sections)
 	}
 	// The failure graph lands beside the turn, never in N.json.
 	lin, err := d.Codemaps.ReadTurnLineage("abc", body.ThreadID, 1)
@@ -469,15 +471,15 @@ func TestCodemapNullChoicesKeepsExistingThread(t *testing.T) {
 	}
 	// Three nulls: initial call plus step retries, so the turn fails
 	// with the no-choices cause instead of a fake-exhaustion 500.
-	f := newFakeModel(t, nullChoices, nullChoices, nullChoices)
+	f := newFakeModel(t, codeAllow, nullChoices, nullChoices, nullChoices)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
-	seeded, _, err := d.Codemaps.ReserveNewThread("abc", "first?", "s")
+	seeded, _, err := d.Codemaps.ReserveNewThread("abc", "first?", "s", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sec, _ := json.Marshal([]map[string]any{{"title": "A"}})
-	if err := d.Codemaps.CompleteTurn("abc", seeded, 1, codemapthreads.Turn{TurnID: "t1", Prompt: "first?", Sections: sec, Time: time.Now()}, nil); err != nil {
+	if err := d.Codemaps.CompleteTurn("abc", seeded, 1, codemapTurnFixture("t1", "first?", sec, nil, ""), nil); err != nil {
 		t.Fatal(err)
 	}
 	h := New(d)

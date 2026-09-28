@@ -12,8 +12,6 @@ import (
 	"testing"
 
 	"pcoder/internal/auth"
-	"pcoder/internal/butlerthreads"
-	"pcoder/internal/codemapthreads"
 	"pcoder/internal/events"
 	"pcoder/internal/harness"
 	"pcoder/internal/obs"
@@ -21,6 +19,7 @@ import (
 	"pcoder/internal/project"
 	"pcoder/internal/session"
 	"pcoder/internal/sshkeys"
+	"pcoder/internal/threads"
 	"pcoder/internal/state"
 	dockermocks "pcoder/mocks/docker"
 )
@@ -56,7 +55,7 @@ func newTestDepsInDir(t *testing.T) (Deps, *bytes.Buffer, string) {
 	svc.MailerName = "console"
 	ob := installObs(t, dataDir, ev)
 	return Deps{Events: ev, Version: "dev", Auth: svc, Obs: ob,
-		Codemaps: codemapthreads.New(filepath.Join(dataDir, "codemaps"))}, &pinOut, dataDir
+		Codemaps: threads.New(filepath.Join(dataDir, "codemaps"), false)}, &pinOut, dataDir
 }
 
 // installObs configures staged logging over dataDir, mirroring production:
@@ -154,7 +153,7 @@ func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer,
 		t.Fatal(err)
 	}
 	d.Projects = project.NewService(project.Open(st), md)
-	d.Butler = butlerthreads.New(t.TempDir())
+	d.Butler = threads.New(t.TempDir(), true)
 	// Same store instance the handlers use, mirroring main.go's wiring:
 	// project deletion must cascade into the codemap files.
 	d.Projects.SetCodemaps(d.Codemaps)

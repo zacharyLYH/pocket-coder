@@ -11,32 +11,36 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"pcoder/internal/codemapthreads"
 	"pcoder/internal/docker"
+	"pcoder/internal/threads"
 )
+
+// codemapTurnFixture builds one envelope turn with codemap's payload shape.
+func codemapTurnFixture(turnID, prompt string, sections, tools json.RawMessage, sha string) threads.Turn {
+	return threads.Turn{TurnID: turnID, Prompt: prompt, SHA: sha,
+		Payload: codemapPayload(sections, tools), Time: time.Now()}
+}
 
 // seedFailedLastTurn builds a thread with one good turn + one failed
 // placeholder last turn, returning the thread id and the failed turn id.
 func seedFailedLastTurn(t *testing.T, d Deps) (string, string) {
 	t.Helper()
-	tid, firstTurn, err := d.Codemaps.ReserveNewThread("abc", "first?", "s1")
+	tid, firstTurn, err := d.Codemaps.ReserveNewThread("abc", "first?", "s1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sec, _ := json.Marshal([]map[string]any{{"title": "A", "summary": "s", "refs": []any{}}})
-	if err := d.Codemaps.CompleteTurn("abc", tid, 1, codemapthreads.Turn{
-		TurnID: firstTurn, SHA: "s1", Prompt: "first?", Sections: sec,
-		Tools: json.RawMessage(`[]`), Time: time.Now(),
-	}, []byte(`{"events":[]}`)); err != nil {
+	if err := d.Codemaps.CompleteTurn("abc", tid, 1, codemapTurnFixture(firstTurn, "first?", sec, json.RawMessage(`[]`), "s1"), []byte(`{"events":[]}`)); err != nil {
 		t.Fatal(err)
 	}
-	n, failedTurn, err := d.Codemaps.ReserveFollowup("abc", tid, "second?", "s1")
+	n, failedTurn, err := d.Codemaps.ReserveFollowup("abc", tid, "second?", "s1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Codemaps.FailTurn("abc", tid, n, codemapthreads.Turn{
-		TurnID: failedTurn, SHA: "s1", Prompt: "second?", Time: time.Now(),
-	}, "boom", []byte(`{"error":"boom","events":[]}`)); err != nil {
+	msg := "boom"
+	if err := d.Codemaps.CompleteTurn("abc", tid, n, threads.Turn{
+		TurnID: failedTurn, SHA: "s1", Prompt: "second?", Time: time.Now(), Error: &msg,
+	}, []byte(`{"error":"boom","events":[]}`)); err != nil {
 		t.Fatal(err)
 	}
 	return tid, failedTurn
@@ -60,7 +64,7 @@ func TestCodemapRetrySuccess(t *testing.T) {
 		mu.Unlock()
 		writeCompletion(w, "stop", finalCodemapJSON(), nil)
 	}
-	f := newFakeModel(t, remember, remember, remember)
+	f := newFakeModel(t, codeAllow, remember, remember, remember)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
@@ -93,7 +97,7 @@ func TestCodemapRetrySuccess(t *testing.T) {
 	if th.Turns[1].TurnID != failedTurn || th.Turns[1].Error != nil {
 		t.Fatalf("retried turn = %+v, want same id, no error", th.Turns[1])
 	}
-	if len(th.Turns[1].Sections) == 0 {
+	if retried := codemapPayloadOf(th.Turns[1]); len(retried.Sections) == 0 {
 		t.Fatalf("retried turn has no sections")
 	}
 	// Context was turns 1..N-1 only: history holds turn 1 (prompt +
@@ -135,14 +139,12 @@ func TestCodemapRetryGuards(t *testing.T) {
 	cookie := loginCookie(t, h, pinOut)
 
 	// Successful last turn: never retried.
-	tid, _, err := d.Codemaps.ReserveNewThread("abc", "first?", "s")
+	tid, _, err := d.Codemaps.ReserveNewThread("abc", "first?", "s", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sec, _ := json.Marshal([]map[string]any{{"title": "A"}})
-	if err := d.Codemaps.CompleteTurn("abc", tid, 1, codemapthreads.Turn{
-		TurnID: "t1", Prompt: "first?", Sections: sec, Time: time.Now(),
-	}, nil); err != nil {
+	if err := d.Codemaps.CompleteTurn("abc", tid, 1, codemapTurnFixture("t1", "first?", sec, nil, ""), nil); err != nil {
 		t.Fatal(err)
 	}
 	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap/threads/"+tid+"/retry", ``)
@@ -151,32 +153,29 @@ func TestCodemapRetryGuards(t *testing.T) {
 	}
 
 	// Non-terminal failed turn (a good turn follows it): never retried.
-	tid2, _, err := d.Codemaps.ReserveNewThread("abc", "first?", "s")
+	tid2, _, err := d.Codemaps.ReserveNewThread("abc", "first?", "s", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, _, err := d.Codemaps.ReserveFollowup("abc", tid2, "bad?", "s")
+	n, _, err := d.Codemaps.ReserveFollowup("abc", tid2, "bad?", "s", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Complete turn 1 first so the thread is well-formed, fail turn 2,
 	// then append a successful turn 3 via CompleteTurn on a new reserve.
-	if err := d.Codemaps.CompleteTurn("abc", tid2, 1, codemapthreads.Turn{TurnID: "t1", Prompt: "first?", Sections: sec, Time: time.Now()}, nil); err != nil {
+	if err := d.Codemaps.CompleteTurn("abc", tid2, 1, codemapTurnFixture("t1", "first?", sec, nil, ""), nil); err != nil {
 		t.Fatal(err)
 	}
-	th, _ := d.Codemaps.Get("abc", tid2)
-	_ = th
 	// Fail turn n (== 2).
-	turn2, _ := d.Codemaps.Get("abc", tid2)
-	_ = turn2
-	if err := d.Codemaps.FailTurn("abc", tid2, n, codemapthreads.Turn{TurnID: "t2", Prompt: "bad?", Time: time.Now()}, "boom", nil); err != nil {
+	msg := "boom"
+	if err := d.Codemaps.CompleteTurn("abc", tid2, n, threads.Turn{TurnID: "t2", Prompt: "bad?", Time: time.Now(), Error: &msg}, nil); err != nil {
 		t.Fatal(err)
 	}
-	n3, _, err := d.Codemaps.ReserveFollowup("abc", tid2, "third?", "s")
+	n3, _, err := d.Codemaps.ReserveFollowup("abc", tid2, "third?", "s", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Codemaps.CompleteTurn("abc", tid2, n3, codemapthreads.Turn{TurnID: "t3", Prompt: "third?", Sections: sec, Time: time.Now()}, nil); err != nil {
+	if err := d.Codemaps.CompleteTurn("abc", tid2, n3, codemapTurnFixture("t3", "third?", sec, nil, ""), nil); err != nil {
 		t.Fatal(err)
 	}
 	// Last turn is successful → 409 (the failed turn 2 is non-terminal).
@@ -204,6 +203,7 @@ func TestCodemapRetryBusy(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	f := newFakeModel(t,
+		codeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
 			<-release
 			writeCompletion(w, "stop", finalCodemapJSON(), nil)
@@ -263,7 +263,7 @@ func TestCodemapRetryFailureKeepsThread(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"gen-test","object":"chat.completion","created":0,"model":"","choices":null}`))
 	}
-	f := newFakeModel(t, nullChoices, nullChoices, nullChoices)
+	f := newFakeModel(t, codeAllow, nullChoices, nullChoices, nullChoices)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)

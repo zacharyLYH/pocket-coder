@@ -15,7 +15,7 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"pcoder/internal/codemapthreads"
+	"pcoder/internal/threads"
 	"pcoder/internal/harness"
 	"pcoder/internal/project"
 	"pcoder/internal/session"
@@ -53,7 +53,7 @@ func TestCodemapDeletedWithProject(t *testing.T) {
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
-	f := newFakeModel(t, respondCodemap, respondCodemap, respondCodemap)
+	f := newFakeModel(t, codeAllow, respondCodemap, respondCodemap, respondCodemap)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
@@ -140,7 +140,7 @@ func TestCodemapDeletedWithProject(t *testing.T) {
 	}
 	rec = authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
 	var listed struct {
-		Threads []codemapthreads.Summary `json:"threads"`
+		Threads []threads.Summary `json:"threads"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestCodemapDeletedWithMetadataScope(t *testing.T) {
 	cookie := loginCookie(t, h, pinOut)
 
 	// A thread folder without a model call: reserve directly.
-	tid, _, err := d.Codemaps.ReserveNewThread("abc", "hi?", "s")
+	tid, _, err := d.Codemaps.ReserveNewThread("abc", "hi?", "s", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

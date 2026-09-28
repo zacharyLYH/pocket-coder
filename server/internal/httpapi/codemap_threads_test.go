@@ -29,7 +29,7 @@ func TestCodemapThreadsGetListDelete(t *testing.T) {
 	cookie := loginCookie(t, h, pinOut)
 
 	// Seed a thread via the store (POST /codemap would need a model).
-	tid, _, err := d.Codemaps.ReserveNewThread("abc", "where is login?", "s")
+	tid, _, err := d.Codemaps.ReserveNewThread("abc", "where is login?", "s", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestCodemapPostAutoCreatesThread(t *testing.T) {
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
-	f := newFakeModel(t, respondCodemap, respondCodemap, respondCodemap)
+	f := newFakeModel(t, codeAllow, respondCodemap, respondCodemap, respondCodemap)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
@@ -166,6 +166,7 @@ func TestCodemapRunningThreadId(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	f := newFakeModel(t,
+		codeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
 			<-release
 			writeCompletion(w, "stop", finalCodemapJSON(), nil)
