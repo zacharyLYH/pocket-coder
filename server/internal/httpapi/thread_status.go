@@ -29,7 +29,10 @@ func pendingApprovals(th threads.Thread) bool {
 
 func runningFor(t *runTracker, key, tid string) bool {
 	rid, busy := t.running(key)
-	return busy && (rid == "" || rid == tid)
+	// Exact match only: "" means taken-before-reserve (thread unknown),
+	// which must neither light up unrelated rows as running nor block
+	// their deletes. Concurrency is still guarded by take (409s).
+	return busy && rid != "" && rid == tid
 }
 
 func butlerStatus(th threads.Thread) string {

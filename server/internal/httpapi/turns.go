@@ -49,8 +49,9 @@ func reserveTurn(st *threads.Store, scope, threadID, prompt, sha string) (reserv
 }
 
 // deleteBlocked reports whether deleting tid would pull the folder out
-// from under a live run. Empty running id means reservation in flight:
-// block conservatively since the thread is not known yet.
+// from under a live run. An empty running id (reservation in flight,
+// thread unknown) blocks nothing: the target cannot be the reserved
+// thread, and the global slot still 409s concurrent turns.
 func deleteBlocked(t *runTracker, key, tid string) bool {
 	return runningFor(t, key, tid)
 }
