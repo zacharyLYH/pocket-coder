@@ -393,6 +393,10 @@ func TestParseRepoID(t *testing.T) {
 		"https://github.com/onlyone",
 		"https://github.com//.git",
 		"https://github.com/x/hello/extra/path",
+		"https://github.com/../..",
+		"https://github.com/./hello",
+		"https://github.com/x/..",
+		"git@github.com:../evil.git",
 		"just some words",
 		"--upload-pack=evil",
 	} {

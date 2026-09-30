@@ -19,7 +19,14 @@ type Harness = state.Harness
 // (installed checks, CLI validation) targets this; the rest of Command is
 // arguments (e.g. "vi hello.txt" probes "vi").
 func Binary(h Harness) string {
-	return strings.Fields(h.Command)[0]
+	// Legacy or hand-edited registry entries can carry an empty
+	// command (Save rejects them, the file does not): return "" so
+	// callers probe nothing instead of panicking on Fields()[0].
+	fields := strings.Fields(h.Command)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 // Store reads and writes the plugin registry in the central state file.

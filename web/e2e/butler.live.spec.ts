@@ -115,7 +115,7 @@ test.describe('butler live backend', () => {
     await new Promise((resolve) => llm.server.close(resolve))
   }
 
-  test('streams a multi-round turn against the real backend', async ({ page }) => {
+  test('runs a multi-round turn against the real backend', async ({ page }) => {
     const llm = await startFakeLLM(
       [
         { calls: [toolCall('call-1', 'list_projects', '{}')], results: [toolResult('call-1', '[]')] },

@@ -44,8 +44,11 @@ export class ApiError extends Error {
 // ApiError carrying the server's message or the status.
 export async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
-    headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
     ...init,
+    headers: {
+      ...(init?.body ? { 'Content-Type': 'application/json' } : undefined),
+      ...init?.headers,
+    },
   })
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
@@ -58,5 +61,8 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
     }
     throw new ApiError(res.status, body, detail)
   }
-  return res.json() as Promise<T>
+  if (res.status === 204) return undefined as T
+  const text = await res.text()
+  if (!text) return undefined as T
+  return JSON.parse(text) as T
 }

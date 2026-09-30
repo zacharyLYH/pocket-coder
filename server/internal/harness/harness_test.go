@@ -224,6 +224,8 @@ func TestBinary(t *testing.T) {
 		"opencode":        "opencode",
 		"vi hello.txt":    "vi",
 		"cline --model x": "cline",
+		"":                "",
+		"   ":             "",
 	}
 	for cmd, want := range cases {
 		if got := Binary(Harness{Command: cmd}); got != want {

@@ -75,6 +75,14 @@ func splitRepoPath(repoURL string, allowAny bool) (owner, repo string, isGitHub 
 	if len(segs) != 2 || segs[0] == "" || segs[1] == "" {
 		return invalid()
 	}
+	// Dot segments pass the charset regex but escape the project dir
+	// via filepath.Join downstream: "github.com/../.." must not
+	// become the id "../..".
+	for _, seg := range segs {
+		if seg == "." || seg == ".." {
+			return invalid()
+		}
+	}
 	if !segmentRe.MatchString(segs[0]) || !segmentRe.MatchString(segs[1]) {
 		return invalid()
 	}
