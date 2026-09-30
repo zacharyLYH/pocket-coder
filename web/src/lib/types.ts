@@ -1,10 +1,15 @@
-// Shared butler shapes.
-export type ButlerStep = { tool: string; args?: string; result?: string; error?: string }
-export type ButlerTurn = { turnId: string; prompt: string; answer?: string; steps?: ButlerStep[] | null; projectHint?: string; time?: string; error?: string | null }
-export type ButlerThreadSummary = { id: string; title: string; createdAt: string; updatedAt: string; turnCount: number; preview: string }
-export type ButlerThread = { id: string; title: string; createdAt: string; updatedAt: string; turns: ButlerTurn[]; approvals?: ButlerConfirm[] }
+// Shared butler shapes. Steps are the one shared agent-step shape
+// {tool, args, output?, error?} both products persist; butler just
+// summarizes outputs shorter server-side.
+// One shared agent-step shape both products persist
+// {tool, args, output?, error?}; butler just summarizes outputs shorter.
+export type AgentStep = { tool: string; args?: string; output?: string; error?: string }
+export type ThreadStatus = 'ready' | 'running' | 'awaiting' | 'failed'
+export type ButlerTurn = { turnId: string; prompt: string; answer?: string; steps?: AgentStep[] | null; projectHint?: string; time?: string; error?: string | null }
+export type ButlerThreadSummary = { id: string; title: string; createdAt: string; updatedAt: string; turnCount: number; preview: string; status?: ThreadStatus }
+export type ButlerThread = { id: string; title: string; createdAt: string; updatedAt: string; turns: ButlerTurn[]; approvals?: ButlerConfirm[]; status?: ThreadStatus }
 export type ButlerConfirm = { id: string; tool: string; summary: string; blastRadius: string }
-export type ButlerTurnResult = { threadId: string; threadTitle: string; turnId: string; answer: string; steps: ButlerStep[]; confirms?: ButlerConfirm[] | null; time: string }
+export type ButlerTurnResult = { threadId: string; threadTitle: string; turnId: string; answer: string; steps: AgentStep[]; time: string }
 
 // Shared API shapes.
 export type Project = { id: string; harnesses?: string[] }
@@ -44,10 +49,9 @@ export type AIModel = { id: string; label: string; baseURL: string; model: strin
 export type GitIdentity = { id: string; label: string; name: string; email: string; hasToken: boolean }
 export type CodemapRef = { path: string; startLine: number; endLine: number; snippet: string; function?: string }
 export type CodemapSection = { title: string; summary: string; refs: CodemapRef[] }
-export type CodemapToolCall = { tool: string; args: string; output?: string; error?: string }
-export type CodemapTurn = { turnId: string; sha: string; prompt: string; sections: CodemapSection[] | null; tools?: CodemapToolCall[] | null; time?: string; error?: string | null }
-export type CodemapThreadSummary = { id: string; title: string; createdAt: string; updatedAt: string; turnCount: number; preview: string }
-export type CodemapThread = { id: string; project: string; title: string; createdAt: string; updatedAt: string; turns: CodemapTurn[] }
+export type CodemapTurn = { turnId: string; sha: string; prompt: string; sections: CodemapSection[] | null; steps?: AgentStep[] | null; time?: string; error?: string | null }
+export type CodemapThreadSummary = { id: string; title: string; createdAt: string; updatedAt: string; turnCount: number; preview: string; status?: ThreadStatus }
+export type CodemapThread = { id: string; project: string; title: string; createdAt: string; updatedAt: string; turns: CodemapTurn[]; status?: ThreadStatus }
 export type CodemapFile = { path: string; content: string; binary: boolean; moved: boolean; sha: string }
 
 // isLaunchable: the bash shell is a plain terminal, not a launch target.

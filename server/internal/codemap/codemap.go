@@ -162,9 +162,9 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 		},
 		{
 			Name:        "read_file",
-			Description: "Read exact lines of one repo file. Paths stay inside the repo; ranges cap at 120 lines. Omit start/end to read lines 1-50. Only read paths you have actually seen from list_dir, search_code, or the repo listing — never invent paths.",
+			Description: "Read exact lines of one repo file. Pass an ABSOLUTE path under the repo root named at turn start. Ranges cap at 120 lines. Omit start/end to read lines 1-50. Only read paths you have actually seen from list_dir, search_code, or the repo listing — never invent paths.",
 			Schema: objectSchema(map[string]any{
-				"path":  map[string]any{"type": "string", "description": "Repo-relative path"},
+				"path":  map[string]any{"type": "string", "description": "Absolute path under the repo root"},
 				"start": map[string]any{"type": "integer", "description": "First line, 1-based (default 1)"},
 				"end":   map[string]any{"type": "integer", "description": "Last line inclusive (default start+49)"},
 			}, "path"),
@@ -179,9 +179,9 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 				}
 				// list_dir marks directories with a trailing slash; accept
 				// the same shape back instead of rejecting our own output.
-				path := cleanPath(args.Path)
-				if !validRepoPath(path) {
-					return "", fmt.Errorf("invalid path")
+				path, nerr := normalizeRepoPath(args.Path, repoDir)
+				if nerr != nil {
+					return "", nerr
 				}
 				// Weak models often call with a bare path. Default the
 				// range instead of failing the step: explicit values are
@@ -214,8 +214,15 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 					// Ground the next guess: a miss names its parent's
 					// real contents best-effort, so one failure teaches
 					// the correct path instead of starting a guess loop.
-					if hint := parentListing(exec, ctx, container, repoDir, path); hint != "" {
-						return "", fmt.Errorf("no such file %s — %s contains: %s", path, parentDir(path), hint)
+					// Echoed absolute (the convention), so the retry is
+					// verbatim-reusable.
+					if absParent, names := parentHint(exec, ctx, container, repoDir, path); absParent != "" {
+						abs := repoDir + "/" + path
+						absNames := make([]string, 0, len(names))
+						for _, n := range names {
+							absNames = append(absNames, absParent+"/"+n)
+						}
+						return "", fmt.Errorf("no such file %s — %s contains: %s", abs, absParent, strings.Join(absNames, " "))
 					}
 					return "", err
 				}
@@ -231,9 +238,9 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 		},
 		{
 			Name:        "list_dir",
-			Description: "List files in one repo directory, non-recursive; directories end with /. Paths stay inside the repo; omit path for the repo root. Use this to discover structure before reading.",
+			Description: "List files in one repo directory, non-recursive; directories end with /. Pass an ABSOLUTE path under the repo root; omit path for the repo root. Use this to discover structure before reading.",
 			Schema: objectSchema(map[string]any{
-				"path": map[string]any{"type": "string", "description": "Repo-relative directory (default .)"},
+				"path": map[string]any{"type": "string", "description": "Absolute directory under the repo root (default root)"},
 			}),
 			Run: func(ctx context.Context, argsJSON string) (string, error) {
 				var args struct {
@@ -242,12 +249,12 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 				if err := decodeArgs(argsJSON, &args); err != nil {
 					return "", err
 				}
-				p := cleanPath(args.Path)
-				if p == "" {
-					p = "."
-				}
-				if !validRepoPath(p) {
-					return "", fmt.Errorf("invalid path")
+				p := "."
+				if strings.TrimSpace(args.Path) != "" {
+					var nerr error
+					if p, nerr = normalizeRepoPath(args.Path, repoDir); nerr != nil {
+						return "", nerr
+					}
 				}
 				out, err := listPath(exec, ctx, container, repoDir, p)
 				if err != nil {
@@ -279,7 +286,7 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 			Name:        "git_diff",
 			Description: "Show the working-tree diff (unstaged plus staged). Use after git_status to explain the current diff. Optional path limits to one file.",
 			Schema: objectSchema(map[string]any{
-				"path": map[string]any{"type": "string", "description": "Optional repo-relative path to limit the diff"},
+				"path": map[string]any{"type": "string", "description": "Optional absolute path under the repo root to limit the diff"},
 			}),
 			Run: func(ctx context.Context, argsJSON string) (string, error) {
 				var args struct {
@@ -291,9 +298,10 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 					}
 				}
 				target := ""
-				if p := cleanPath(args.Path); p != "" {
-					if !validRepoPath(p) {
-						return "", fmt.Errorf("invalid path")
+				if strings.TrimSpace(args.Path) != "" {
+					p, nerr := normalizeRepoPath(args.Path, repoDir)
+					if nerr != nil {
+						return "", nerr
 					}
 					target = " -- " + shQuote(p)
 				}
@@ -311,10 +319,34 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 	}
 }
 
-// cleanPath normalizes model-supplied paths before validation: slashes
-// trimmed both ends, so leading-slash absolutes (which the model emits
-// despite rule 5) map into the repo and succeed instead of erroring.
-// ".." escapes still fail validRepoPath below.
+// normalizeRepoPath maps a model-supplied path onto a repo-relative path
+// for the shell. The convention is absolute-under-root (the root is named
+// in the turn system prompt, so the model copies one exact string instead
+// of inventing workdirs): a repoDir prefix is stripped and succeeds.
+// Anything else absolute is rejected WITHOUT executing — a rule error naming
+// the root, not a "no such file" miss that teaches the model the file is
+// missing and sends it guessing. Bare repo-relative paths still work.
+func normalizeRepoPath(raw, repoDir string) (string, error) {
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		return "", fmt.Errorf("path is required — absolute path under %s, e.g. %s/src/index.js", repoDir, repoDir)
+	}
+	if p == repoDir || p == repoDir+"/" {
+		return ".", nil
+	}
+	if strings.HasPrefix(p, repoDir+"/") {
+		p = strings.TrimPrefix(p, repoDir+"/")
+	} else if strings.HasPrefix(p, "/") {
+		return "", fmt.Errorf("path must be under the repo root %s — got %q (copy the root from the turn prompt, e.g. %s/src/index.js)", repoDir, raw, repoDir)
+	}
+	p = cleanPath(p)
+	if !validRepoPath(p) {
+		return "", fmt.Errorf("invalid path")
+	}
+	return p, nil
+}
+
+// cleanPath trims slashes both ends; ".." escapes still fail validRepoPath.
 func cleanPath(raw string) string {
 	return strings.Trim(strings.TrimSpace(raw), "/")
 }
@@ -347,42 +379,46 @@ func listPath(exec Executor, ctx context.Context, container, repoDir, dir string
 		fmt.Sprintf("cd %s && ls -1 -p -- %s 2>/dev/null | head -100", shQuote(repoDir), shQuote(dir)))
 }
 
-// parentListing names a failed path's siblings best-effort ("" on any
-// failure): strictly a hint for the model's next guess, never an error.
-// Missing parents walk up toward the root: a guess under a nonexistent
-// dir still learns the nearest real listing.
-func parentListing(exec Executor, ctx context.Context, container, repoDir, path string) string {
+// parentHint names a failed path's nearest real directory best-effort,
+// returned as (absoluteDir, names) so the miss error echoes verbatim-
+// reusable absolute paths. ("", nil) on any failure: strictly a hint for
+// the model's next guess, never an error. Missing parents walk up toward
+// the root: a guess under a nonexistent dir still learns the nearest
+// real listing.
+func parentHint(exec Executor, ctx context.Context, container, repoDir, path string) (string, []string) {
 	dir := parentDir(path)
 	for {
 		if !validRepoPath(dir) {
-			return ""
+			return "", nil
 		}
 		if out, err := listPath(exec, ctx, container, repoDir, dir); err == nil {
 			if names := strings.Fields(out); len(names) > 0 {
 				if len(names) > 20 {
 					names = names[:20]
 				}
-				return strings.Join(names, " ")
+				abs := repoDir
+				if dir != "." {
+					abs = repoDir + "/" + dir
+				}
+				return abs, names
 			}
 		}
 		if parent := parentDir(dir); parent == dir {
-			return ""
+			return "", nil
 		} else {
 			dir = parent
 		}
 	}
 }
 
-type ToolStep struct {
-	Tool   string `json:"tool"`
-	Args   string `json:"args,omitempty"`
-	Output string `json:"output,omitempty"`
-	Err    string `json:"error,omitempty"`
-}
-
+// ToolRound is the legacy persisted shape (one entry per model round,
+// each with thought + steps). Turns now persist flat []agent.Step like
+// butler — the FE never read thought, both serving paths already
+// flattened, and replay only needs ordered steps. Kept for reading old
+// threads; nothing writes it anymore.
 type ToolRound struct {
-	Thought string     `json:"thought,omitempty"`
-	Steps   []ToolStep `json:"steps"`
+	Thought string       `json:"thought,omitempty"`
+	Steps   []agent.Step `json:"steps"`
 }
 
 func capOutput(s string, max int) string {
@@ -400,9 +436,13 @@ func repoOrientation(exec Executor, ctx context.Context, container, repoDir stri
 	return capOutput(strings.TrimSpace(out), 2*1024)
 }
 
-func Ask(ctx context.Context, cfg agent.Config, exec Executor, container, repoDir, question string, history []map[string]any, onTrace func(agent.TraceEvent)) (Result, []ToolRound, *agent.Lineage, error) {
+func Ask(ctx context.Context, cfg agent.Config, exec Executor, container, repoDir, question string, history []map[string]any, onTrace func(agent.TraceEvent)) (Result, []agent.Step, *agent.Lineage, error) {
 	lin := &agent.Lineage{}
 	sys := systemPrompt
+	// Name the one exact root the model must copy: absolute tool paths
+	// under anything else are rejected, so hallucinating a workdir fails
+	// fast with the rule instead of failing slow as missed files.
+	sys += "\n\nRepo root: " + repoDir + " — pass absolute paths under it for read_file/list_dir (e.g. " + repoDir + "/src/index.js)."
 	if listing := repoOrientation(exec, ctx, container, repoDir); listing != "" {
 		sys += "\n\nRepo root orientation (top-level files/dirs of this project — use it to pick stack-appropriate first searches, e.g. package.json/src means JS, not Python):\n" + listing
 	}
@@ -425,7 +465,7 @@ func Ask(ctx context.Context, cfg agent.Config, exec Executor, container, repoDi
 	if res.Err != nil {
 		return Result{}, nil, lin, res.Err
 	}
-	rounds := capRounds(res.Rounds)
+	steps := capSteps(res.Rounds)
 	out := res.Answer
 	var parsed Result
 	dec := json.NewDecoder(strings.NewReader(out))
@@ -470,7 +510,7 @@ func Ask(ctx context.Context, cfg agent.Config, exec Executor, container, repoDi
 		}
 		parsed.Sections[i].Refs = kept
 	}
-	return shapeResult(parsed), rounds, lin, nil
+	return shapeResult(parsed), steps, lin, nil
 }
 
 // shapeResult deterministically enforces the house rules the schema can
@@ -520,20 +560,19 @@ func codemapScopeParse(raw string) bool {
 	return *v.AboutCode
 }
 
-// capRounds maps the shared transcript onto codemap's persisted round
-// shape, applying output/err caps as it goes.
-func capRounds(rounds []agent.Round) []ToolRound {
-	out := make([]ToolRound, 0, len(rounds))
+// capSteps flattens the shared transcript onto codemap's persisted step
+// shape (flat like butler — no per-round thought), applying output/err
+// caps as it goes.
+func capSteps(rounds []agent.Round) []agent.Step {
+	out := []agent.Step{}
 	for _, r := range rounds {
-		tr := ToolRound{Thought: r.Thought}
 		for _, s := range r.Steps {
-			tr.Steps = append(tr.Steps, ToolStep{
+			out = append(out, agent.Step{
 				Tool: s.Tool, Args: s.Args,
 				Output: capOutput(s.Output, 8000),
 				Err:    capOutput(s.Err, 4000),
 			})
 		}
-		out = append(out, tr)
 	}
 	return out
 }
@@ -574,26 +613,20 @@ func hydrateRefs(ctx context.Context, exec Executor, container, repoDir string, 
 	// never reach the shell.
 	byPath := map[string][]*Ref{}
 	for _, r := range refs {
-		if !validRepoPath(r.Path) {
-			if strings.HasPrefix(r.Path, repoDir+"/") {
-				r.Path = strings.TrimPrefix(r.Path, repoDir+"/")
-			}
-			// Small models sometimes copy the absolute-looking path shown
-			// in git output. Accept it only when its slash-trimmed form is
-			// an actual file inside the configured repo.
-			if strings.HasPrefix(r.Path, "/") {
-				candidate := strings.TrimPrefix(r.Path, "/")
-				if validRepoPath(candidate) {
-					probe := fmt.Sprintf("test -f %s && printf yes", shQuote(repoDir+"/"+candidate))
-					if got, err := exec.ExecCommand(ctx, container, probe); err == nil && strings.TrimSpace(got) == "yes" {
-						r.Path = candidate
-					}
-				}
-			}
-			if !validRepoPath(r.Path) {
-				drop(r, "invalid path")
+		// Normalize like tool args: repoDir-rooted absolutes strip to
+		// relative, anything else absolute is dropped. Refs stay
+		// repo-relative downstream (schema + file endpoint).
+		if strings.HasPrefix(strings.TrimSpace(r.Path), "/") {
+			np, nerr := normalizeRepoPath(r.Path, repoDir)
+			if nerr != nil {
+				drop(r, "path must be under the repo root")
 				continue
 			}
+			r.Path = np
+		}
+		if !validRepoPath(r.Path) {
+			drop(r, "invalid path")
+			continue
 		}
 		if r.StartLine < 1 {
 			r.StartLine = 1

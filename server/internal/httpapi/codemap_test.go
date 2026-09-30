@@ -322,12 +322,12 @@ func TestCodemapSuccess(t *testing.T) {
 				Path string `json:"path"`
 			} `json:"refs"`
 		} `json:"sections"`
-		Tools []struct {
+		Steps []struct {
 			Tool   string `json:"tool"`
 			Args   string `json:"args"`
 			Output string `json:"output"`
 			Err    string `json:"error"`
-		} `json:"tools"`
+		} `json:"steps"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
@@ -344,18 +344,18 @@ func TestCodemapSuccess(t *testing.T) {
 	if len(body.Sections) != 1 || body.Sections[0].Refs[0].Path != "main.go" {
 		t.Fatalf("sections = %+v", body.Sections)
 	}
-	if len(body.Tools) != 6 || body.Tools[0].Tool != "search_code" || body.Tools[5].Tool != "read_file" {
-		t.Fatalf("tools = %+v, want six calls with args", body.Tools)
+	if len(body.Steps) != 6 || body.Steps[0].Tool != "search_code" || body.Steps[5].Tool != "read_file" {
+		t.Fatalf("tools = %+v, want six calls with args", body.Steps)
 	}
-	if !strings.Contains(body.Tools[0].Args, "main") || !strings.Contains(body.Tools[2].Args, "main.go") {
-		t.Fatalf("tool args lost: %+v", body.Tools)
+	if !strings.Contains(body.Steps[0].Args, "main") || !strings.Contains(body.Steps[2].Args, "main.go") {
+		t.Fatalf("tool args lost: %+v", body.Steps)
 	}
 	// Tool outputs persist per step: this is what follow-ups replay.
-	if !strings.Contains(body.Tools[0].Output, "func main()") {
-		t.Fatalf("search output lost: %+v", body.Tools[0])
+	if !strings.Contains(body.Steps[0].Output, "func main()") {
+		t.Fatalf("search output lost: %+v", body.Steps[0])
 	}
-	if !strings.Contains(body.Tools[1].Output, "func main()") {
-		t.Fatalf("read output lost: %+v", body.Tools[1])
+	if !strings.Contains(body.Steps[1].Output, "func main()") {
+		t.Fatalf("read output lost: %+v", body.Steps[1])
 	}
 	// The live project log carries the full trace for the Nerdy Stuff tab.
 	gotTypes := map[string]int{}
@@ -387,10 +387,10 @@ func TestCodemapSuccess(t *testing.T) {
 				Sections []struct {
 					Title string `json:"title"`
 				} `json:"sections"`
-				Tools []struct {
+				Steps []struct {
 					Tool   string `json:"tool"`
 					Output string `json:"output"`
-				} `json:"tools"`
+				} `json:"steps"`
 			} `json:"turns"`
 		} `json:"thread"`
 	}
@@ -407,9 +407,9 @@ func TestCodemapSuccess(t *testing.T) {
 		t.Fatalf("thread sections = %+v", got.Thread.Turns[0].Sections)
 	}
 	// The thread endpoint exposes the same flat step shape as POST.
-	rounds := got.Thread.Turns[0].Tools
-	if len(rounds) != 6 || rounds[0].Tool != "search_code" || rounds[5].Tool != "read_file" {
-		t.Fatalf("thread tools = %+v, want six flat steps", got.Thread.Turns[0].Tools)
+	steps := got.Thread.Turns[0].Steps
+	if len(steps) != 6 || steps[0].Tool != "search_code" || steps[5].Tool != "read_file" {
+		t.Fatalf("thread steps = %+v, want six flat steps", got.Thread.Turns[0].Steps)
 	}
 	th, err := d.Codemaps.Get("abc", body.ThreadID)
 	if err != nil {
@@ -427,16 +427,14 @@ func TestCodemapSuccess(t *testing.T) {
 	if err := json.Unmarshal(storedP.Sections, &storedSections); err != nil || len(storedSections) != 1 {
 		t.Fatalf("stored sections invalid: %s (%v)", string(storedP.Sections), err)
 	}
-	var storedRounds []map[string]any
-	if err := json.Unmarshal(storedP.Tools, &storedRounds); err != nil || len(storedRounds) != 3 {
-		t.Fatalf("stored tools invalid: %s (%v)", string(storedP.Tools), err)
+	var storedSteps []map[string]any
+	if err := json.Unmarshal(storedP.Steps, &storedSteps); err != nil || len(storedSteps) != 6 {
+		t.Fatalf("stored tools invalid: %s (%v)", string(storedP.Steps), err)
 	}
-	for i, r := range storedRounds {
-		steps, _ := r["steps"].([]any)
-		if len(steps) != 2 {
-			t.Fatalf("stored round %d steps = %v, want 2", i, r)
+	for i, sm := range storedSteps {
+		if sm["thought"] != nil {
+			t.Fatalf("stored step %d carries thought, want flat butler shape: %v", i, sm)
 		}
-		sm, _ := steps[0].(map[string]any)
 		out, _ := sm["output"].(string)
 		if !strings.Contains(out, "func main()") {
 			t.Fatalf("stored tool %d missing output: %v", i, sm)
@@ -455,8 +453,11 @@ func TestCodemapSuccess(t *testing.T) {
 	if err := json.Unmarshal(lineageRaw, &lineage); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := lineage["prunedTier1Data"]; !ok {
-		t.Fatalf("lineage missing prunedTier1Data: %s", lineageRaw)
+	if _, ok := lineage["tools"]; !ok {
+		t.Fatalf("lineage missing tools header: %s", lineageRaw)
+	}
+	if _, ok := lineage["model"]; !ok {
+		t.Fatalf("lineage missing model: %s", lineageRaw)
 	}
 	if _, ok := lineage["extractorInput"]; ok {
 		t.Fatalf("lineage must not own extractorInput: %s", lineageRaw)
@@ -464,16 +465,9 @@ func TestCodemapSuccess(t *testing.T) {
 	if _, ok := lineage["extractorOutput"]; ok {
 		t.Fatalf("lineage must not own extractorOutput: %s", lineageRaw)
 	}
-	// The pruned snapshot round-trips the tier-1 evidence with pinned
-	// caps (answer 16k / output 6k / content 8k / args 2k / error 2k /
-	// payloads 12k).
-	snap, _ := lineage["prunedTier1Data"].(map[string]any)
-	if _, ok := snap["answer"]; !ok {
-		t.Fatalf("prunedTier1Data missing answer: %s", lineageRaw)
-	}
-	if _, ok := snap["events"]; !ok {
-		t.Fatalf("prunedTier1Data missing events: %s", lineageRaw)
-	}
+	// Events stay a readable per-step graph with pinned caps
+	// (content 8k / output 8k / args 2k / error 4k). Timestamps ride
+	// every event for debugging; full payloads stay in server logs.
 	events, _ := lineage["events"].([]any)
 	if len(events) < 20 {
 		t.Fatalf("lineage events = %d, want a multi-round conversation graph", len(events))
@@ -649,10 +643,8 @@ func TestCodemapBusy(t *testing.T) {
 	// Wait until the first run holds the per-project slot.
 	deadline := false
 	for i := 0; i < 100 && !deadline; i++ {
-		codemapBusy.mu.Lock()
-		_, held := codemapBusy.m["abc"]
-		_, deadline = codemapBusy.m["abc"], true
-		codemapBusy.mu.Unlock()
+		_, held := codemapRuns.running("abc")
+		_, deadline = codemapRuns.running("abc")
 		if held {
 			break
 		}

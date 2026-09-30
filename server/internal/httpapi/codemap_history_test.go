@@ -302,7 +302,7 @@ func TestCodemapDeleteBusy(t *testing.T) {
 	}()
 	// Wait until the run holds the slot for thA.
 	for i := 0; i < 200; i++ {
-		if running, busy := codemapRunning("abc"); busy && running == thA {
+		if running, busy := codemapRuns.running("abc"); busy && running == thA {
 			break
 		}
 		select {
@@ -330,9 +330,9 @@ func TestCodemapDeleteBusy(t *testing.T) {
 	_ = thB
 }
 
-// threadHistory lays rounds out as made (one assistant entry per round,
-// in order) and renders prior answers as a natural-language transcript,
-// not raw JSON.
+// threadHistory lays one turn out butler-style (user prompt, then one
+// assistant entry carrying the sections transcript plus flat tool steps)
+// and renders prior answers as a natural-language transcript, not raw JSON.
 func TestThreadHistoryRoundsAndTranscript(t *testing.T) {
 	sections, _ := json.Marshal([]map[string]any{{
 		"title": "Auth flow", "summary": "handleLogin() calls SessionService.create().",
@@ -341,35 +341,56 @@ func TestThreadHistoryRoundsAndTranscript(t *testing.T) {
 		}},
 	}})
 	tools, _ := json.Marshal([]map[string]any{
+		{"tool": "search_code", "args": `{"pattern":"login"}`, "output": "auth.go:10:func handleLogin"},
+		{"tool": "read_file", "args": `{"path":"auth.go"}`, "output": "func handleLogin() {"},
+	})
+	th := threads.Thread{ID: "t", Turns: []threads.Turn{
+		codemapTurnFixture("r1", "where is login?", sections, tools, ""),
+	}}
+	h := threadHistory(th)
+	if len(h) != 2 {
+		raw, _ := json.Marshal(h)
+		t.Fatalf("history entries = %d, want 2 (user+assistant): %s", len(h), string(raw))
+	}
+	if h[0]["role"] != "user" || h[0]["content"] != "where is login?" {
+		t.Fatalf("entry 0 = %v, want user prompt", h[0])
+	}
+	if h[1]["role"] != "assistant" || h[1]["toolSteps"] == nil {
+		t.Fatalf("entry 1 = %v, want assistant with flat tool steps", h[1])
+	}
+	steps, _ := h[1]["toolSteps"].([]any)
+	if len(steps) != 2 {
+		t.Fatalf("toolSteps = %d, want 2 flat steps", len(steps))
+	}
+	last, _ := h[1]["content"].(string)
+	if !strings.Contains(last, "Auth flow") || !strings.Contains(last, "handleLogin") || !strings.Contains(last, "auth.go:10-12 handleLogin()") {
+		t.Fatalf("transcript missing flow content: %q", last)
+	}
+	if strings.Contains(last, `"title"`) || strings.Contains(last, `"sections"`) {
+		t.Fatalf("transcript leaks raw JSON: %q", last)
+	}
+}
+
+// Legacy rounds-shaped turns (persisted before the flattening) still
+// replay their steps without a backfill.
+func TestThreadHistoryLegacyRounds(t *testing.T) {
+	sections, _ := json.Marshal([]map[string]any{{"title": "Auth flow", "summary": "s", "refs": []any{}}})
+	tools, _ := json.Marshal([]map[string]any{
 		{"thought": "find entry", "steps": []map[string]any{
 			{"tool": "search_code", "args": `{"pattern":"login"}`, "output": "auth.go:10:func handleLogin"},
-		}},
-		{"thought": "read it", "steps": []map[string]any{
-			{"tool": "read_file", "args": `{"path":"auth.go"}`, "output": "func handleLogin() {"},
 		}},
 	})
 	th := threads.Thread{ID: "t", Turns: []threads.Turn{
 		codemapTurnFixture("r1", "where is login?", sections, tools, ""),
 	}}
 	h := threadHistory(th)
-	if len(h) != 4 {
+	if len(h) != 2 {
 		raw, _ := json.Marshal(h)
-		t.Fatalf("history entries = %d, want 4 (user+2 rounds+transcript): %s", len(h), string(raw))
+		t.Fatalf("history entries = %d, want 2 (user+assistant): %s", len(h), string(raw))
 	}
-	if h[0]["role"] != "user" || h[0]["content"] != "where is login?" {
-		t.Fatalf("entry 0 = %v, want user prompt", h[0])
-	}
-	for i := 1; i <= 2; i++ {
-		if h[i]["role"] != "assistant" || h[i]["toolSteps"] == nil {
-			t.Fatalf("entry %d = %v, want assistant tool round", i, h[i])
-		}
-	}
-	last, _ := h[3]["content"].(string)
-	if !strings.Contains(last, "Auth flow") || !strings.Contains(last, "handleLogin") || !strings.Contains(last, "auth.go:10-12 handleLogin()") {
-		t.Fatalf("transcript missing flow content: %q", last)
-	}
-	if strings.Contains(last, `"title"`) || strings.Contains(last, `"sections"`) {
-		t.Fatalf("transcript leaks raw JSON: %q", last)
+	steps, _ := h[1]["toolSteps"].([]any)
+	if len(steps) != 1 {
+		t.Fatalf("legacy toolSteps = %d, want 1 replayed step", len(steps))
 	}
 }
 

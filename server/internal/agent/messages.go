@@ -58,6 +58,32 @@ func jsonOf(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
+// tailText best-efforts the visible text of the newest outgoing message —
+// the new information driving this LLM call (user prompt on step 0, last
+// tool reply later). The SDK buries text under role-specific unions, so
+// decode generically and take a string "content" when present.
+func tailText(msgs []openai.ChatCompletionMessageParamUnion) string {
+	if len(msgs) == 0 {
+		return ""
+	}
+	raw, err := jsonOf(msgs[len(msgs)-1])
+	if err != nil {
+		return ""
+	}
+	var v map[string]any
+	if json.Unmarshal(raw, &v) != nil {
+		return ""
+	}
+	if s, ok := v["content"].(string); ok {
+		return s
+	}
+	if v["content"] != nil {
+		c, _ := jsonOf(v["content"])
+		return string(c)
+	}
+	return ""
+}
+
 // previewOf trims a wire payload for error text: enough to tell
 // provider-empty apart from our bugs, never the whole body.
 func previewOf(raw []byte) string {

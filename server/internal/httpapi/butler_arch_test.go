@@ -10,7 +10,7 @@ import (
 // of failing, so the model recovers in one round.
 func TestButlerArchitectureTool(t *testing.T) {
 	d, _, _, _ := newSessionDeps(t)
-	run := butlerToolByName(t, d, butlerToolArchitecture, nil)
+	run, _ := butlerToolByName(t, d, butlerToolArchitecture)
 
 	whole, err := run(context.Background(), `{}`)
 	if err != nil {

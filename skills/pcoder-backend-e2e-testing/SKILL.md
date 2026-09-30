@@ -67,15 +67,27 @@ Other things that 404/401 confusingly:
 
 ## Running the agents
 
-Butler (SSE stream, one turn ≈ 10–30s on a small model):
+Butler (plain-JSON turn, one turn ≈ 10–30s on a small model):
 
 ```bash
-curl -sN --max-time 120 -X POST "$B/butler/turn" -b "pcoder_session=$TOKEN" \
+curl -s --max-time 180 -X POST "$B/butler/turn" -b "pcoder_session=$TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"prompt":"Start the preview for <owner/repo> on port 3000."}'
+  -d '{"prompt":"Brief me on my projects: what needs attention?"}' \
+  -o /tmp/butler-turn.json
+python3 -c "import json; d=json.load(open('/tmp/butler-turn.json')); print(d.get('threadId'), (d.get('answer') or d.get('error'))[:200])"
 ```
 
-The last SSE `data:` line is the final JSON: `threadId`, `answer`, `steps[]`, and `confirms[]` for write proposals. Codemap is a plain JSON POST (batch, up to 10 min timeout).
+Framing contract: **the turn POST answers one JSON object** —
+`{threadId, threadTitle, turnId, answer, steps[], confirms[], time}` on
+success, `{error, threadId, threadTitle}` with a non-2xx status on
+failure. The placeholder turn is reserved before the model runs, so a
+failed turn persists and stays retryable. The run is detached from the
+request, so closing the connection never cancels it — poll
+`GET /api/butler/threads` / `GET /api/butler/threads/{tid}` for
+`status: running|awaiting|failed|ready` instead of watching a stream.
+
+Codemap is a plain JSON POST (batch, up to 10 min timeout; pass
+`--max-time 540` on small models).
 
 **To exercise the approval flow, ask for something that mutates** ("start the preview…", "stop project X"). Reads answer in text; writes return confirm cards. Apply one:
 
@@ -91,7 +103,7 @@ Everything lands under `server/data/`:
 | What | Where | What "good" looks like |
 |---|---|---|
 | Turn transcript | `butler/<tid>/<N>.json` | `payload.answer` non-empty, `payload.steps[]` each `{tool, args, result\|error}`, `error: null` on success |
-| Full LLM trace | `butler/<tid>/<N>.lineage.json` | `events[]` alternating `llm_request`/`llm_response` (+ `tool_call` entries); first request carries the scope-gate (`butler_scope`) call |
+| Full LLM trace | `butler/<tid>/<N>.lineage.json` | header `{turnId, threadId, prompt, model, tools[] (name only, no schemas), time}` then `events[]`: `llm_request {step, model, content}` / `llm_response {step, model, content, calls[]}` / `tool_start|tool_done` / `final_answer` (`format_*` on codemap). Every event has `ts`. No `payload` blobs, no `initialRequest`/`prunedTier1Data` — full payloads stay in server logs, not the file |
 | Approvals | `butler/<tid>/approvals.json` | proposed row `status:"pending"` → after apply `status:"approved"` + `resolvedAt` set (or `"discarded"`) |
 | Codemap turn | `codemaps/<project>/<tid>/<N>.json` | `payload.sections[]` with title/summary/refs |
 | Global event log | `data/events.log` | one `butler.turn`/`codemap.turn` line per completed turn, `butler.apply` per apply |
@@ -107,6 +119,34 @@ Butler is propose-only by construction: a live turn can never mutate anything. W
 - **Scope gate costs one extra LLM call** at the start of every butler/codemap turn (structured `can_help`/`about_code` boolean, fails open). In lineage it's the first `llm_request` — don't mistake it for a duplicated main call.
 - **`data/` is live state, not fixtures.** The 958 diagnosis thread etc. live here. `rm -rf data/butler data/codemaps` is a legit dev reset (user approved treating them as disposable) — but never delete `data/state.json` (models, keys, identities) or `data/jwt-secret`.
 
+## Token hygiene
+
+The user pastes a `pcoder_session` JWT. Write it once to a 600 file and
+reference it — never inline it in every command, never print it, never commit
+it:
+
+```bash
+printf '%s' '<JWT>' > /tmp/pcoder-token && chmod 600 /tmp/pcoder-token
+TOKEN="$(cat /tmp/pcoder-token)"  # or -b "pcoder_session=$(cat /tmp/pcoder-token)"
+rm -f /tmp/pcoder-token  # when done
+```
+
+## Picking the project for codemap
+
+```bash
+curl -s "$B/api/projects" -b "pcoder_session=$TOKEN"  # -> [{"id":"owner/repo",...}]
+# URL-encode the slash: owner/repo -> owner%2Frepo
+curl -s --max-time 540 -X POST "$B/api/projects/owner%2Frepo/codemap" ...
+```
+
+## Small-model behavior (not bugs)
+
+On 2–3B-class models through a proxy, shape asserts still hold but content
+is weaker: codemap sections may come back with unresolvable refs (hydration
+drops them → sections with 0 refs), and write tools may be re-proposed
+(`doom_loop` guard exists for this — check `approvalKey` normalization in
+`internal/threads/threads.go` if cards stack).
+
 ## Cleanup — always
 
 ```bash
@@ -114,6 +154,10 @@ pkill -f pcoder-test; sleep 1
 lsof -ti :8977 | xargs kill -9 2>/dev/null   # kill survives if pkill missed the port holder
 curl -s -o /dev/null --max-time 2 http://127.0.0.1:8977/api/projects && echo "STILL UP" || echo "down"
 ```
+
+Leave verification threads in `data/butler/` + `data/codemaps/` in place
+unless asked — they are the evidence. Never delete `data/state.json`
+(models, keys, identities) or `data/jwt-secret`.
 
 Verify the process count is 0 (`ps aux | grep [p]coder`). Leaving a test server bound to the data dir while the real one boots is how you get mysterious empty-state behavior.
 

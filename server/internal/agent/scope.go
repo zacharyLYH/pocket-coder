@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -18,7 +17,7 @@ func Structured(ctx context.Context, cfg Config, sysPrompt, userPrompt, schemaNa
 	}
 	client := NewClient(cfg)
 	if lin != nil {
-		lin.InitialRequest = map[string]any{"userPrompt": userPrompt, "model": cfg.Model}
+		lin.Model = cfg.Model
 	}
 	params := openai.ChatCompletionNewParams{
 		Model: cfg.Model,
@@ -37,19 +36,26 @@ func Structured(ctx context.Context, cfg Config, sysPrompt, userPrompt, schemaNa
 		},
 	}
 	if lin != nil {
-		raw, _ := json.Marshal(params)
-		lin.record("llm_request", func(ev *LineageEvent) { ev.Payload = payloadOf(raw) })
+		lin.record(LineageLLMRequest, func(ev *LineageEvent) {
+			ev.Model = cfg.Model
+			ev.Content = capLine(strings.TrimSpace(userPrompt), 2000)
+		})
 	}
-	res, resRaw, err := Completion(ctx, client, params, nil,
+	res, _, err := Completion(ctx, client, params, nil,
 		"LLM Structured request", "LLM Structured response", "structured call", 1)
 	if err != nil {
 		if lin != nil {
-			lin.record("error", func(ev *LineageEvent) { ev.Err = err.Error() })
+			lin.record(LineageError, func(ev *LineageEvent) { ev.Err = err.Error() })
 		}
 		return "", err
 	}
 	if lin != nil {
-		lin.record("llm_response", func(ev *LineageEvent) { ev.Payload = payloadOf(resRaw) })
+		lin.record(LineageLLMResponse, func(ev *LineageEvent) {
+			ev.Model = cfg.Model
+			if res != nil && len(res.Choices) > 0 {
+				ev.Content = capLine(strings.TrimSpace(res.Choices[0].Message.Content), 2000)
+			}
+		})
 	}
 	if res == nil || len(res.Choices) == 0 {
 		return "", fmt.Errorf("structured call returned no choices")

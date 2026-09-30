@@ -69,15 +69,15 @@ func TestCodemapThreadsGetListDelete(t *testing.T) {
 		t.Fatalf("threadJSON must not carry extractorOutput: %s", rec.Body)
 	}
 
-	// List shows the chat with runningThreadId null when idle.
+	// List shows the chat with status ready when idle.
 	rec = authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
 	var listed struct {
 		Threads []struct {
 			ID        string `json:"id"`
 			Title     string `json:"title"`
 			TurnCount int    `json:"turnCount"`
+			Status    string `json:"status"`
 		} `json:"threads"`
-		RunningThreadId *string `json:"runningThreadId"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
@@ -85,8 +85,8 @@ func TestCodemapThreadsGetListDelete(t *testing.T) {
 	if len(listed.Threads) != 1 || listed.Threads[0].ID != tid {
 		t.Fatalf("listed = %+v", listed)
 	}
-	if listed.RunningThreadId != nil {
-		t.Fatalf("idle runningThreadId = %q, want null", *listed.RunningThreadId)
+	if listed.Threads[0].Status != "ready" {
+		t.Fatalf("idle status = %q, want ready", listed.Threads[0].Status)
 	}
 
 	// Deleted routes: create (POST) and rename (PATCH) are gone.
@@ -157,8 +157,9 @@ func TestCodemapPostAutoCreatesThread(t *testing.T) {
 	}
 }
 
-// runningThreadId is set while a POST is in flight, null when idle.
-func TestCodemapRunningThreadId(t *testing.T) {
+// The in-flight run is visible as a running row while a POST runs, and
+// ready once it completes — the remount path the tab relies on.
+func TestCodemapRowStatusTracksRun(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
@@ -186,17 +187,24 @@ func TestCodemapRunningThreadId(t *testing.T) {
 	go func() {
 		done <- authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"where is main?"}`)
 	}()
-	// Wait until the run holds the slot, then read runningThreadId off
-	// GET threads (no new endpoint).
+	// Wait until the run shows as a running row, then read the thread id
+	// off GET threads (no new endpoint).
 	var running string
 	for i := 0; i < 200; i++ {
 		rec := authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
 		var list struct {
-			RunningThreadId *string `json:"runningThreadId"`
+			Threads []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			} `json:"threads"`
 		}
 		_ = json.Unmarshal(rec.Body.Bytes(), &list)
-		if list.RunningThreadId != nil && *list.RunningThreadId != "" {
-			running = *list.RunningThreadId
+		for _, th := range list.Threads {
+			if th.Status == "running" {
+				running = th.ID
+			}
+		}
+		if running != "" {
 			break
 		}
 		select {
@@ -208,7 +216,7 @@ func TestCodemapRunningThreadId(t *testing.T) {
 	}
 	if running == "" {
 		once.Do(func() { close(release) })
-		t.Fatalf("runningThreadId never set during POST")
+		t.Fatalf("no running row during POST")
 	}
 	once.Do(func() { close(release) })
 	first := <-done
@@ -220,17 +228,20 @@ func TestCodemapRunningThreadId(t *testing.T) {
 	}
 	_ = json.Unmarshal(first.Body.Bytes(), &body)
 	if body.ThreadID != running {
-		t.Fatalf("runningThreadId = %q, want the new thread %q", running, body.ThreadID)
+		t.Fatalf("running row = %q, want the new thread %q", running, body.ThreadID)
 	}
-	// Idle again: null.
+	// Idle again: the row reads ready.
 	rec := authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
 	var idle struct {
-		RunningThreadId *string `json:"runningThreadId"`
+		Threads []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"threads"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &idle); err != nil {
 		t.Fatal(err)
 	}
-	if idle.RunningThreadId != nil {
-		t.Fatalf("idle runningThreadId = %q, want null", *idle.RunningThreadId)
+	if len(idle.Threads) != 1 || idle.Threads[0].Status != "ready" {
+		t.Fatalf("idle rows = %+v, want one ready row", idle.Threads)
 	}
 }

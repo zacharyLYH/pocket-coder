@@ -232,7 +232,7 @@ func TestCodemapRetryBusy(t *testing.T) {
 			`{"prompt":"follow up","threadId":"`+tid+`"}`)
 	}()
 	for i := 0; i < 200; i++ {
-		if _, busy := codemapRunning("abc"); busy {
+		if _, busy := codemapRuns.running("abc"); busy {
 			break
 		}
 		select {

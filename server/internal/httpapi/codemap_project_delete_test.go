@@ -108,14 +108,15 @@ func TestCodemapDeletedWithProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	var lineageMeta struct {
-		ThreadID        string `json:"threadId"`
-		PrunedTier1Data any    `json:"prunedTier1Data"`
+		ThreadID string `json:"threadId"`
+		Model    string `json:"model"`
+		Tools    []any  `json:"tools"`
 	}
 	if err := json.Unmarshal(lineageRaw, &lineageMeta); err != nil || lineageMeta.ThreadID != body.ThreadID {
 		t.Fatalf("lineage threadId = %q (%v), want %q", lineageMeta.ThreadID, err, body.ThreadID)
 	}
-	if lineageMeta.PrunedTier1Data == nil {
-		t.Fatalf("lineage missing prunedTier1Data: %s", lineageRaw)
+	if lineageMeta.Model == "" || len(lineageMeta.Tools) == 0 {
+		t.Fatalf("lineage missing model/tools header: %s", lineageRaw)
 	}
 	turnRaw, err := os.ReadFile(filepath.Join(threadDir, "1.json"))
 	if err != nil {

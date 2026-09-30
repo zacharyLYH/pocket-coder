@@ -13,25 +13,27 @@ import (
 	"pcoder/internal/agent"
 	"pcoder/internal/threads"
 	"pcoder/internal/docker"
+	"pcoder/internal/preview"
 	"pcoder/internal/project"
 	"pcoder/internal/prompt"
 	"pcoder/internal/state"
 )
 
-// butlerToolByName finds one tool in a registry by name.
-func butlerToolByName(t *testing.T, d Deps, name string, created *[]butlerCard) func(ctx context.Context, args string) (string, error) {
+// butlerToolByName finds one tool in a registry by name, reserving its
+// thread. Returns the run func and the thread id holding its approvals.
+func butlerToolByName(t *testing.T, d Deps, name string) (func(ctx context.Context, args string) (string, error), string) {
 	t.Helper()
 	threadID, _, err := d.Butler.ReserveNewThread(butlerScope, "test approval", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tl := range append(butlerReadTools(d), butlerWriteTools(d, d.Butler, threadID, "turn-test", created)...) {
+	for _, tl := range append(butlerReadTools(d), butlerWriteTools(d, d.Butler, threadID, "turn-test")...) {
 		if tl.Name == name {
-			return tl.Run
+			return tl.Run, threadID
 		}
 	}
 	t.Fatalf("no such butler tool %q", name)
-	return nil
+	return nil, ""
 }
 
 // Full read-tool pass against fakes: names and counts only — no paths,
@@ -335,12 +337,9 @@ func TestButlerScopeGateRefuses(t *testing.T) {
 	cookie := loginCookie(t, h, pinOut)
 
 	rec := butlerPost(t, h, cookie, `{"prompt":"read main.go for me"}`, http.StatusOK)
-	statuses, last := splitSSEBody(t, rec.Body.String())
+	last := finalBody(t, rec)
 	if last["answer"] != prompt.ButlerRefusal {
 		t.Fatalf("answer = %v, want the pinned refusal", last["answer"])
-	}
-	if len(statuses) != 1 || statuses[0]["tool"] != "done" {
-		t.Fatalf("statuses = %v, want only the terminal done line (no tool rounds)", statuses)
 	}
 	// Structured, not prose: the gate carries a json_schema and no tools.
 	rf, _ := gateBody["response_format"].(map[string]any)
@@ -370,7 +369,7 @@ func TestButlerScopeGateMalformedFallsThrough(t *testing.T) {
 	cookie := loginCookie(t, h, pinOut)
 
 	rec := butlerPost(t, h, cookie, `{"prompt":"brief me"}`, http.StatusOK)
-	_, last := splitSSEBody(t, rec.Body.String())
+	last := finalBody(t, rec)
 	if last["answer"] != "All three projects are healthy." {
 		t.Fatalf("final = %v, want the loop answer after a garbled gate", last)
 	}
@@ -380,17 +379,12 @@ func TestButlerScopeGateMalformedFallsThrough(t *testing.T) {
 // card; only Confirm applies it. Discard drops it silently.
 func TestButlerWriteNeedsConfirm(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
-	f := newFakeModel(t, func(w http.ResponseWriter, _ map[string]any) {
-		writeCompletion(w, "stop", "What would you like to do next?", nil)
-	})
-	seedAI(t, st, f.srv.URL)
 	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
 		t.Fatal(err)
 	}
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	var created []butlerCard
-	stop := butlerToolByName(t, d, butlerToolStop, &created)
+	stop, stopTid := butlerToolByName(t, d, butlerToolStop)
 
 	// Proposing runs nothing: no Stop expectation is set, so any docker
 	// call would fail the mock — and the pending card exists instead.
@@ -407,8 +401,12 @@ func TestButlerWriteNeedsConfirm(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &prop); err != nil || !prop.NeedsConfirm || prop.ConfirmID == "" {
 		t.Fatalf("proposal = %s (err %v), want needsConfirm + confirmId", raw, err)
 	}
-	if prop.BlastRadius == "" || len(created) != 1 || created[0].ID != prop.ConfirmID {
+	if prop.BlastRadius == "" {
 		t.Fatalf("proposal = %s, want a blast-radius card", raw)
+	}
+	apprs, aerr := d.Butler.Approvals(stopTid)
+	if aerr != nil || len(apprs) != 1 || apprs[0].ID != prop.ConfirmID {
+		t.Fatalf("approvals = %+v, want the stored card", apprs)
 	}
 	if n := d.Butler.ApprovalCount(); n != 1 {
 		t.Fatalf("pendings = %d, want 1", n)
@@ -442,17 +440,13 @@ func TestButlerWriteNeedsConfirm(t *testing.T) {
 	if n := d.Butler.ApprovalCount(); n != 0 {
 		t.Fatalf("pendings after discard = %d, want 0", n)
 	}
-	a, threadID, err := d.Butler.FindApproval(prop2.ConfirmID)
+	a, _, err := d.Butler.FindApproval(prop2.ConfirmID)
 	if err != nil || a.Status != threads.ApprovalDiscarded {
 		t.Fatalf("discarded approval = %+v, err=%v", a, err)
 	}
-	thread, err := d.Butler.Get(butlerScope, threadID)
-	var closure butlerPayload
-	if err == nil && len(thread.Turns) == 2 {
-		_ = json.Unmarshal(thread.Turns[1].Payload, &closure)
-	}
-	if err != nil || len(thread.Turns) != 2 || !strings.Contains(closure.Answer, "What would you like") {
-		t.Fatalf("discard closure thread = %+v, err=%v", thread, err)
+	// Discard only resolves: no closure turn is added.
+	if n := d.Butler.ApprovalCount(); n != 0 {
+		t.Fatalf("pendings after discard = %d, want 0", n)
 	}
 }
 
@@ -505,9 +499,8 @@ func TestButlerWriteProposeAll(t *testing.T) {
 	if len(rows) != len(butlerWriteTable) {
 		t.Fatalf("table rows = %d, write tools = %d: add the new tool here", len(rows), len(butlerWriteTable))
 	}
-	var created []butlerCard
 	for _, row := range rows {
-		run := butlerToolByName(t, d, row.tool, &created)
+		run, _ := butlerToolByName(t, d, row.tool)
 		raw, err := run(context.Background(), row.args)
 		if err != nil {
 			t.Fatalf("%s propose: %v", row.tool, err)
@@ -528,11 +521,8 @@ func TestButlerWriteProposeAll(t *testing.T) {
 	if n := d.Butler.ApprovalCount(); n != len(rows) {
 		t.Fatalf("pendings = %d, want %d (nothing ran, everything stored)", n, len(rows))
 	}
-	if len(created) != len(rows) {
-		t.Fatalf("cards = %d, want one per proposal", len(created))
-	}
 	beforeUnknown := d.Butler.ApprovalCount()
-	run := butlerToolByName(t, d, butlerToolSwitchModel, nil)
+	run, _ := butlerToolByName(t, d, butlerToolSwitchModel)
 	if _, err := run(context.Background(), `{"harness":"fake","model":"not-configured"}`); err == nil {
 		t.Fatal("unknown model was proposed")
 	}
@@ -560,7 +550,7 @@ func TestButlerWriteProposeAll(t *testing.T) {
 	}
 	before := d.Butler.ApprovalCount()
 	for _, row := range bad {
-		run := butlerToolByName(t, d, row.tool, nil)
+		run, _ := butlerToolByName(t, d, row.tool)
 		if _, err := run(context.Background(), row.args); err == nil {
 			t.Fatalf("%s with %s: want validation error", row.tool, row.args)
 		}
@@ -587,7 +577,7 @@ func TestButlerWriteApplyStateOnly(t *testing.T) {
 
 	apply := func(tool, args string) string {
 		t.Helper()
-		run := butlerToolByName(t, d, tool, nil)
+		run, _ := butlerToolByName(t, d, tool)
 		raw, err := run(context.Background(), args)
 		if err != nil {
 			t.Fatalf("%s propose: %v", tool, err)
@@ -675,7 +665,7 @@ func TestButlerWriteSchemaEnums(t *testing.T) {
 	}
 	// The shipped tool schema carries the enum, and the plain-text prop
 	// (session name) stays open.
-	tools := butlerWriteTools(d, d.Butler, "t", "turn", nil)
+	tools := butlerWriteTools(d, d.Butler, "t", "turn")
 	byName := map[string]agent.Tool{}
 	for _, tl := range tools {
 		byName[tl.Name] = tl
@@ -708,7 +698,7 @@ func TestButlerWriteSummaryUsesDisplayName(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	run := butlerToolByName(t, d, butlerToolUpdateAIModel, nil)
+	run, _ := butlerToolByName(t, d, butlerToolUpdateAIModel)
 	raw, err := run(context.Background(), `{"id":"988f1d277463f60a","label":"liquid"}`)
 	if err != nil {
 		t.Fatal(err)
@@ -736,7 +726,7 @@ func TestButlerWriteApplyContainer(t *testing.T) {
 
 	apply := func(tool, args string) {
 		t.Helper()
-		run := butlerToolByName(t, d, tool, nil)
+		run, _ := butlerToolByName(t, d, tool)
 		raw, err := run(context.Background(), args)
 		if err != nil {
 			t.Fatalf("%s propose: %v", tool, err)
@@ -809,7 +799,7 @@ func TestButlerDeleteBlastPerScope(t *testing.T) {
 		{"all", "both volumes, and the project record"},
 	}
 	for _, c := range cases {
-		run := butlerToolByName(t, d, butlerToolDeleteProject, nil)
+		run, _ := butlerToolByName(t, d, butlerToolDeleteProject)
 		raw, err := run(context.Background(), `{"project":"a/b","scope":"`+c.scope+`"}`)
 		if err != nil {
 			t.Fatalf("scope %s: %v", c.scope, err)
@@ -852,7 +842,7 @@ func TestButlerApplyBusy409s(t *testing.T) {
 	d, _, pinOut, st := newSessionDeps(t)
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	run := butlerToolByName(t, d, butlerToolStop, nil)
+	run, _ := butlerToolByName(t, d, butlerToolStop)
 	raw, err := run(context.Background(), `{"project":"a/b"}`)
 	if err != nil {
 		t.Fatalf("propose: %v", err)
@@ -869,10 +859,10 @@ func TestButlerApplyBusy409s(t *testing.T) {
 		writeCompletion(w, "stop", "Fine — nothing ran.", nil)
 	})
 	seedAI(t, st, f.srv.URL)
-	if !butlerBusy.CompareAndSwap(false, true) {
+	if !butlerRuns.take(butlerRunKey, "busy-test") {
 		t.Fatal("busy slot not taken")
 	}
-	defer func() { butlerBusy.Store(false) }()
+	defer func() { butlerRuns.done(butlerRunKey) }()
 	rec := authedPost(t, h, cookie, "/api/butler/confirms/"+prop.ConfirmID+"/apply", `{}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("apply while busy: got %d, want 409", rec.Code)
@@ -905,8 +895,7 @@ func TestButlerSensitiveWrites(t *testing.T) {
 	md.EXPECT().Exec(mock.Anything, "pcoder-a-b",
 		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "one\ntwo\nthree\n"}, nil)
-	var created []butlerCard
-	del := butlerToolByName(t, d, butlerToolDeleteProject, &created)
+	del, _ := butlerToolByName(t, d, butlerToolDeleteProject)
 	raw, err := del(context.Background(), `{"project":"a/b","scope":"container"}`)
 	if err != nil {
 		t.Fatalf("propose delete: %v", err)
@@ -929,7 +918,7 @@ func TestButlerSensitiveWrites(t *testing.T) {
 	}
 
 	// Masked env value: apply carries it, nothing echoes it.
-	env := butlerToolByName(t, d, butlerToolProposeEnvFix, nil)
+	env, _ := butlerToolByName(t, d, butlerToolProposeEnvFix)
 	envRaw, err := env(context.Background(), `{"name":"SMTP_PASSWORD"}`)
 	if err != nil {
 		t.Fatalf("propose env fix: %v", err)
@@ -960,7 +949,7 @@ func TestButlerSensitiveWrites(t *testing.T) {
 	}
 
 	// One-line model diff: the switch card shows old -> new.
-	switchTool := butlerToolByName(t, d, butlerToolSwitchModel, nil)
+	switchTool, _ := butlerToolByName(t, d, butlerToolSwitchModel)
 	swRaw, err := switchTool(context.Background(), `{"harness":"fake","model":"gpt-4o"}`)
 	if err != nil {
 		t.Fatalf("propose switch: %v", err)
@@ -974,16 +963,104 @@ func TestButlerSensitiveWrites(t *testing.T) {
 // nowhere until Confirm.
 func TestButlerFanoutProposesOnly(t *testing.T) {
 	d, _, _, _ := newSessionDeps(t)
-	var created []butlerCard
-	fanout := butlerToolByName(t, d, butlerToolFanoutExec, &created)
+	fanout, _ := butlerToolByName(t, d, butlerToolFanoutExec)
 	raw, err := fanout(context.Background(), `{"projects":["a/b"],"command":"npm i -g opencode-ai@latest"}`)
 	if err != nil {
 		t.Fatalf("propose fanout: %v", err)
 	}
-	if !strings.Contains(raw, "needsConfirm") || len(created) != 1 {
+	if !strings.Contains(raw, "needsConfirm") {
 		t.Fatalf("fanout = %s, want a confirm card, no execution", raw)
 	}
 	if n := d.Butler.ApprovalCount(); n != 1 {
 		t.Fatalf("pendings = %d, want 1 (nothing ran)", n)
+	}
+}
+
+// Closing a preview that is already stopped succeeds: proposals go stale
+// (model proposes close on a stopped preview, user confirms later), and
+// the end state is what was asked for — not a 502 "preview worker not
+// found".
+func TestButlerPreviewCloseIdempotent(t *testing.T) {
+	d, _, _, _ := newSessionDeps(t)
+	d.Preview = preview.NewManager(previewTestFactory{ep: privatePreviewEndpoint})
+	var def *butlerWriteDef
+	for i := range butlerWriteTable {
+		if butlerWriteTable[i].name == butlerToolPreviewClose {
+			def = &butlerWriteTable[i]
+			break
+		}
+	}
+	if def == nil {
+		t.Fatal("preview_close missing from write table")
+	}
+	out, err := def.exec(context.Background(), d, map[string]any{"project": "a/b"}, "")
+	if err != nil {
+		t.Fatalf("close stopped preview: %v, want success", err)
+	}
+	if !strings.Contains(out, "already stopped") {
+		t.Fatalf("close stopped preview = %q, want already-stopped", out)
+	}
+}
+
+// Discarding cards resolves just that card: no closure turn, no 502, no
+// FE/backend desync. Discarding the last one simply unblocks the thread.
+func TestButlerDiscardSiblingPending(t *testing.T) {
+	d, _, pinOut, st := newSessionDeps(t)
+	f := newFakeModel(t, scopeAllow,
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "tool_calls", "", []map[string]any{
+				toolCall("c1", butlerToolPreviewClose, `{"project":"a/b"}`),
+				toolCall("c2", butlerToolPreviewStart, `{"project":"a/b","port":3000}`),
+			})
+		},
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "stop", "Two cards for you.", nil)
+		},
+	)
+	seedAI(t, st, f.srv.URL)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := butlerPost(t, h, cookie, `{"prompt":"toggle the preview"}`, http.StatusOK)
+	last := finalBody(t, rec)
+	tid, _ := last["threadId"].(string)
+	th0, err := d.Butler.Get(butlerScope, tid)
+	if err != nil || len(th0.Approvals) != 2 {
+		t.Fatalf("approvals = %+v, want 2 cards on the thread", th0.Approvals)
+	}
+	idOf := func(i int) string { return th0.Approvals[i].ID }
+	// First discard: ok, no closure turn, thread still blocked.
+	d1 := authedPost(t, h, cookie, "/api/butler/confirms/"+idOf(0)+"/discard", `{}`)
+	if d1.Code != http.StatusOK {
+		t.Fatalf("discard sibling: got %d %q, want 200", d1.Code, d1.Body.String())
+	}
+	var d1body map[string]any
+	if err := json.Unmarshal(d1.Body.Bytes(), &d1body); err != nil || d1body["ok"] != true {
+		t.Fatalf("discard sibling = %q, want ok", d1.Body.String())
+	}
+	if _, has := d1body["result"]; has {
+		t.Fatalf("discard sibling must not run a closure turn: %q", d1.Body.String())
+	}
+	th, err := d.Butler.Get(butlerScope, tid)
+	if err != nil || len(th.Turns) != 1 {
+		t.Fatalf("turns = %+v, err=%v — no closure turn while a sibling pends", th.Turns, err)
+	}
+	if blocked := authedPost(t, h, cookie, "/api/butler/turn", `{"prompt":"x","threadId":"`+tid+`"}`); blocked.Code != http.StatusConflict {
+		t.Fatalf("follow-up with sibling pending: got %d, want 409", blocked.Code)
+	}
+	// Last discard: ok, no closure turn either, thread unblocks.
+	d2 := authedPost(t, h, cookie, "/api/butler/confirms/"+idOf(1)+"/discard", `{}`)
+	if d2.Code != http.StatusOK {
+		t.Fatalf("discard last: got %d %q, want 200", d2.Code, d2.Body.String())
+	}
+	var d2body map[string]any
+	if err := json.Unmarshal(d2.Body.Bytes(), &d2body); err != nil || d2body["ok"] != true {
+		t.Fatalf("discard last = %q, want ok", d2.Body.String())
+	}
+	if _, has := d2body["result"]; has {
+		t.Fatalf("discard last must not run a closure turn: %q", d2.Body.String())
+	}
+	th, err = d.Butler.Get(butlerScope, tid)
+	if err != nil || len(th.Turns) != 1 {
+		t.Fatalf("turns = %+v, err=%v, want still 1 turn", th.Turns, err)
 	}
 }

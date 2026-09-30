@@ -36,9 +36,8 @@ func butlerPost(t *testing.T, h http.Handler, cookie *http.Cookie, body string, 
 	return rec
 }
 
-// Full turn round-trip with the model faked at HTTP: POST streams SSE
-// status lines then the final JSON; the transcript persists globally.
-// Framing order is pinned via splitSSEBody (shared contract in sse_test.go).
+// Full turn round-trip with the model faked at HTTP: POST answers plain
+// JSON; the transcript persists globally.
 func TestButlerTurnRoundTrip(t *testing.T) {
 	d, _, pinOut, st := newSessionDeps(t)
 	f := newFakeModel(t, scopeAllow,
@@ -51,15 +50,7 @@ func TestButlerTurnRoundTrip(t *testing.T) {
 	cookie := loginCookie(t, h, pinOut)
 
 	rec := butlerPost(t, h, cookie, `{"prompt":"brief me","projectHint":"a/b"}`, http.StatusOK)
-	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
-		t.Fatalf("content-type = %q, want text/event-stream", ct)
-	}
-	// Statuses stream in order before the final answer. Zero-tool turns
-	// emit only the terminal done line; tool turns bracket with model.
-	statuses, last := splitSSEBody(t, rec.Body.String())
-	if len(statuses) == 0 || statuses[len(statuses)-1]["tool"] != "done" {
-		t.Fatalf("statuses = %v, want terminal done", statuses)
-	}
+	last := finalBody(t, rec)
 	tid, _ := last["threadId"].(string)
 	if tid == "" || last["answer"] != "All three projects are healthy." {
 		t.Fatalf("final = %v", last)
@@ -144,10 +135,10 @@ func TestButlerTurnGuards(t *testing.T) {
 
 	butlerPost(t, h, cookie, `{"prompt":""}`, http.StatusBadRequest)
 	butlerPost(t, h, cookie, `{"prompt":"x","threadId":"abc"}`, http.StatusNotFound)
-	if !butlerBusy.CompareAndSwap(false, true) {
+	if !butlerRuns.take(butlerRunKey, "busy-test") {
 		t.Fatal("busy slot not taken")
 	}
-	defer func() { butlerBusy.Store(false) }()
+	defer func() { butlerRuns.done(butlerRunKey) }()
 	butlerPost(t, h, cookie, `{"prompt":"x"}`, http.StatusConflict)
 	// Delete 409s on busy alone: the slot is taken before the thread id
 	// is known, so an id comparison would miss the reservation window.
@@ -167,9 +158,8 @@ func TestButlerNeedsModel(t *testing.T) {
 }
 
 // A model failure mid-turn still persists the failed turn, then answers
-// with one bare-JSON error line carrying threadId + threadTitle: the client
-// keeps the reserved turn and can retry. Pinned after a regression where
-// the error path vanished behind a second WriteHeader.
+// with a JSON error carrying threadId + threadTitle: the client keeps
+// the reserved turn and can retry.
 func TestButlerTurnFailurePersistsAndStreamsError(t *testing.T) {
 	d, _, pinOut, st := newSessionDeps(t)
 	empty := func(w http.ResponseWriter, _ map[string]any) {
@@ -182,14 +172,8 @@ func TestButlerTurnFailurePersistsAndStreamsError(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	rec := butlerPost(t, h, cookie, `{"prompt":"brief me"}`, http.StatusOK) // failures ride the stream
-	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
-		t.Fatalf("content-type = %q, want text/event-stream", ct)
-	}
-	statuses, last := splitSSEBody(t, rec.Body.String())
-	if len(statuses) == 0 || statuses[len(statuses)-1]["tool"] != "model" || statuses[len(statuses)-1]["status"] != "error" {
-		t.Fatalf("statuses = %v, want terminal model:error", statuses)
-	}
+	rec := butlerPost(t, h, cookie, `{"prompt":"brief me"}`, http.StatusBadGateway)
+	last := finalBody(t, rec)
 	tid, _ := last["threadId"].(string)
 	if tid == "" {
 		t.Fatalf("error final missing threadId: %v", last)
@@ -246,9 +230,8 @@ func TestButlerTurnFailurePersistsAndStreamsError(t *testing.T) {
 }
 
 // The loop cap: a model that always answers with tool calls (and never a
-// final text) still terminates and streams one model status per round.
-// The loop must burn its budget and close out — never hang, never loop
-// forever.
+// final text) still terminates. The loop must burn its budget and close
+// out — never hang, never loop forever.
 func TestButlerTurnLoopCapsAtMaxSteps(t *testing.T) {
 	d, _, pinOut, st := newSessionDeps(t)
 	calls := 0
@@ -271,20 +254,9 @@ func TestButlerTurnLoopCapsAtMaxSteps(t *testing.T) {
 	cookie := loginCookie(t, h, pinOut)
 
 	rec := butlerPost(t, h, cookie, `{"prompt":"brief me"}`, http.StatusOK)
-	statuses, last := splitSSEBody(t, rec.Body.String())
+	last := finalBody(t, rec)
 	if last["answer"] != "gave up" {
 		t.Fatalf("final = %v, want the close-out answer", last)
-	}
-	// Each executed round streams a model status; the cap bounds tool
-	// rounds at 6 (the scope gate is silent and streams nothing).
-	modelStatuses := 0
-	for _, s := range statuses {
-		if s["tool"] == "model" {
-			modelStatuses++
-		}
-	}
-	if modelStatuses == 0 || modelStatuses > 7 {
-		t.Fatalf("model statuses = %d, want bounded by the 6-step cap", modelStatuses)
 	}
 	if calls != 7 {
 		t.Fatalf("model calls = %d, want 6 capped rounds + 1 close-out (plus the uncounted scope gate)", calls)

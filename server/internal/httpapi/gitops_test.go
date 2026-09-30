@@ -315,16 +315,25 @@ func TestGitExplainFireAndForget(t *testing.T) {
 		t.Fatalf("202 body must carry threadId: %q", rec.Body)
 	}
 
-	// Busy slot points at the new thread: threads list reports it running.
+	// Busy slot points at the new thread: threads list reports its row running.
 	rec = authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
 	var list struct {
-		RunningThreadId *string `json:"runningThreadId"`
+		Threads []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"threads"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatal(err)
 	}
-	if list.RunningThreadId == nil || *list.RunningThreadId != started.ThreadID {
-		t.Fatalf("runningThreadId = %v, want %q", list.RunningThreadId, started.ThreadID)
+	running := false
+	for _, th := range list.Threads {
+		if th.ID == started.ThreadID && th.Status == "running" {
+			running = true
+		}
+	}
+	if !running {
+		t.Fatalf("rows = %+v, want %q running", list.Threads, started.ThreadID)
 	}
 
 	// The detached run finishes on its own: poll the thread until the
@@ -354,12 +363,20 @@ func TestGitExplainFireAndForget(t *testing.T) {
 	require.Eventually(t, func() bool {
 		rec := authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
 		var list struct {
-			RunningThreadId *string `json:"runningThreadId"`
+			Threads []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			} `json:"threads"`
 		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 			return false
 		}
-		return list.RunningThreadId == nil
+		for _, th := range list.Threads {
+			if th.ID == started.ThreadID {
+				return th.Status != "running"
+			}
+		}
+		return false
 	}, 5*time.Second, 100*time.Millisecond)
 }
 
@@ -423,10 +440,24 @@ func TestGitExplainBusy(t *testing.T) {
 	}
 
 	// The failing run releases the slot after persisting the failed turn
-	// (retry backoff ~8s), proving the slot cannot wedge.
+	// (retry backoff ~8s), proving the slot cannot wedge: the row stops
+	// reading running.
 	require.Eventually(t, func() bool {
 		rec := authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
-		return !strings.Contains(rec.Body.String(), `"runningThreadId":"`)
+		var list struct {
+			Threads []struct {
+				Status string `json:"status"`
+			} `json:"threads"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+			return false
+		}
+		for _, th := range list.Threads {
+			if th.Status == "running" {
+				return false
+			}
+		}
+		return true
 	}, 30*time.Second, 250*time.Millisecond)
 }
 

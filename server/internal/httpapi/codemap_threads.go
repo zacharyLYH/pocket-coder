@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"pcoder/internal/agent"
 	"pcoder/internal/obs"
 	"pcoder/internal/threads"
 )
@@ -32,8 +33,8 @@ func writeUnknownThread(w http.ResponseWriter) {
 	writeErr(w, http.StatusNotFound, "unknown thread")
 }
 
-// handleCodemapThreads lists a project's chats, newest first (strictly by
-// createdAt), plus the in-flight thread id for remount-into-run.
+// handleCodemapThreads lists a project's chats, newest first, with
+// per-thread status.
 func handleCodemapThreads(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -57,13 +58,14 @@ func handleCodemapThreads(d Deps) http.HandlerFunc {
 		if summaries == nil {
 			summaries = []threads.Summary{}
 		}
-		var running any
-		if tid, busy := codemapRunning(id); busy && tid != "" {
-			running = tid
-		} else {
-			running = nil
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"threads": summaries, "runningThreadId": running})
+		rows := statusRows(summaries, func(tid string) string {
+			th, gerr := st.Get(id, tid)
+			if gerr != nil {
+				return "ready"
+			}
+			return codemapStatus(id, th)
+		})
+		writeJSON(w, http.StatusOK, map[string]any{"threads": rows})
 	}
 }
 
@@ -89,14 +91,13 @@ func handleCodemapThreadGet(d Deps) http.HandlerFunc {
 			writeUnknownThread(w)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"thread": threadJSON(th)})
+		writeJSON(w, http.StatusOK, map[string]any{"thread": threadJSON(th, codemapStatus(id, th))})
 	}
 }
 
 // handleCodemapThreadDelete drops one chat folder. Idempotent when idle;
-// 409 while that thread's generation is in flight so a run never loses
-// the folder it is about to write to. Deleting an unrelated thread
-// during a run stays allowed.
+// 409 only while that thread's generation is in flight. Deleting an
+// unrelated thread during a run stays allowed.
 func handleCodemapThreadDelete(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -112,7 +113,7 @@ func handleCodemapThreadDelete(d Deps) http.HandlerFunc {
 			err = errStoreUnconfigured
 			return
 		}
-		if running, busy := codemapRunning(id); busy && running != "" && running == tid {
+		if deleteBlocked(codemapRuns, id, tid) {
 			err = errors.New("codemap busy — wait for the current run")
 			writeErr(w, http.StatusConflict, err.Error())
 			return
@@ -131,7 +132,7 @@ func handleCodemapThreadDelete(d Deps) http.HandlerFunc {
 // (turnId/sha/prompt/sections/tools/time/error) so the frontend reuses
 // the type verbatim. No extractorOutput: N.json is the user-facing side.
 // Sections default to [] (never null) so the client sees one shape.
-func threadJSON(th threads.Thread) any {
+func threadJSON(th threads.Thread, status string) any {
 	turns := make([]any, 0, len(th.Turns))
 	for _, t := range th.Turns {
 		p := codemapPayloadOf(t)
@@ -142,14 +143,17 @@ func threadJSON(th threads.Thread) any {
 				sections = decoded
 			}
 		}
-		tools := flattenRounds(parseRounds(p.Tools))
+		steps := parseSteps(p.Steps)
+		if steps == nil {
+			steps = []agent.Step{}
+		}
 		var turnErr any
 		if t.Error != nil {
 			turnErr = *t.Error
 		}
 		turns = append(turns, map[string]any{
 			"turnId": t.TurnID, "sha": t.SHA, "prompt": t.Prompt,
-			"sections": sections, "tools": tools, "error": turnErr,
+			"sections": sections, "steps": steps, "error": turnErr,
 			"time": t.Time.Format(time.RFC3339),
 		})
 	}
@@ -158,5 +162,6 @@ func threadJSON(th threads.Thread) any {
 		"createdAt": th.CreatedAt.Format(time.RFC3339),
 		"updatedAt": th.UpdatedAt.Format(time.RFC3339),
 		"turns":     turns,
+		"status":    status,
 	}
 }

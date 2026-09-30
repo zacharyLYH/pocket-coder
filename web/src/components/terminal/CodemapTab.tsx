@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, Bot, Check, ChevronDown, Copy, FileText, History, LoaderCircle, Plus, RotateCcw, Sparkles, Trash2, Wrench } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { ArrowUp, Bot, Check, ChevronDown, Copy, FileText, History, LoaderCircle, Plus, RotateCcw, Sparkles, Trash2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,57 +14,20 @@ import {
 import { Avatar } from '@/components/ui/avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Separator } from '@/components/ui/separator'
-import { ApiError, api, errMsg, projectPath } from '@/lib/api'
-import type { AIConfigStatus, CodemapSection, CodemapThread, CodemapThreadSummary, CodemapToolCall, CodemapTurn } from '@/lib/types'
+import { api, projectPath } from '@/lib/api'
+import { useThread } from '@/lib/useThread'
+import type { AIConfigStatus, AgentStep, CodemapSection, CodemapThread, CodemapThreadSummary, CodemapTurn } from '@/lib/types'
 import { FileOverlay } from '@/components/terminal/FileOverlay'
 import { CodeBlock } from '@/components/CodeBlock'
 import { Markdown } from '@/components/Markdown'
+import { TurnSteps } from '@/components/TurnSteps'
 
-// Suggestion chips double as the empty-state welcome: they show what good
-// input looks like and prefill the composer.
 const PRESETS = [
   { label: 'Explain the current diff', prompt: 'Explain the current diff. Read git status and the diff, then walk through each changed file.' },
   { label: 'Map this repo', prompt: 'Map this repo. Find the entrypoints, key directories, and data flow, then summarize how it fits together.' },
 ]
 
 type OverlaySel = { path: string; start: number; end: number; sha: string }
-
-// Steps shows the tool calls behind a turn. Collapsed by default; full
-// outputs live in the Logs tab.
-function Steps({ tools }: { tools: CodemapToolCall[] }) {
-  const [open, setOpen] = useState(false)
-  if (tools.length === 0) return null
-  return (
-    <div className="mt-2 overflow-hidden rounded-xl border bg-muted/40">
-      <button
-        className="flex min-h-[36px] w-full items-center gap-1.5 px-3 py-1.5 text-left text-xs text-muted-foreground"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        data-testid="codemap-steps-toggle"
-      >
-        <Wrench className="size-3.5" />
-        {tools.length} step{tools.length === 1 ? '' : 's'}
-        <ChevronDown className={`size-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && (
-        <div className="flex flex-col gap-1 border-t p-2" data-testid="codemap-steps">
-          {tools.map((c, i) => (
-            <div key={i} className="rounded-lg bg-background/80 px-2 py-1.5">
-              <p className="font-mono text-[11px] font-medium">{c.tool}</p>
-              <p className="mt-0.5 font-mono text-[11px] break-all text-muted-foreground">{c.args}</p>
-              {(c.output || c.error) && (
-                <pre className="mt-1 max-h-40 overflow-y-auto rounded-md bg-muted/60 p-1.5 font-mono text-[11px] whitespace-pre-wrap text-muted-foreground">
-                  {c.error ? `error: ${c.error}` : c.output}
-                </pre>
-              )}
-            </div>
-          ))}
-          <p className="px-1 text-[11px] text-muted-foreground">Full outputs land in the Logs tab while it runs.</p>
-        </div>
-      )}
-    </div>
-  )
-}
 
 function CopySnippet({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
@@ -89,233 +52,46 @@ function CopySnippet({ text }: { text: string }) {
   )
 }
 
-// optimisticTitle mirrors the server's TitleFromPrompt (first line,
-// 60 chars) until the server truncation wins.
-function optimisticTitle(q: string): string {
-  const first = q.split('\n')[0] ?? ''
-  const flat = first.replace(/\s+/g, ' ').trim()
-  if (!flat) return 'New chat'
-  return flat.length > 60 ? flat.slice(0, 60) + '…' : flat
-}
-
-// Codemap tab: ask-about-the-code over the agent loop. One folder per
-// thread server-side; new chats stay local-only until the first send.
 export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigStatus | null }) {
-  const [threads, setThreads] = useState<CodemapThreadSummary[]>([])
-  // No localStorage: the server is the source of truth. Mount opens the
-  // newest thread (or the running one when remounting into a run).
-  const [activeId, setActiveId] = useState<string | null>(null)
-  const [turns, setTurns] = useState<CodemapTurn[]>([])
-  const [title, setTitle] = useState<string>('')
-  const [menuOpen, setMenuOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
-  const [busy, setBusy] = useState(false)
-  // Own request in flight (generate/retry below). Remount-into-run sets
-  // busy without it — that is the only state the watch effect polls for.
-  const [ownFlight, setOwnFlight] = useState(false)
-  const [runningThreadId, setRunningThreadId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [overlay, setOverlay] = useState<OverlaySel | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
-  // Mirror of activeId for the in-flight guard: generate() captures the
-  // thread it sent for, and only adopts the result when the user is still
-  // viewing that same thread at completion.
-  const activeIdRef = useRef<string | null>(null)
-  useEffect(() => {
-    activeIdRef.current = activeId
-  }, [activeId])
 
-  // Mid-generation UI block (codemap tab only; other tabs free): while
-  // busy OR the open thread is someone else's run (remounted via
-  // runningThreadId), the composer + history-delete + retry buttons disable.
-  const blocked = busy || (activeId !== null && runningThreadId !== null && activeId === runningThreadId)
+  const { threads, thread, inFlight, error, setError, openThread, newChat, removeThread, sendTurn, retryTurn } =
+    useThread<CodemapThread, CodemapThreadSummary>({
+      list: () => api<{ threads: CodemapThreadSummary[] }>(projectPath(projectId, '/codemap/threads')),
+      open: async (id) => (await api<{ thread: CodemapThread }>(projectPath(projectId, `/codemap/threads/${encodeURIComponent(id)}`))).thread,
+      send: (p, threadId) => api<{ threadId: string }>(projectPath(projectId, '/codemap'), { method: 'POST', body: JSON.stringify({ prompt: p, threadId }) }),
+      retry: (tid) => api<{ threadId: string }>(projectPath(projectId, `/codemap/threads/${encodeURIComponent(tid)}/retry`), { method: 'POST', body: '{}' }),
+      remove: (id) => api(projectPath(projectId, `/codemap/threads/${encodeURIComponent(id)}`), { method: 'DELETE' }).then(() => {}),
+      autoOpen: true,
+    }, projectId)
 
-  const loadThreads = useCallback(async () => {
-    try {
-      const d = await api<{ threads: CodemapThreadSummary[]; runningThreadId?: string | null }>(
-        projectPath(projectId, '/codemap/threads'),
-      )
-      setThreads(d.threads ?? [])
-      setRunningThreadId(d.runningThreadId ?? null)
-      return { threads: d.threads ?? [], runningThreadId: d.runningThreadId ?? null }
-    } catch {
-      return null
-    }
-  }, [projectId])
+  const status = thread?.status ?? 'ready'
+  const turns = thread?.turns ?? []
+  const blocked = inFlight || status === 'running'
 
-  const openThread = useCallback(async (id: string) => {
-    try {
-      const d = await api<{ thread: CodemapThread }>(projectPath(projectId, `/codemap/threads/${encodeURIComponent(id)}`))
-      setActiveId(d.thread.id)
-      setTitle(d.thread.title)
-      setTurns(d.thread.turns ?? [])
-      setError(null)
-    } catch (e) {
-      // Unknown after delete-elsewhere: drop the stale transcript instead
-      // of leaving the old turns visible under an error banner.
-      if (e instanceof ApiError && e.status === 404) {
-        setActiveId(null)
-        setTitle('')
-        setTurns([])
-      }
-      setError(errMsg(e))
-    }
-  }, [projectId])
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      const loaded = await loadThreads()
-      if (cancelled || !loaded) return
-      // Remount-into-run: open the running thread and flag busy so the
-      // answer-less placeholder shows its spinner and blocks input.
-      if (loaded.runningThreadId) {
-        setBusy(true)
-        void openThread(loaded.runningThreadId)
-        return
-      }
-      if (loaded.threads.length > 0) {
-        void openThread(loaded.threads[0].id)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [projectId, loadThreads, openThread])
-
-  // Follow new turns only while pinned to the bottom, so reading history
-  // never yanks the scroll out from under you (same rule as LogsTab).
   useEffect(() => {
     const el = viewportRef.current
     if (!el) return
     const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 96
     if (pinned || turns.length <= 1) el.scrollTop = el.scrollHeight
-  }, [turns, busy])
+  }, [turns, inFlight])
 
-  // Watch a remounted run: busy without an own request means this tab did
-  // not start the run, so no response will ever clear it. Poll the open
-  // thread until its last turn resolves (sections or error), then adopt
-  // it like a response. Own flights skip this — their POST resolves them.
-  useEffect(() => {
-    if (!busy || ownFlight || !activeId) return
-    const id = setInterval(() => {
-      void (async () => {
-        try {
-          const d = await api<{ thread: CodemapThread }>(
-            projectPath(projectId, `/codemap/threads/${encodeURIComponent(activeId)}`),
-          )
-          const last = (d.thread.turns ?? []).at(-1)
-          const resolved = last != null && ((last.sections != null && last.sections.length > 0) || (last.error !== undefined && last.error !== null && last.error !== ''))
-          if (!resolved) return
-          clearInterval(id)
-          setTitle(d.thread.title)
-          setTurns(d.thread.turns ?? [])
-          setError(null)
-          setBusy(false)
-          void loadThreads()
-        } catch (e) {
-          // Thread vanished mid-run (deleted elsewhere): drop the block.
-          // Any other error keeps polling: one transient failure must not
-          // unblock a still-running turn.
-          if (e instanceof ApiError && e.status === 404) {
-            clearInterval(id)
-            setBusy(false)
-            void loadThreads()
-          }
-        }
-      })()
-    }, 2000)
-    return () => clearInterval(id)
-  }, [busy, ownFlight, activeId, projectId, loadThreads])
-
-  async function adoptResult(
-    sendThreadId: string | null,
-    d: { threadId?: string; threadTitle?: string },
-  ) {
-    if (d.threadTitle) setTitle(d.threadTitle)
-    if (d.threadId) {
-      if (sendThreadId == null) {
-        if (activeIdRef.current == null) setActiveId(d.threadId)
-      } else if (activeIdRef.current !== sendThreadId) {
-        // Switched threads mid-run: the turn persisted server-side under
-        // its own thread; leave the visible transcript alone.
-        void loadThreads()
-        return
-      }
-      await loadThreads()
-      await openThread(d.threadId)
-    } else {
-      void loadThreads()
-    }
-  }
-
-  async function runTurn(sendThreadId: string | null, path: string, body: string) {
-    setBusy(true)
-    setOwnFlight(true)
-    setError(null)
-    try {
-      const d = await api<{ threadId?: string; threadTitle?: string }>(
-        projectPath(projectId, path),
-        { method: 'POST', body },
-      )
-      await adoptResult(sendThreadId, d)
-    } catch (e) {
-      const failed = e instanceof ApiError ? e.body : null
-      if (failed && typeof failed.threadId === 'string') {
-        await adoptResult(sendThreadId, {
-          threadId: failed.threadId,
-          threadTitle: typeof failed.threadTitle === 'string' ? failed.threadTitle : undefined,
-        })
-      }
-      if (e instanceof ApiError && e.status === 409) {
-        void loadThreads()
-      }
-      setError(errMsg(e))
-    } finally {
-      setBusy(false)
-      setOwnFlight(false)
-    }
-  }
-
-  async function generate() {
+  function generate() {
     const q = prompt.trim()
     if (!q || blocked) return
     if ([...q].length > 4000) {
       setError('Prompt over 4000 chars')
       return
     }
-    // Capture the thread this prompt belongs to: if the user switches
-    // threads mid-run, the finished answer must not land in the wrong
-    // transcript (it is already persisted server-side under sendThreadId).
-    const sendThreadId = activeIdRef.current
-    if (sendThreadId == null) setTitle(optimisticTitle(q))
     setPrompt('')
-    await runTurn(sendThreadId, '/codemap', JSON.stringify({ prompt: q, threadId: sendThreadId ?? undefined }))
+    void sendTurn(q, thread?.id)
   }
 
-  async function retry() {
-    if (!activeId || busy) return
-    await runTurn(activeId, `/codemap/threads/${encodeURIComponent(activeId)}/retry`, JSON.stringify({}))
-  }
-
-  function newChat() {
-    setActiveId(null)
-    setTitle('')
-    setTurns([])
-    setError(null)
-    setMenuOpen(false)
-  }
-
-  async function deleteThread(id: string) {
-    if (blocked) return
-    try {
-      await api(projectPath(projectId, `/codemap/threads/${encodeURIComponent(id)}`), { method: 'DELETE' })
-    } catch (e) {
-      setError(errMsg(e))
-      return
-    }
-    setThreads((prev) => prev.filter((t) => t.id !== id))
-    if (id === activeId) newChat()
+  function retry() {
+    if (!thread || inFlight) return
+    void retryTurn(thread.id)
   }
 
   function formatTime(iso?: string): string {
@@ -324,9 +100,6 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
     return Number.isNaN(t.getTime()) ? '' : t.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
 
-  // SectionBlock renders one flow step: a numbered, succinct explanation
-  // with its code refs nested beneath. Sections collapse so big
-  // discussions stay scannable; small answers stay fully open.
   function SectionBlock({ s, index, sha, defaultOpen }: { s: CodemapSection; index: number; sha: string; defaultOpen: boolean }) {
     const [open, setOpen] = useState(defaultOpen)
     const refs = s.refs ?? []
@@ -400,7 +173,6 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
     if (!sections || sections.length === 0) {
       return <p className="py-1 text-sm text-muted-foreground">No sections.</p>
     }
-    // Small answers read fully open; big ones open only the first step.
     const openFirstOnly = sections.length > 3
     return (
       <div className="flex flex-col gap-2">
@@ -411,9 +183,7 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
     )
   }
 
-  // FailCard is the shared failed/crashed bubble: title + optional error
-  // + hint + retry on the last turn only + tool trace.
-  function FailCard({ title, error, hint, isLast, tools }: { title: string; error?: string | null; hint: string; isLast: boolean; tools?: CodemapToolCall[] | null }) {
+  function FailCard({ title, error, hint, isLast, steps }: { title: string; error?: string | null; hint: string; isLast: boolean; steps?: AgentStep[] | null }) {
     return (
       <div className="flex flex-col gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3">
         <p className="text-sm font-medium text-destructive">{title}</p>
@@ -423,30 +193,25 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
         </p>
         {isLast && (
           <div>
-            <Button size="sm" variant="outline" onClick={() => void retry()} disabled={blocked} data-testid="codemap-retry">
+            <Button size="sm" variant="outline" onClick={() => retry()} disabled={blocked} data-testid="codemap-retry">
               <RotateCcw className="size-3.5" />
               Retry turn
             </Button>
           </div>
         )}
-        <Steps tools={tools ?? []} />
+        <TurnSteps steps={steps ?? []} testPrefix="codemap" />
       </div>
     )
   }
 
-  // renderTurnBody: failed turns get a failed bubble; answer-less turns
-  // are in-flight when their thread is the running one, else crashed.
   function renderTurnBody(t: CodemapTurn, isLast: boolean) {
     const hasError = t.error !== undefined && t.error !== null && t.error !== ''
     const answerless = (t.sections == null || t.sections.length === 0) && !hasError
     if (hasError) {
-      return <FailCard title="This turn failed." error={t.error} hint="The failed turn is saved. Retry it with the button below." isLast={isLast} tools={t.tools} />
+      return <FailCard title="This turn failed." error={t.error} hint="The failed turn is saved. Retry it with the button below." isLast={isLast} steps={t.steps} />
     }
     if (answerless) {
-      // Crash-vs-in-flight rides on runningThreadId alone: the project-wide
-      // busy flag cannot disambiguate cross-thread.
-      const inFlight = activeId !== null && runningThreadId !== null && activeId === runningThreadId
-      if (inFlight) {
+      if (status === 'running') {
         return (
           <div className="flex flex-col gap-2 py-1" data-testid="codemap-spinner">
             <div className="flex items-center gap-2.5">
@@ -464,12 +229,12 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
           </div>
         )
       }
-      return <FailCard title="This turn didn't finish." hint="The run crashed or the server restarted before it answered. Retry it with the button below." isLast={isLast} tools={t.tools} />
+      return <FailCard title="This turn didn't finish." hint="The run crashed or the server restarted before it answered. Retry it with the button below." isLast={isLast} steps={t.steps} />
     }
     return (
       <>
         {renderSections(t.sections, t.sha)}
-        <Steps tools={t.tools ?? []} />
+        <TurnSteps steps={t.steps ?? []} testPrefix="codemap" />
       </>
     )
   }
@@ -479,7 +244,7 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
       <CardHeader className="shrink-0 px-3 py-2">
         <div className="flex items-center justify-between gap-1">
           <div className="flex min-w-0 items-center gap-1.5">
-            <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
@@ -498,16 +263,12 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
                   <p className="px-2 py-1.5 text-xs text-muted-foreground">No chats yet — ask something below.</p>
                 )}
                 {threads.map((t) => (
-                  // Delete sits beside the item, never inside it: a nested
-                  // button's click never dispatches (Radix selects and
-                  // unmounts the menu on pointer-up first), so nesting
-                  // would silently swallow deletes.
                   <div key={t.id} data-testid="codemap-thread-item" data-thread-id={t.id} className="group flex items-center gap-0.5">
                     <DropdownMenuItem
                       onSelect={() => {
                         void openThread(t.id)
                       }}
-                      className={`min-w-0 flex-1 items-start px-2 py-1.5 ${t.id === activeId ? 'bg-muted' : ''}`}
+                      className={`min-w-0 flex-1 items-start px-2 py-1.5 ${t.id === thread?.id ? 'bg-muted' : ''}`}
                     >
                       <span className="block min-w-0 flex-1">
                         <span className="block truncate text-[13px] font-medium">{t.title}</span>
@@ -522,7 +283,7 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
                       aria-label={`Delete ${t.title}`}
                       data-testid="codemap-thread-delete"
                       disabled={blocked}
-                      onClick={() => void deleteThread(t.id)}
+                      onClick={() => void removeThread(t.id)}
                     >
                       <Trash2 className="size-3.5" />
                     </button>
@@ -531,9 +292,9 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
               </DropdownMenuContent>
             </DropdownMenu>
             <Sparkles className="size-4 shrink-0 text-muted-foreground" />
-            <CardTitle className="truncate text-base">{title || 'Codemap'}</CardTitle>
+            <CardTitle className="truncate text-base">{thread?.title || 'Codemap'}</CardTitle>
           </div>
-          <Button variant="ghost" size="sm" onClick={newChat} disabled={busy} className="h-7 shrink-0 px-2 text-xs text-muted-foreground" data-testid="codemap-new-chat">
+          <Button variant="ghost" size="sm" onClick={newChat} disabled={inFlight} className="h-7 shrink-0 px-2 text-xs text-muted-foreground" data-testid="codemap-new-chat">
             <Plus className="size-3.5" />
             New chat
           </Button>
@@ -542,7 +303,7 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
       <Separator className="shrink-0" />
       <CardContent className="flex min-h-0 flex-1 flex-col p-0">
         <div ref={viewportRef} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3" data-testid="codemap-thread">
-          {turns.length === 0 && !busy && (
+          {turns.length === 0 && !inFlight && status !== 'running' && (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
               <Avatar className="size-10">
                 <Bot className="size-5 text-muted-foreground" />
@@ -578,7 +339,7 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
               </div>
             </div>
           ))}
-          {busy && (
+          {inFlight && (
             <div className="flex gap-2.5">
               <Avatar className="mt-0.5 size-7">
                 <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
@@ -607,7 +368,7 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
-                  void generate()
+                  generate()
                 }
               }}
               data-testid="codemap-prompt"
@@ -617,7 +378,7 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
             <div className="flex items-center justify-end px-2.5 pb-2.5">
               <Button
                 size="icon"
-                onClick={() => void generate()}
+                onClick={() => generate()}
                 disabled={blocked || !prompt.trim() || ai?.configured === false}
                 data-testid="codemap-generate"
                 aria-label="Send"

@@ -22,16 +22,13 @@ type butlerCard struct {
 }
 
 // butlerPropose stores the approval on the owning thread and returns its
-// confirm id. created collects the public card for the turn response.
-func butlerPropose(st *threads.Store, threadID, turnID, tool, args, summary, blast string, created *[]butlerCard) (string, error) {
+// confirm id. Cards reach the UI through the thread's approvals, never
+// through the turn response: one channel, no merge.
+func butlerPropose(st *threads.Store, threadID, turnID, tool, args, summary, blast string) (string, error) {
 	id := threads.MintID()
-	card := butlerCard{ID: id, Tool: tool, Summary: summary, BlastRadius: blast}
 	err := st.AddApproval(threadID, threads.Approval{ID: id, TurnID: turnID, Status: threads.ApprovalPending, Tool: tool, Args: []byte(args), Summary: summary, BlastRadius: blast, CreatedAt: time.Now().UTC()})
 	if err != nil {
 		return "", err
-	}
-	if created != nil {
-		*created = append(*created, card)
 	}
 	return id, nil
 }
@@ -47,11 +44,11 @@ func handleButlerConfirmApply(d Deps) http.HandlerFunc {
 		}
 		// Hold the same slot as turns for the entire apply, so a turn cannot
 		// start between the busy check and the mutation.
-		if !butlerBusy.CompareAndSwap(false, true) {
+		if !butlerRuns.take(butlerRunKey, "") {
 			writeErr(w, http.StatusConflict, "butler busy — wait for the current run")
 			return
 		}
-		defer butlerBusy.Store(false)
+		defer butlerRuns.done(butlerRunKey)
 		if d.Butler == nil {
 			writeErr(w, http.StatusNotFound, "unknown confirm — propose it again from chat")
 			return
@@ -61,8 +58,9 @@ func handleButlerConfirmApply(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusNotFound, "unknown confirm — propose it again from chat")
 			return
 		}
+		butlerRuns.set(butlerRunKey, threadID)
 		if a.Status != "" && a.Status != threads.ApprovalPending {
-			writeErr(w, http.StatusConflict, "approval already resolved")
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 			return
 		}
 		var def *butlerWriteDef
@@ -106,18 +104,15 @@ func handleButlerConfirmDiscard(d Deps) http.HandlerFunc {
 			return
 		}
 		if a.Status != "" && a.Status != threads.ApprovalPending {
-			writeErr(w, http.StatusConflict, "approval already resolved")
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 			return
 		}
+		// Discard only resolves. No slot, no closure turn: dropping a
+		// proposal is always safe and the thread simply unblocks.
 		if err := d.Butler.ResolveApproval(threadID, id, threads.ApprovalDiscarded); err != nil {
 			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
-		answer, err := runButlerClosure(r, d, threadID, a)
-		if err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "result": answer})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }

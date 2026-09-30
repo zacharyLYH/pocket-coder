@@ -9,6 +9,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -153,7 +154,7 @@ func butlerConstrainSchema(schema map[string]any, props map[string][]string) map
 
 // butlerWriteTools wraps the table: wall check, blast, propose. Schemas
 // are constrained with live-state ids before shipping to the model.
-func butlerWriteTools(d Deps, st *threads.Store, threadID, turnID string, created *[]butlerCard) []agent.Tool {
+func butlerWriteTools(d Deps, st *threads.Store, threadID, turnID string) []agent.Tool {
 	byName := make(map[string]butlerWriteDef, len(butlerWriteTable))
 	for _, def := range butlerWriteTable {
 		byName[def.name] = def
@@ -179,7 +180,7 @@ func butlerWriteTools(d Deps, st *threads.Store, threadID, turnID string, create
 				if err != nil {
 					return "", err
 				}
-				id, err := butlerPropose(st, threadID, turnID, def.name, argsJSON, summary, blast, created)
+				id, err := butlerPropose(st, threadID, turnID, def.name, argsJSON, summary, blast)
 				if err != nil {
 					return "", err
 				}
@@ -415,7 +416,17 @@ var butlerWriteTable = []butlerWriteDef{
 				return "", fmt.Errorf("no previews")
 			}
 			evictCDP(butlerStr(args, "project"))
-			return "Preview closed.", d.Preview.Stop(ctx, butlerStr(args, "project"))
+			// Idempotent: proposals go stale (model proposes close on an
+			// already-stopped preview, user confirms later). Closing
+			// nothing succeeds instead of 502ing "preview worker not
+			// found" — the end state is what was asked for.
+			if err := d.Preview.Stop(ctx, butlerStr(args, "project")); err != nil {
+				if errors.Is(err, preview.ErrNotFound) {
+					return "Preview already stopped.", nil
+				}
+				return "", err
+			}
+			return "Preview closed.", nil
 		},
 	},
 	{

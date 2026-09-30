@@ -76,14 +76,14 @@ test.describe('codemap desktop', () => {
         turns: [
           {
             turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
-            sections: TURN.sections, tools: [{ tool: 'search_code', args: '{"pattern":"login"}' }],
+            sections: TURN.sections, steps: [{ tool: 'search_code', args: '{"pattern":"login"}' }],
             error: null, time: '2026-09-02T12:00:00Z',
           },
         ],
       },
     }
     await page.route('**/api/projects/*/codemap/threads', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threads: [], runningThreadId: null }) })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threads: []}) })
     })
     await page.route(/\/api\/projects\/.*\/codemap\/threads\/.+$/, async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(THREAD) })
@@ -132,7 +132,7 @@ test.describe('codemap desktop', () => {
         turns: [
           {
             turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
-            sections: TURN.sections, tools: [{ tool: 'search_code', args: '{"pattern":"login"}' }],
+            sections: TURN.sections, steps: [{ tool: 'search_code', args: '{"pattern":"login"}' }],
             time: '2026-09-02T12:00:00Z',
           },
         ],
@@ -149,13 +149,13 @@ test.describe('codemap desktop', () => {
               { title: 'Entrypoints', summary: 'main.go boots the server and mounts the API.', refs: [] },
               { title: 'Data flow', summary: 'Handlers call services, services hit docker.', refs: [] },
             ],
-            tools: [{ tool: 'search_code', args: '{"pattern":"func main"}' }],
+            steps: [{ tool: 'search_code', args: '{"pattern":"func main"}' }],
             time: '2026-08-31T13:00:00Z',
           },
           {
             turnId: 't0b', sha: 'abc123', prompt: 'How does data flow?',
             sections: [{ title: 'Data flow', summary: 'Requests flow through the mux into services.', refs: [] }],
-            tools: [],
+            steps: [],
             time: '2026-08-31T14:00:00Z',
           },
         ],
@@ -167,7 +167,7 @@ test.describe('codemap desktop', () => {
     // Regex: one handler for list, detail, and delete — a trailing glob
     // `threads*` would not cross the `/` before a thread id. No create
     // route in v2 (implicit flow, all 200s); the list carries
-    // runningThreadId (null when idle).
+    // status (ready when idle).
     await page.route(/\/api\/projects\/.*\/codemap\/threads(\/.*)?$/, async (route) => {
       const url = route.request().url()
       const method = route.request().method()
@@ -180,7 +180,7 @@ test.describe('codemap desktop', () => {
       } else if (detail) {
         await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'unknown thread' }) })
       } else {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threads: THREADS.filter((t) => !deleted.has(t.id)), runningThreadId: null }) })
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threads: THREADS.filter((t) => !deleted.has(t.id))}) })
       }
     })
   }
@@ -233,7 +233,7 @@ test.describe('codemap desktop', () => {
   })
 
   // REQUIRED: remount-into-run (route-mocked, no engine/model). Pins the
-  // §8 contract: busy restore via runningThreadId, block scope
+  // §8 contract: busy restore via row status, block scope
   // (composer + delete + retry), crash-vs-in-flight, mount-poll only.
   test('remount into running thread shows spinner and blocks', async ({ page }) => {
     await mockSessions(page)
@@ -246,11 +246,11 @@ test.describe('codemap desktop', () => {
     }
     const placeholder = {
       turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
-      sections: null, tools: null, error: null, time: '2026-09-02T10:00:00Z',
+      sections: null, steps: null, error: null, time: '2026-09-02T10:00:00Z',
     }
     const filled = {
       turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
-      sections: TURN.sections, tools: [{ tool: 'search_code', args: '{"pattern":"login"}' }],
+      sections: TURN.sections, steps: [{ tool: 'search_code', args: '{"pattern":"login"}' }],
       error: null, time: '2026-09-02T12:00:00Z',
     }
     let running: string | null = TID
@@ -264,14 +264,15 @@ test.describe('codemap desktop', () => {
           body: JSON.stringify({
             thread: {
               id: TID, project: FAKE_ID, title: 'Where does login happen?',
-              createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T12:00:00Z', turns: [turn],
+              createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T12:00:00Z',
+              status: running ? 'running' : 'ready', turns: [turn],
             },
           }),
         })
       } else {
         await route.fulfill({
           status: 200, contentType: 'application/json',
-          body: JSON.stringify({ threads: [SUMMARY], runningThreadId: running }),
+          body: JSON.stringify({ threads: [SUMMARY]}),
         })
       }
     })
@@ -312,11 +313,11 @@ test.describe('codemap desktop', () => {
     }
     const placeholder = {
       turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
-      sections: null, tools: null, error: null, time: '2026-09-02T10:00:00Z',
+      sections: null, steps: null, error: null, time: '2026-09-02T10:00:00Z',
     }
     const filled = {
       turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
-      sections: TURN.sections, tools: [{ tool: 'search_code', args: '{"pattern":"login"}' }],
+      sections: TURN.sections, steps: [{ tool: 'search_code', args: '{"pattern":"login"}' }],
       error: null, time: '2026-09-02T12:00:00Z',
     }
     let running: string | null = TID
@@ -330,14 +331,15 @@ test.describe('codemap desktop', () => {
           body: JSON.stringify({
             thread: {
               id: TID, project: FAKE_ID, title: 'Where does login happen?',
-              createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T12:00:00Z', turns: [turn],
+              createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T12:00:00Z',
+              status: running ? 'running' : 'ready', turns: [turn],
             },
           }),
         })
       } else {
         await route.fulfill({
           status: 200, contentType: 'application/json',
-          body: JSON.stringify({ threads: [SUMMARY], runningThreadId: running }),
+          body: JSON.stringify({ threads: [SUMMARY]}),
         })
       }
     })
@@ -384,17 +386,17 @@ test.describe('codemap desktop', () => {
               createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z',
               turns: [{
                 turnId: 't1', sha: 'abc123', prompt: 'Where does login happen?',
-                sections: null, tools: null, error: null, time: '2026-09-02T10:00:00Z',
+                sections: null, steps: null, error: null, time: '2026-09-02T10:00:00Z',
               }],
             },
           }),
         })
       } else {
-        // Crash variant: runningThreadId null with an answer-less
+        // Crash variant: row status ready with an answer-less
         // placeholder left behind (e.g. across a server restart).
         await route.fulfill({
           status: 200, contentType: 'application/json',
-          body: JSON.stringify({ threads: [SUMMARY], runningThreadId: null }),
+          body: JSON.stringify({ threads: [SUMMARY]}),
         })
       }
     })

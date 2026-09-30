@@ -194,8 +194,8 @@ func New(d Deps) http.Handler {
 		authed("GET", "/api/state", handleGetState)
 	}
 
-	// Butler: one global history (no project scope). The turn POST streams
-	// SSE status lines while the loop runs, then the final JSON answer.
+	// Butler: one global history (no project scope). Turns are plain
+	// JSON: reserve the placeholder, run detached, then answer.
 	if d.Butler != nil {
 		authed("GET", "/api/butler/threads", handleButlerThreads)
 		authed("GET", "/api/butler/threads/{tid}", handleButlerThreadGet)

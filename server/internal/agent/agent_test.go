@@ -271,8 +271,8 @@ func TestRunFormatsWithSchema(t *testing.T) {
 	if tools, _ := bodies[1]["tools"].([]any); len(tools) != 0 {
 		t.Fatalf("format call must not carry tools")
 	}
-	if lineage.InitialRequest == nil || lineage.PrunedTier1Data == nil {
-		t.Fatalf("lineage missing tier boundaries: %+v", lineage)
+	if lineage.Model == "" {
+		t.Fatalf("lineage missing model header: %+v", lineage)
 	}
 	if len(lineage.Events) < 4 {
 		t.Fatalf("lineage events = %d, want request/response/format sequence", len(lineage.Events))
@@ -360,10 +360,12 @@ func TestRunRetriesTransportError(t *testing.T) {
 }
 
 func TestRunRepeatCallHint(t *testing.T) {
-	// Same tool+args twice: the second tool message fed to the model
-	// carries a repeat note, while the run still succeeds.
+	// Same tool+args twice in a row: the second call is blocked without
+	// executing, and its short reply tells the model to move on while
+	// the run still succeeds.
 	var bodies []map[string]any
 	var mu sync.Mutex
+	var runs int
 	toolResp := func(id string) map[string]any {
 		return map[string]any{
 			"id": "chatcmpl-test", "object": "chat.completion", "created": 1, "model": "fake",
@@ -399,14 +401,16 @@ func TestRunRepeatCallHint(t *testing.T) {
 	}))
 	defer srv.Close()
 	search := Tool{Name: "search", Description: "s", Schema: map[string]any{"type": "object"},
-		Run: func(_ context.Context, _ string) (string, error) { return "hit", nil }}
+		Run: func(_ context.Context, _ string) (string, error) { runs++; return "hit", nil }}
 	var doneOutputs []string
+	var doneErrs []string
 	out, err := Run(context.Background(),
 		Config{BaseURL: srv.URL, APIKey: "k", Model: "m"},
 		"sys", "hi", nil, []Tool{search}, "s", nil, 4,
 		func(ev TraceEvent) {
 			if ev.Kind == "tool_done" {
 				doneOutputs = append(doneOutputs, ev.Result)
+				doneErrs = append(doneErrs, ev.Err)
 			}
 		}, nil)
 	if err != nil {
@@ -415,25 +419,27 @@ func TestRunRepeatCallHint(t *testing.T) {
 	if out != "done" {
 		t.Fatalf("out = %q, want done", out)
 	}
-	// Persisted outputs stay raw (no hint).
-	for _, o := range doneOutputs {
-		if strings.Contains(o, "already ran") {
-			t.Fatalf("persisted output polluted with hint: %q", o)
-		}
+	if runs != 1 {
+		t.Fatalf("tool runs = %d, want 1 (repeat blocked without executing)", runs)
 	}
-	// The model's third request carries the hint on the repeated result.
+	// The blocked call surfaces as a step error, not a second result.
+	if len(doneErrs) != 2 || !strings.Contains(doneErrs[1], "blocked") {
+		t.Fatalf("blocked step missing: errs=%q outputs=%q", doneErrs, doneOutputs)
+	}
+	// The model's third request carries the blocked reply, not a re-run.
 	raw, _ := json.Marshal(bodies[2])
-	if !strings.Contains(string(raw), "already ran") {
-		t.Fatalf("repeat hint missing from model context: %s", string(raw))
+	if !strings.Contains(string(raw), "identical to the previous") {
+		t.Fatalf("repeat block missing from model context: %s", string(raw))
 	}
 }
 
 func TestRunRepeatFailureEscalates(t *testing.T) {
-	// Same tool+args failing twice: the second error reply tells the
-	// model to stop repeating and change approach, and the run still
-	// completes when the model then answers.
+	// Same failing tool+args twice in a row: the second call is blocked
+	// without executing (one exec, not two), its reply tells the model
+	// to change approach, and the run still completes on the answer.
 	var bodies []map[string]any
 	var mu sync.Mutex
+	var runs int
 	errResp := func(id string) map[string]any {
 		return map[string]any{
 			"id": "chatcmpl-test", "object": "chat.completion", "created": 1, "model": "fake",
@@ -470,6 +476,7 @@ func TestRunRepeatFailureEscalates(t *testing.T) {
 	defer srv.Close()
 	boom := Tool{Name: "switch", Description: "s", Schema: map[string]any{"type": "object"},
 		Run: func(_ context.Context, _ string) (string, error) {
+			runs++
 			return "", errors.New("model \"liquid\" is not configured")
 		}}
 	out, err := Run(context.Background(),
@@ -481,11 +488,14 @@ func TestRunRepeatFailureEscalates(t *testing.T) {
 	if out != "cannot do that" {
 		t.Fatalf("out = %q, want the post-escalation answer", out)
 	}
-	// The third request carries the failure-escalation note: the note
-	// rides the second error's reply, which the model sees one round later.
+	if runs != 1 {
+		t.Fatalf("tool runs = %d, want 1 (repeat blocked without executing)", runs)
+	}
+	// The third request carries the blocked reply: the note rides the
+	// second call's reply, which the model sees one round later.
 	raw, _ := json.Marshal(bodies[2])
-	if !strings.Contains(string(raw), "already failed") || !strings.Contains(string(raw), "do not repeat") {
-		t.Fatalf("failure escalation missing from model context: %s", string(raw))
+	if !strings.Contains(string(raw), "identical to the previous") || !strings.Contains(string(raw), "Do not repeat") {
+		t.Fatalf("repeat block missing from model context: %s", string(raw))
 	}
 }
 

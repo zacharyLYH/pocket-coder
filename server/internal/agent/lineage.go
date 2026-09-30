@@ -1,9 +1,50 @@
 package agent
 
 import (
-	"encoding/json"
 	"time"
 )
+
+// LineageTool is one entry in the tools-available section at the top of
+// the lineage file: name + description only, no schemas. Schemas live in
+// code; lineage just needs to say what the model could call.
+type LineageTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// LineageCall is one tool call the model requested in a response.
+type LineageCall struct {
+	Tool string `json:"tool"`
+	Args string `json:"args,omitempty"`
+}
+
+// Lineage event kinds. Use these for lin.record() — raw strings in call
+// sites drift (llm-request vs llm_request), and the shape test pins the
+// wire values, so a typo would pass review and fail the suite.
+const (
+	LineageLLMRequest    = "llm_request"
+	LineageLLMResponse   = "llm_response"
+	LineageToolStart     = "tool_start"
+	LineageToolDone      = "tool_done"
+	LineageFinalAnswer   = "final_answer"
+	LineageFormatRequest = "format_request"
+	LineageFormatResp    = "format_response"
+	LineageError         = "error"
+)
+
+type LineageEvent struct {
+	TS         string        `json:"ts"`
+	Kind       string        `json:"kind"`
+	Step       int           `json:"step,omitempty"`
+	Model      string        `json:"model,omitempty"`
+	Tool       string        `json:"tool,omitempty"`
+	Args       string        `json:"args,omitempty"`
+	Content    string        `json:"content,omitempty"`
+	Output     string        `json:"output,omitempty"`
+	Calls      []LineageCall `json:"calls,omitempty"`
+	Err        string        `json:"error,omitempty"`
+	DurationMs int64         `json:"durationMs,omitempty"`
+}
 
 // TraceEvent is the compact live log event. Lineage stores the larger record.
 type TraceEvent struct {
@@ -16,20 +57,6 @@ type TraceEvent struct {
 	Err    string
 }
 
-type LineageEvent struct {
-	TS         string `json:"ts"`
-	Kind       string `json:"kind"`
-	Step       int    `json:"step,omitempty"`
-	Round      int    `json:"round,omitempty"`
-	Tool       string `json:"tool,omitempty"`
-	Args       string `json:"args,omitempty"`
-	Content    string `json:"content,omitempty"`
-	Output     string `json:"output,omitempty"`
-	Err        string `json:"error,omitempty"`
-	DurationMs int64  `json:"durationMs,omitempty"`
-	Payload    any    `json:"payload,omitempty"`
-}
-
 // Todo is the small, replace-in-place checklist shared by agent features.
 // Status and priority mirror OpenCode's todo contract.
 type Todo struct {
@@ -39,15 +66,15 @@ type Todo struct {
 }
 
 type Lineage struct {
-	InitialRequest  any            `json:"initialRequest,omitempty"`
-	TurnID          string         `json:"turnId,omitempty"`
-	ThreadID        string         `json:"threadId,omitempty"`
-	Prompt          string         `json:"prompt,omitempty"`
-	Time            time.Time      `json:"time,omitempty"`
-	Events          []LineageEvent `json:"events"`
-	Todos           []Todo         `json:"todos,omitempty"`
-	PrunedTier1Data any            `json:"prunedTier1Data,omitempty"`
-	Error           string         `json:"error,omitempty"`
+	TurnID   string         `json:"turnId,omitempty"`
+	ThreadID string         `json:"threadId,omitempty"`
+	Prompt   string         `json:"prompt,omitempty"`
+	Model    string         `json:"model,omitempty"`
+	Tools    []LineageTool  `json:"tools,omitempty"`
+	Time     time.Time      `json:"time,omitempty"`
+	Events   []LineageEvent `json:"events"`
+	Todos    []Todo         `json:"todos,omitempty"`
+	Error    string         `json:"error,omitempty"`
 }
 
 func (l *Lineage) record(kind string, fill func(*LineageEvent)) {
@@ -68,48 +95,16 @@ func capLine(s string, max int) string {
 	return s
 }
 
-func payloadOf(raw []byte) any {
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return string(raw)
+// SetTools records the tools-available section once per turn: name +
+// description only, no schemas. Callers set it at turn start; later
+// events just reference tools by name.
+func (l *Lineage) SetTools(tools []Tool) {
+	if l == nil || len(l.Tools) > 0 {
+		return
 	}
-	return v
-}
-
-func extractorSnapshot(l *Lineage, answer string) map[string]any {
-	out := map[string]any{"answer": capLine(answer, 16000)}
-	if l == nil {
-		return out
+	out := make([]LineageTool, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, LineageTool{Name: t.Name, Description: t.Description})
 	}
-	out["events"] = make([]map[string]any, 0, len(l.Events))
-	for _, ev := range l.Events {
-		item := map[string]any{"ts": ev.TS, "kind": ev.Kind}
-		if ev.Step != 0 {
-			item["step"] = ev.Step
-		}
-		if ev.Round != 0 {
-			item["round"] = ev.Round
-		}
-		if ev.Tool != "" {
-			item["tool"] = ev.Tool
-		}
-		if ev.Args != "" {
-			item["args"] = capLine(ev.Args, 2000)
-		}
-		if ev.Output != "" {
-			item["output"] = capLine(ev.Output, 6000)
-		}
-		if ev.Content != "" {
-			item["content"] = capLine(ev.Content, 8000)
-		}
-		if ev.Err != "" {
-			item["error"] = capLine(ev.Err, 2000)
-		}
-		if ev.Payload != nil && (ev.Kind == "llm_response" || ev.Kind == "format_response") {
-			raw, _ := json.Marshal(ev.Payload)
-			item["payload"] = payloadOf([]byte(capLine(string(raw), 12000)))
-		}
-		out["events"] = append(out["events"].([]map[string]any), item)
-	}
-	return out
+	l.Tools = out
 }

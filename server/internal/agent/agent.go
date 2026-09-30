@@ -164,7 +164,7 @@ func toolReply(id, content string) openai.ChatCompletionMessageParamUnion {
 	}
 }
 
-// replayStep mirrors codemap.ToolStep without importing it (agent stays
+// replayStep mirrors the shared Step shape without importing it (agent stays
 // dependency-free of callers).
 type replayStep struct {
 	Tool   string

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -30,11 +29,39 @@ func formatResult(ctx context.Context, client openai.Client, cfg Config, schemaN
 	if schema == nil {
 		return out, nil
 	}
-	snapshot := extractorSnapshot(lin, out)
+	// Evidence for the extractor rides the wire only — it is not stored
+	// in lineage. The file keeps one light format_request/response pair.
+	evidence := map[string]any{"answer": capLine(out, 16000)}
 	if lin != nil {
-		lin.PrunedTier1Data = snapshot
+		evs := make([]map[string]any, 0, len(lin.Events))
+		for _, ev := range lin.Events {
+			item := map[string]any{"ts": ev.TS, "kind": ev.Kind}
+			if ev.Step != 0 {
+				item["step"] = ev.Step
+			}
+			if ev.Tool != "" {
+				item["tool"] = ev.Tool
+			}
+			if ev.Args != "" {
+				item["args"] = capLine(ev.Args, 2000)
+			}
+			if ev.Output != "" {
+				item["output"] = capLine(ev.Output, 6000)
+			}
+			if ev.Content != "" {
+				item["content"] = capLine(ev.Content, 8000)
+			}
+			if len(ev.Calls) > 0 {
+				item["calls"] = ev.Calls
+			}
+			if ev.Err != "" {
+				item["error"] = capLine(ev.Err, 2000)
+			}
+			evs = append(evs, item)
+		}
+		evidence["events"] = evs
 	}
-	snapRaw, _ := jsonOf(snapshot)
+	snapRaw, _ := jsonOf(evidence)
 	fparams := openai.ChatCompletionNewParams{
 		Model: cfg.Model,
 		Messages: []openai.ChatCompletionMessageParamUnion{{
@@ -57,17 +84,16 @@ func formatResult(ctx context.Context, client openai.Client, cfg Config, schemaN
 		},
 	}
 	// One attempt only; no raw-text fallback.
-	freqRaw, _ := json.Marshal(fparams)
-	lin.record("format_request", func(ev *LineageEvent) {
-		ev.Payload = payloadOf(freqRaw)
+	lin.record(LineageFormatRequest, func(ev *LineageEvent) {
+		ev.Model = cfg.Model
 	})
-	res, responseRaw, err := Completion(ctx, client, fparams, onTrace,
+	res, _, err := Completion(ctx, client, fparams, onTrace,
 		"LLM Format request", "LLM Format response", "format call", 1)
 	if err != nil {
 		if onTrace != nil {
 			onTrace(TraceEvent{Kind: "model_error", Err: "structuredExtractor failed: " + err.Error()})
 		}
-		lin.record("format_request", func(ev *LineageEvent) {
+		lin.record(LineageFormatRequest, func(ev *LineageEvent) {
 			ev.Err = err.Error()
 		})
 		return "", err
@@ -76,7 +102,7 @@ func formatResult(ctx context.Context, client openai.Client, cfg Config, schemaN
 		if onTrace != nil {
 			onTrace(TraceEvent{Kind: "model_error", Err: "structuredExtractor returned no choices"})
 		}
-		lin.record("format_response", func(ev *LineageEvent) {
+		lin.record(LineageFormatResp, func(ev *LineageEvent) {
 			ev.Err = "no choices"
 		})
 		return "", fmt.Errorf("structuredExtractor returned no choices")
@@ -86,14 +112,14 @@ func formatResult(ctx context.Context, client openai.Client, cfg Config, schemaN
 		if onTrace != nil {
 			onTrace(TraceEvent{Kind: "model_error", Err: "structuredExtractor returned empty answer"})
 		}
-		lin.record("format_response", func(ev *LineageEvent) {
+		lin.record(LineageFormatResp, func(ev *LineageEvent) {
 			ev.Err = "empty answer"
 		})
 		return "", fmt.Errorf("structuredExtractor returned empty answer")
 	}
-	lin.record("format_response", func(ev *LineageEvent) {
+	lin.record(LineageFormatResp, func(ev *LineageEvent) {
+		ev.Model = cfg.Model
 		ev.Content = capLine(formatted, 16000)
-		ev.Payload = payloadOf(responseRaw)
 	})
 	return formatted, nil
 }

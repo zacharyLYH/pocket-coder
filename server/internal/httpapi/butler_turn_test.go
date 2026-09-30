@@ -18,7 +18,7 @@ import (
 )
 
 // butlerTurnFixture builds one envelope turn with butler's payload shape.
-func butlerTurnFixture(turnID, prompt, answer string, steps []butlerStep) threads.Turn {
+func butlerTurnFixture(turnID, prompt, answer string, steps []agent.Step) threads.Turn {
 	payload, _ := json.Marshal(butlerPayload{Answer: answer, Steps: steps})
 	return threads.Turn{TurnID: turnID, Prompt: prompt, Payload: payload}
 }
@@ -30,7 +30,7 @@ func butlerTurnFixture(turnID, prompt, answer string, steps []butlerStep) thread
 func TestButlerHistoryReplaysToolSteps(t *testing.T) {
 	errMsg := "boom"
 	th := threads.Thread{ID: "th", Turns: []threads.Turn{
-		butlerTurnFixture("t1", "brief me", "Healthy.", []butlerStep{{Tool: butlerToolListProjects, Args: "{}", Result: `[{"id":"a/b"}]`}}),
+		butlerTurnFixture("t1", "brief me", "Healthy.", []agent.Step{{Tool: butlerToolListProjects, Args: "{}", Output: `[{"id":"a/b"}]`}}),
 		{TurnID: "t2", Prompt: "stop it", Error: &errMsg},
 		{TurnID: "t3", Prompt: "and now?"}, // the reserved placeholder
 	}}
@@ -69,8 +69,8 @@ func TestButlerHistoryReplaysToolSteps(t *testing.T) {
 
 // Turn-level integration: the full "brief me" flow — scope gate, chained
 // reads, summary, persisted transcript. Codemap depth without docker or
-// the frontend: fake model at HTTP, mocked engine, real store, real SSE
-// framing, real transcript on disk.
+// the frontend: fake model at HTTP, mocked engine, real store, plain-JSON
+// turn, real transcript on disk.
 func TestButlerTurnBriefMeFlow(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
 	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git", Branch: "main"}); err != nil {
@@ -98,25 +98,9 @@ func TestButlerTurnBriefMeFlow(t *testing.T) {
 	cookie := loginCookie(t, h, pinOut)
 
 	rec := butlerPost(t, h, cookie, `{"prompt":"brief me"}`, http.StatusOK)
-	statuses, last := splitSSEBody(t, rec.Body.String())
+	last := finalBody(t, rec)
 	if last["answer"] != "One project is healthy; nothing needs attention." {
 		t.Fatalf("final = %v", last)
-	}
-	// SSE order: one line per tool start and finish, terminal done last.
-	var seq []string
-	for _, s := range statuses {
-		tool, _ := s["tool"].(string)
-		status, _ := s["status"].(string)
-		seq = append(seq, tool+":"+status)
-	}
-	joined := strings.Join(seq, " ")
-	for _, want := range []string{"list_projects:running", "list_projects:done", "events_tail:running", "events_tail:done", "done:answered"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("statuses = %v, want %q in order", seq, want)
-		}
-	}
-	if confs, _ := last["confirms"].([]any); len(confs) != 0 {
-		t.Fatalf("confirms = %v, want none on a read-only turn", confs)
 	}
 	// Two prompts then the question: guide, workflow examples, user.
 	msgs, _ := loopBody["messages"].([]any)
@@ -156,8 +140,8 @@ func TestButlerTurnBriefMeFlow(t *testing.T) {
 		t.Fatalf("steps = %+v", transcript.Steps)
 	}
 	for _, s := range transcript.Steps {
-		if len([]rune(s.Result)) > 121 { // summarize cuts at 120 + "…"
-			t.Fatalf("step %q result not summarized: %q", s.Tool, s.Result)
+		if len([]rune(s.Output)) > 121 { // summarize cuts at 120 + "…"
+			t.Fatalf("step %q output not summarized: %q", s.Tool, s.Output)
 		}
 	}
 	lineageRaw, err := d.Butler.ReadTurnLineage(butlerScope, tid, 1)
@@ -199,7 +183,7 @@ func TestButlerTodoLifecyclePersistsCheckedItems(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 	rec := butlerPost(t, h, cookie, `{"prompt":"inspect projects and report findings"}`, http.StatusOK)
-	_, last := splitSSEBody(t, rec.Body.String())
+	last := finalBody(t, rec)
 	if last["answer"] != "All findings are reported." {
 		t.Fatalf("final = %v", last)
 	}
@@ -248,8 +232,8 @@ func TestButlerRejectsBlankPrompt(t *testing.T) {
 	}
 }
 
-// CompleteTurn failing mid-stream still answers 200: the failure rides
-// the stream with the thread identity for a retry, never a dropped 500.
+// CompleteTurn failing still answers with the thread identity for a
+// retry, never a dropped body.
 func TestButlerCompleteTurnFailureStreamsError(t *testing.T) {
 	d, _, pinOut, st := newSessionDeps(t)
 	butlerDir := t.TempDir()
@@ -272,8 +256,8 @@ func TestButlerCompleteTurnFailureStreamsError(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	rec := butlerPost(t, h, cookie, `{"prompt":"brief me"}`, http.StatusOK)
-	_, last := splitSSEBody(t, rec.Body.String())
+	rec := butlerPost(t, h, cookie, `{"prompt":"brief me"}`, http.StatusInternalServerError)
+	last := finalBody(t, rec)
 	if last["error"] != errInternal {
 		t.Fatalf("final = %v, want the transparent error, not the answer", last)
 	}
@@ -296,26 +280,15 @@ func TestButlerTurnProposeFlow(t *testing.T) {
 		func(w http.ResponseWriter, _ map[string]any) {
 			writeCompletion(w, "stop", "Tap Confirm to stop a/b.", nil)
 		},
-		func(w http.ResponseWriter, _ map[string]any) {
-			writeCompletion(w, "stop", "What would you like to do next?", nil)
-		},
 	)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
 	rec := butlerPost(t, h, cookie, `{"prompt":"stop the api project"}`, http.StatusOK)
-	_, last := splitSSEBody(t, rec.Body.String())
+	last := finalBody(t, rec)
 	if last["answer"] != "Tap Confirm to stop a/b." {
 		t.Fatalf("final = %v", last)
-	}
-	confs, _ := last["confirms"].([]any)
-	if len(confs) != 1 {
-		t.Fatalf("confirms = %v, want the stop card", last["confirms"])
-	}
-	card, _ := confs[0].(map[string]any)
-	if card["tool"] != butlerToolStop || card["summary"] == "" || card["blastRadius"] == "" || card["id"] == "" {
-		t.Fatalf("card = %v, want tool + summary + blast radius + id", card)
 	}
 	tid, _ := last["threadId"].(string)
 	th, err := d.Butler.Get(butlerScope, tid)
@@ -326,12 +299,19 @@ func TestButlerTurnProposeFlow(t *testing.T) {
 	if len(th.Turns) != 1 {
 		t.Fatalf("turns = %+v, want the propose turn", th.Turns)
 	}
+	if len(th.Approvals) != 1 {
+		t.Fatalf("approvals = %+v, want the stop card on the thread", th.Approvals)
+	}
+	card := map[string]any{"tool": th.Approvals[0].Tool, "summary": th.Approvals[0].Summary, "blastRadius": th.Approvals[0].BlastRadius, "id": th.Approvals[0].ID}
+	if card["tool"] != butlerToolStop || card["summary"] == "" || card["blastRadius"] == "" || card["id"] == "" {
+		t.Fatalf("card = %v, want tool + summary + blast radius + id", card)
+	}
 	_ = json.Unmarshal(th.Turns[0].Payload, &propose)
 	if len(propose.Steps) != 1 {
 		t.Fatalf("steps = %+v, want the propose step recorded", propose.Steps)
 	}
-	if !strings.Contains(propose.Steps[0].Result, card["id"].(string)) {
-		t.Fatalf("step result = %q, want the confirm id", propose.Steps[0].Result)
+	if !strings.Contains(propose.Steps[0].Output, card["id"].(string)) {
+		t.Fatalf("step output = %q, want the confirm id", propose.Steps[0].Output)
 	}
 	blocked := authedPost(t, h, cookie, "/api/butler/turn", `{"prompt":"what now?","threadId":"`+tid+`"}`)
 	if blocked.Code != http.StatusConflict || !strings.Contains(blocked.Body.String(), "pending confirmation") {
@@ -350,5 +330,53 @@ func TestButlerTurnProposeFlow(t *testing.T) {
 	}
 	if err := json.Unmarshal(applyRec.Body.Bytes(), &applied); err != nil || !applied.OK {
 		t.Fatalf("apply = %q (err %v)", applyRec.Body.String(), err)
+	}
+}
+
+// A failed turn carrying a pending card stays locked like any awaiting
+// thread: retry must 409 until the card resolves instead of stacking new
+// cards onto the locked thread.
+func TestButlerRetryBlockedWhileApprovalPending(t *testing.T) {
+	d, _, pinOut, st := newSessionDeps(t)
+	empty := func(w http.ResponseWriter, _ map[string]any) {
+		writeCompletion(w, "stop", "", nil)
+	}
+	f := newFakeModel(t, scopeAllow,
+		func(w http.ResponseWriter, _ map[string]any) {
+			writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("c1", butlerToolPreviewClose, `{"project":"a/b"}`)})
+		},
+		empty, empty, empty,
+	)
+	seedAI(t, st, f.srv.URL)
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	rec := butlerPost(t, h, cookie, `{"prompt":"close the preview"}`, http.StatusBadGateway)
+	last := finalBody(t, rec)
+	tid, _ := last["threadId"].(string)
+	if tid == "" {
+		t.Fatalf("failed turn missing threadId: %v", last)
+	}
+	th, err := d.Butler.Get(butlerScope, tid)
+	if err != nil || len(th.Turns) != 1 || th.Turns[0].Error == nil {
+		t.Fatalf("turns = %+v, want one failed turn", th.Turns)
+	}
+	pending := 0
+	for _, a := range th.Approvals {
+		if a.Status == "" || a.Status == threads.ApprovalPending {
+			pending++
+		}
+	}
+	if pending != 1 {
+		t.Fatalf("approvals = %+v, want one pending card", th.Approvals)
+	}
+
+	rec = authedPost(t, h, cookie, "/api/butler/threads/"+tid+"/retry", `{}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "pending confirmation") {
+		t.Fatalf("retry with pending card = %d %q, want 409", rec.Code, rec.Body.String())
+	}
+	th, _ = d.Butler.Get(butlerScope, tid)
+	if len(th.Turns) != 1 {
+		t.Fatalf("turns = %d, want still 1 (no rerun started)", len(th.Turns))
 	}
 }

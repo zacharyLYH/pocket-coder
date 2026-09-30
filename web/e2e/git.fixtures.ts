@@ -86,7 +86,7 @@ export async function mockGit(page: Page, opts: { identityEmpty?: boolean; noUps
     r.fulfill({ json: r.request().method() === 'GET' ? { sessions: [{ name: 'main' }] } : { name: 'main' } }))
   await page.route('**/api/projects/*/harnesses', (r) => r.fulfill({ json: { harnesses: [] } }))
   await page.route('**/api/projects/*/codemap/threads*', (r) =>
-    r.fulfill({ json: r.request().method() === 'GET' ? { threads: [], runningThreadId: null } : {} }))
+    r.fulfill({ json: r.request().method() === 'GET' ? { threads: []} : {} }))
 
   await page.route('**/api/projects/*/git/status', (r) =>
     r.fulfill({ json: STATE.committed ? { ...status(), files: [] } : status() }))

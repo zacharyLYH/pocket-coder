@@ -28,8 +28,9 @@ func Run(ctx context.Context, cfg Config, sysPrompt, userPrompt string, history 
 		maxSteps = 8
 	}
 	client := NewClient(cfg)
-	if lin != nil && lin.InitialRequest == nil {
-		lin.InitialRequest = map[string]any{"userPrompt": userPrompt, "model": cfg.Model}
+	if lin != nil {
+		lin.Model = cfg.Model
+		lin.SetTools(tools)
 	}
 	l := newLoop(client, cfg, tools, assembleMessages(sysPrompt, userPrompt, history), maxSteps, onTrace, lin)
 	for _, o := range opts {
@@ -72,9 +73,12 @@ type loop struct {
 	maxStep int
 	onTrace func(TraceEvent)
 	lin     *Lineage
-	// seenCalls counts exact (tool, args) repeats: weak models re-issue
-	// identical failing queries, so the repeat note steers them off.
-	seenCalls map[string]int
+	// lastCall is the exact (tool, args) key of the previous call: a
+	// consecutive identical call is blocked without executing (v0). Weak
+	// models re-issue identical queries and each one costs an exec plus
+	// full output appended to context, so the loop refuses to pay twice
+	// in a row instead of nudging with prose.
+	lastCall string
 	// roundsDone counts executed tool rounds; groundNudged bounds the
 	// grounding nudge to once per turn.
 	roundsDone   int
@@ -87,7 +91,7 @@ func newLoop(client openai.Client, cfg Config, tools []Tool, msgs []openai.ChatC
 		byName[t.Name] = t
 	}
 	return &loop{client: client, cfg: cfg, tools: tools, byName: byName, msgs: msgs,
-		maxStep: maxSteps, onTrace: onTrace, lin: lin, seenCalls: map[string]int{}}
+		maxStep: maxSteps, onTrace: onTrace, lin: lin}
 }
 
 func (l *loop) params() openai.ChatCompletionNewParams {
@@ -123,21 +127,39 @@ func (l *loop) gather(ctx context.Context) (string, error) {
 }
 
 // request issues one loop call and maps wire failures to turn errors.
+// Lineage keeps one light row per call: step + model on the way in,
+// assistant text + requested tool calls on the way out. Full payloads
+// stay in server logs (Completion slog), not in the file.
 func (l *loop) request(ctx context.Context, step int) (openai.ChatCompletionMessage, error) {
 	params := l.params()
-	requestRaw, _ := jsonOf(params)
-	l.lin.record("llm_request", func(ev *LineageEvent) { ev.Step, ev.Payload = step, payloadOf(requestRaw) })
+	l.lin.record(LineageLLMRequest, func(ev *LineageEvent) {
+		ev.Step, ev.Model = step, l.cfg.Model
+		ev.Content = capLine(strings.TrimSpace(tailText(l.msgs)), 2000)
+	})
 	res, resRaw, err := Completion(ctx, l.client, params, l.onTrace,
 		"LLM Request", "LLM Response", fmt.Sprintf("step %d", step+1), stepAttempts)
 	if err != nil {
-		l.lin.record("error", func(ev *LineageEvent) { ev.Step, ev.Err = step, err.Error() })
+		l.lin.record(LineageError, func(ev *LineageEvent) { ev.Step, ev.Err = step, err.Error() })
 		return openai.ChatCompletionMessage{}, err
 	}
-	l.lin.record("llm_response", func(ev *LineageEvent) { ev.Step, ev.Payload = step, payloadOf(resRaw) })
+	l.lin.record(LineageLLMResponse, func(ev *LineageEvent) {
+		ev.Step, ev.Model = step, l.cfg.Model
+		if len(res.Choices) == 0 {
+			return
+		}
+		msg := res.Choices[0].Message
+		ev.Content = capLine(strings.TrimSpace(msg.Content), 8000)
+		for _, tc := range msg.ToolCalls {
+			if tc.Type != "function" {
+				continue
+			}
+			ev.Calls = append(ev.Calls, LineageCall{Tool: tc.Function.Name, Args: capLine(tc.Function.Arguments, 2000)})
+		}
+	})
 	if len(res.Choices) == 0 {
 		preview := previewOf(resRaw)
 		l.trace(TraceEvent{Kind: "model_error", Err: "model returned no choices (response: " + preview + ")"})
-		l.lin.record("error", func(ev *LineageEvent) { ev.Step, ev.Err = step, "model returned no choices" })
+		l.lin.record(LineageError, func(ev *LineageEvent) { ev.Step, ev.Err = step, "model returned no choices" })
 		return openai.ChatCompletionMessage{}, fmt.Errorf("model returned no choices on step %d (response: %s)", step+1, preview)
 	}
 	return res.Choices[0].Message, nil
@@ -149,7 +171,7 @@ func (l *loop) settleText(step int, text string) (answer string, nudge bool, err
 	if text == "" {
 		where := fmt.Sprintf("step %d", step+1)
 		l.trace(TraceEvent{Kind: "model_error", Err: fmt.Sprintf("model returned an empty answer on %s", where)})
-		l.lin.record("error", func(ev *LineageEvent) { ev.Step, ev.Err = step, "model returned an empty answer" })
+		l.lin.record(LineageError, func(ev *LineageEvent) { ev.Step, ev.Err = step, "model returned an empty answer" })
 		return "", false, fmt.Errorf("model returned an empty answer on %s", where)
 	}
 	if len(l.tools) > 0 && l.roundsDone == 0 && !l.groundNudged && step < l.maxStep-1 &&
@@ -158,7 +180,7 @@ func (l *loop) settleText(step int, text string) (answer string, nudge bool, err
 		l.msgs = append(l.msgs, assistantMsg(text), userMsg(groundingNudge))
 		return "", true, nil
 	}
-	l.lin.record("final_answer", func(ev *LineageEvent) { ev.Step, ev.Content = step, capLine(text, 16000) })
+	l.lin.record(LineageFinalAnswer, func(ev *LineageEvent) { ev.Step, ev.Content = step, capLine(text, 16000) })
 	return text, false, nil
 }
 
@@ -187,16 +209,50 @@ func (l *loop) answerTools(ctx context.Context, step int, msg openai.ChatComplet
 	}
 }
 
+// maxMsgToolChars bounds one tool result entering model context. Outputs
+// above this are cut with a marker telling the model to narrow down.
+// Persistence caps (lineage, N.json) are separate and stay as-is: this
+// bounds what the NEXT request pays for, which is the recursive-growth
+// vector MaxSteps alone cannot cover.
+const maxMsgToolChars = 8 * 1024
+
+// capMsg cuts s rune-aware for model context, marking the cut so the
+// model narrows its next call instead of re-requesting the same thing.
+func capMsg(s string) string {
+	if r := []rune(s); len(r) > maxMsgToolChars {
+		return string(r[:maxMsgToolChars]) + "\n…(output truncated — narrow the range or pattern instead of repeating this call)"
+	}
+	return s
+}
+
 // execTool runs one call, tracing both sides. Unknown tools and failures
 // feed back as tool text (never Go errors) so the model can recover.
+// A consecutive identical call is blocked without executing: the reply is
+// a short shape error, so repeats cost ~100 chars of context instead of
+// another full output appended forever.
 func (l *loop) execTool(ctx context.Context, toolStart time.Time, step int, name, args, id string) openai.ChatCompletionMessageParamUnion {
+	key := name + "\x00" + args
+	if key == l.lastCall {
+		msg := "error: identical to the previous tool call (" + name + ") — not executed. Do not repeat it: change the tool or arguments, or answer with what you have."
+		l.trace(TraceEvent{Kind: "tool_start", Round: step, Tool: name, Args: args})
+		l.trace(TraceEvent{Kind: "tool_done", Round: step, Tool: name, Args: args, Err: "blocked consecutive repeat"})
+		l.lin.record(LineageToolStart, func(ev *LineageEvent) {
+			ev.Step, ev.Tool, ev.Args = step, name, capLine(args, 2000)
+		})
+		l.lin.record(LineageToolDone, func(ev *LineageEvent) {
+			ev.Step, ev.Tool, ev.Args = step, name, capLine(args, 2000)
+			ev.Err = "blocked consecutive repeat"
+		})
+		return toolReply(id, msg)
+	}
+	l.lastCall = key
 	tool, ok := l.byName[name]
 	if !ok {
 		return toolReply(id, "unknown tool "+name)
 	}
 	l.trace(TraceEvent{Kind: "tool_start", Round: step, Tool: name, Args: args})
-	l.lin.record("tool_start", func(ev *LineageEvent) {
-		ev.Step, ev.Round, ev.Tool, ev.Args = step, step, name, args
+	l.lin.record(LineageToolStart, func(ev *LineageEvent) {
+		ev.Step, ev.Tool, ev.Args = step, name, capLine(args, 2000)
 	})
 	out, rerr := tool.Run(ctx, args)
 	if rerr != nil {
@@ -207,26 +263,16 @@ func (l *loop) execTool(ctx context.Context, toolStart time.Time, step int, name
 		ev.Err = rerr.Error()
 	}
 	l.trace(ev)
-	l.lin.record("tool_done", func(ev *LineageEvent) {
-		ev.Step, ev.Round, ev.Tool, ev.Args = step, step, name, args
+	l.lin.record(LineageToolDone, func(ev *LineageEvent) {
+		ev.Step, ev.Tool, ev.Args = step, name, capLine(args, 2000)
 		ev.Output, ev.DurationMs = capLine(out, 8000), time.Since(toolStart).Milliseconds()
 		if rerr != nil {
 			ev.Err = capLine(rerr.Error(), 4000)
 		}
 	})
-	// Exact repeats — successful or failing — get a model-visible note
-	// so weak models steer off. Failing repeats escalate harder: two
-	// identical errors means the approach is wrong, not flaky.
-	key := name + "\x00" + args
-	if l.seenCalls[key] > 0 {
-		if rerr != nil {
-			out += fmt.Sprintf("\n(note: this exact call already failed %d time(s) with the same error — do not repeat it. The request itself is the problem: pick a different tool or answer that this cannot be done)", l.seenCalls[key])
-		} else {
-			out += fmt.Sprintf("\n(note: this exact call already ran %d time(s) with the same result — try a different pattern, path, or tool instead of repeating it)", l.seenCalls[key])
-		}
-	}
-	l.seenCalls[key]++
-	return toolReply(id, out)
+	// The reply is what the next request pays context for: cap it here.
+	// Lineage and N.json keep their own (higher) caps above.
+	return toolReply(id, capMsg(out))
 }
 
 // closeOut spends one tools-free call to convert grounding into an
@@ -234,26 +280,28 @@ func (l *loop) execTool(ctx context.Context, toolStart time.Time, step int, name
 func (l *loop) closeOut(ctx context.Context) (string, error) {
 	l.msgs = append(l.msgs, userMsg(closeOutPrompt))
 	params := openai.ChatCompletionNewParams{Model: l.cfg.Model, Messages: l.msgs}
-	finalRaw, _ := jsonOf(params)
-	l.lin.record("llm_request", func(ev *LineageEvent) { ev.Step, ev.Payload = l.maxStep, payloadOf(finalRaw) })
+	l.lin.record(LineageLLMRequest, func(ev *LineageEvent) {
+		ev.Step, ev.Model = l.maxStep, l.cfg.Model
+		ev.Content = capLine(strings.TrimSpace(tailText(l.msgs)), 2000)
+	})
 	res, _, err := Completion(ctx, l.client, params, l.onTrace,
 		"LLM Final-answer request", "LLM Final-answer response", "final-answer call", stepAttempts)
 	if err != nil {
 		l.trace(TraceEvent{Kind: "model_error", Err: err.Error()})
-		l.lin.record("error", func(ev *LineageEvent) { ev.Err = err.Error() })
+		l.lin.record(LineageError, func(ev *LineageEvent) { ev.Err = err.Error() })
 		return "", fmt.Errorf("model kept calling tools after %d steps", l.maxStep)
 	}
 	if res == nil || len(res.Choices) == 0 {
 		l.trace(TraceEvent{Kind: "model_error", Err: fmt.Sprintf("final-answer call returned no choices after %d tool steps", l.maxStep)})
-		l.lin.record("error", func(ev *LineageEvent) { ev.Err = "final-answer call returned no choices" })
+		l.lin.record(LineageError, func(ev *LineageEvent) { ev.Err = "final-answer call returned no choices" })
 		return "", fmt.Errorf("model kept calling tools after %d steps", l.maxStep)
 	}
 	text := strings.TrimSpace(res.Choices[0].Message.Content)
 	if text == "" {
-		l.lin.record("error", func(ev *LineageEvent) { ev.Err = "final-answer call returned empty answer" })
+		l.lin.record(LineageError, func(ev *LineageEvent) { ev.Err = "final-answer call returned empty answer" })
 		return "", fmt.Errorf("model kept calling tools after %d steps", l.maxStep)
 	}
-	l.lin.record("final_answer", func(ev *LineageEvent) { ev.Content = capLine(text, 16000) })
+	l.lin.record(LineageFinalAnswer, func(ev *LineageEvent) { ev.Content = capLine(text, 16000) })
 	return text, nil
 }
 

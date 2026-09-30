@@ -72,15 +72,22 @@ func TestToolsRejectUnsafeArgs(t *testing.T) {
 			t.Errorf("read %q must fail", args)
 		}
 	}
-	// Leading slashes normalize into the repo instead of failing: the
-	// model emits them despite rule 5, so the layer converts rather
-	// than errors.
+	// Absolute paths under the repo root strip to relative and run;
+	// absolutes anywhere else fail fast naming the root (no exec, no
+	// "no such file" miss that sends the model guessing).
 	exec.cmds = nil
-	if _, err := read.Run(ctx, `{"path":"/etc/passwd","start":1,"end":2}`); err != nil {
-		t.Fatalf("leading slash must normalize, got %v", err)
+	if _, err := read.Run(ctx, `{"path":"/workspace/src/main.go","start":1,"end":2}`); err != nil {
+		t.Fatalf("rooted absolute must run, got %v", err)
 	}
-	if len(exec.cmds) != 1 || !strings.Contains(exec.cmds[0], `'etc/passwd'`) {
-		t.Fatalf("leading slash not mapped into repo: %v", exec.cmds)
+	if len(exec.cmds) != 1 || !strings.Contains(exec.cmds[0], `'src/main.go'`) {
+		t.Fatalf("rooted absolute not stripped: %v", exec.cmds)
+	}
+	if _, err := read.Run(ctx, `{"path":"/etc/passwd","start":1,"end":2}`); err == nil ||
+		!strings.Contains(err.Error(), "/workspace") {
+		t.Fatalf("outside-root absolute must name the root, got %v", err)
+	}
+	if len(exec.cmds) != 1 {
+		t.Fatalf("outside-root absolute must not execute: %v", exec.cmds)
 	}
 	// Omitted bounds default to 1-50 instead of failing the step.
 	exec.cmds = nil
@@ -167,8 +174,9 @@ func TestToolsRejectUnsafeArgs(t *testing.T) {
 	toolsMiss := Tools(missExec, "c", "/workspace")
 	readMiss := toolsMiss[byName["read_file"]]
 	_, merr := readMiss.Run(ctx, `{"path":"src/routes/home.jsx"}`)
-	if merr == nil || !strings.Contains(merr.Error(), "src/routes contains: about/ home/ profile/") {
-		t.Fatalf("miss must name siblings, got %v", merr)
+	if merr == nil || !strings.Contains(merr.Error(), "/workspace/src/routes/home.jsx") ||
+		!strings.Contains(merr.Error(), "/workspace/src/routes contains: /workspace/src/routes/about/ /workspace/src/routes/home/ /workspace/src/routes/profile/") {
+		t.Fatalf("miss must name absolute siblings, got %v", merr)
 	}
 	// A dead parent walks up: nothing to list anywhere means the raw
 	// error, with no hint text attached.
@@ -186,6 +194,26 @@ func TestToolsRejectUnsafeArgs(t *testing.T) {
 	}
 	if len(exec.cmds) != 1 || !strings.Contains(exec.cmds[0], `'src/routes'`) || strings.Contains(exec.cmds[0], `'src/routes/'`) {
 		t.Fatalf("trailing slash not normalized: %v", exec.cmds)
+	}
+}
+
+func TestNormalizeRepoPath(t *testing.T) {
+	const root = "/workspace"
+	for path, want := range map[string]string{
+		root + "/src/main.go": "src/main.go",
+		root:                  ".",
+		"src/main.go":         "src/main.go",
+		"src/routes/":         "src/routes",
+	} {
+		got, err := normalizeRepoPath(path, root)
+		if err != nil || got != want {
+			t.Errorf("normalize %q = %q (%v), want %q", path, got, err, want)
+		}
+	}
+	for _, path := range []string{"", "/etc/passwd", "/home/u/repo/x.go", "../x", "a//b"} {
+		if got, err := normalizeRepoPath(path, root); err == nil {
+			t.Errorf("normalize %q must fail, got %q", path, got)
+		}
 	}
 }
 
