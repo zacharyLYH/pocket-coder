@@ -13,16 +13,17 @@
 # Test hook: --test (or PCODER_SETUP_TEST=1 in the environment, as used
 # through `curl ... | VAR=1 bash -s -- ...`) runs a pure-local self-test
 # with zero side effects: no root needed, no apt/dnf, no docker, no clone,
-# no network, no email. Everything heavy is mocked; write_env still runs
-# for real into a temp dir (exercises the Gmail server/.env contract) and
-# is deleted on exit. Runtime: ~1s. Full delivery + boot stay manual
-# per-release (one real Gmail run).
+# no network, no email. Stub binaries on PATH stand in for the platform
+# tools, so validate, install_deps, and even boot() execute for real
+# against a call log. Runtime: ~2s. Live SMTP delivery + live boot stay
+# manual per-release (one real Gmail run).
 set -euo pipefail
 
 REPO_URL="${PCODER_SETUP_REPO:-https://github.com/zacharyLYH/pocket-coder}"
 REPO_BRANCH="${PCODER_SETUP_BRANCH:-main}"
-# Overridable for rootless runs: PCODER_INSTALL_DIR=~/.pocket-coder/src keeps
-# everything under your home when /opt is not writable.
+# Default home for the checkout. resolve_install_dir (in validate) may move
+# it under $HOME when /opt is not writable — explicit PCODER_INSTALL_DIR
+# always wins, and an existing install keeps its location.
 INSTALL_DIR="${PCODER_INSTALL_DIR:-/opt/pocket-coder/src}"
 EMAIL=""
 SMTP_PASSWORD=""
@@ -88,10 +89,28 @@ port_taken() {
   return 1
 }
 
+# resolve_install_dir picks where the checkout lives. Explicit override
+# wins; an existing install keeps its location (the writability gate below
+# then decides between sudo and override); a fresh root run lands in /opt;
+# everyone else falls back under $HOME with a loud log instead of an error.
+resolve_install_dir() {
+  if [ -n "${PCODER_INSTALL_DIR:-}" ]; then
+    INSTALL_DIR="$PCODER_INSTALL_DIR"
+    return 0
+  fi
+  INSTALL_DIR=/opt/pocket-coder/src
+  [ -e "$INSTALL_DIR" ] && return 0
+  [ -w /opt ] 2>/dev/null && return 0
+  [ -n "${HOME:-}" ] || die "cannot write to /opt and HOME is unset — set PCODER_INSTALL_DIR to a writable path"
+  INSTALL_DIR="$HOME/pocket-coder/src"
+  log "no write access to /opt — installing under $INSTALL_DIR (override with PCODER_INSTALL_DIR)"
+}
+
 # 2. validate — nothing is installed or downloaded before this passes.
 # Ordered cheapest-first. Distro/arch warn, everything else hards.
 # (--test never reaches here: test_main exits right after parse_args.)
 validate() {
+  resolve_install_dir
   # No root gate: non-root works when the install dir is writable and the
   # user can reach the docker daemon (docker group). Anything privileged
   # below fails loudly with a sudo-or-fix hint instead.
@@ -302,7 +321,159 @@ test_main() {
   probe_reject "missing --smtp-password value" --email a@b.cd --smtp-password
   probe_reject "bad email" --email not-an-email --smtp-password x
   probe_reject "unknown flag" --bogus
-  log "TEST MODE PASS — arg parsing, validation, and .env contract all good (SMTP delivery + boot stay manual per-release)"
+  # Phase 2: run validate + install_deps against stubbed platform tools.
+  # Fake docker (healthy daemon, compose present) and failing init shims
+  # go on PATH; the install dir is temp. No side effects, but the real
+  # rootless/portability logic executes — the macOS bugs lived exactly
+  # here, past what --test used to reach. The stub bin lives inside the
+  # temp install dir, so the EXIT trap cleans it even on failure.
+  stub="$INSTALL_DIR/stubbin"
+  mkdir -p "$stub"
+  printf '#!/bin/sh\nexit 0\n' > "$stub/docker"
+  chmod +x "$stub/docker"
+  for s in systemctl service; do
+    printf '#!/bin/sh\nexit 1\n' > "$stub/$s"
+    chmod +x "$stub/$s"
+  done
+  PATH="$stub:$PATH" INSTALL_DIR="$INSTALL_DIR/plat" validate \
+    || die "test: validate failed with stubbed tools"
+  PATH="$stub:$PATH" INSTALL_DIR="$INSTALL_DIR/plat" install_deps \
+    || die "test: install_deps failed with stubbed tools"
+  # Phase 3 (non-root only — root bypasses permission bits): an explicitly
+  # unwritable install dir must fail LOUDLY with the PCODER_INSTALL_DIR
+  # hint. (Set via env: validate resolves the location from it.)
+  if [ "$(id -u)" != "0" ]; then
+    if out="$( (PCODER_INSTALL_DIR=/proc/cant-write-here validate) 2>&1 )"; then
+      die "test: validate on unwritable dir exited 0, want failure"
+    else
+      case "$out" in
+        *PCODER_INSTALL_DIR*) ;;
+        *) die "test: unwritable dir printed no hint (output was: $out)" ;;
+      esac
+    fi
+  else
+    log "test: skipping unwritable-dir probe (running as root)"
+  fi
+  # Phase 4: resolve_install_dir picks the location. An explicit override
+  # is always honored; without one, an unwritable /opt falls back under
+  # $HOME (only asserted where /opt is actually unwritable — elsewhere
+  # the /opt default correctly wins).
+  out="$( (PCODER_INSTALL_DIR=/custom/path resolve_install_dir >/dev/null; printf '%s' "$INSTALL_DIR") )"
+  [ "$out" = "/custom/path" ] || die "test: explicit PCODER_INSTALL_DIR not honored (got: $out)"
+  if [ ! -w /opt ] && [ -n "${HOME:-}" ]; then
+    fakehome="$INSTALL_DIR/fakehome"
+    mkdir -p "$fakehome"
+    out="$( (HOME="$fakehome"; unset PCODER_INSTALL_DIR; INSTALL_DIR=/opt/pocket-coder/src; resolve_install_dir >/dev/null; printf '%s' "$INSTALL_DIR") )"
+    [ "$out" = "$fakehome/pocket-coder/src" ] || die "test: /opt fallback wrong (got: $out)"
+  else
+    log "test: skipping /opt-fallback probe (/opt is writable here)"
+  fi
+  # Phase 5: boot() end-to-end with stubbed git/docker/curl/sleep plus a
+  # call log. No images, no daemon, no network — but the real sequencing,
+  # the health retry loop, and every failure exit execute. Switches
+  # (exported so the stub processes see them): PCODER_TEST_SMTP_FAIL=1
+  # kills the smtp-test probe, PCODER_TEST_HEALTH_FAIL=1 fails every
+  # health poll, PCODER_TEST_HEALTH_OK_AFTER=N succeeds on the Nth poll.
+  cat > "$stub/git" <<'EOF'
+#!/bin/sh
+echo "git $*" >> "$PCODER_TEST_LOG"
+if [ "$1" = "clone" ]; then
+  last=""; for a in "$@"; do last="$a"; done
+  mkdir -p "$last/.git"
+fi
+exit 0
+EOF
+  cat > "$stub/docker" <<'EOF'
+#!/bin/sh
+echo "docker $*" >> "$PCODER_TEST_LOG"
+if [ "${1:-} ${2:-}" = "compose run" ] && [ "${PCODER_TEST_SMTP_FAIL:-0}" = "1" ]; then
+  exit 1
+fi
+exit 0
+EOF
+  cat > "$stub/curl" <<'EOF'
+#!/bin/sh
+echo "curl $*" >> "$PCODER_TEST_LOG"
+case "$*" in
+  *localhost:8080/health*)
+    if [ "${PCODER_TEST_HEALTH_FAIL:-0}" = "1" ]; then exit 22; fi
+    n=0
+    [ -f "$PCODER_TEST_COUNT" ] && n="$(cat "$PCODER_TEST_COUNT")"
+    n=$((n + 1))
+    printf '%s' "$n" > "$PCODER_TEST_COUNT"
+    [ "$n" -ge "${PCODER_TEST_HEALTH_OK_AFTER:-1}" ] && exit 0
+    exit 22 ;;
+  *) exit 22 ;;
+esac
+EOF
+  for s in git docker curl; do chmod +x "$stub/$s"; done
+  for s in sleep hostname ipconfig; do
+    printf '#!/bin/sh\nexit 0\n' > "$stub/$s"
+    chmod +x "$stub/$s"
+  done
+  # Exported (not command-scoped): every boot probe below must hit the
+  # stubs, never the real toolchain — a leak here builds real images.
+  export PATH="$stub:$PATH"
+  export PCODER_TEST_LOG="$INSTALL_DIR/boottest/calls.log"
+  export PCODER_TEST_COUNT="$INSTALL_DIR/boottest/health.count"
+  mkdir -p "$INSTALL_DIR/boottest"
+  order_ok() {
+    prev=0
+    for pat in "$@"; do
+      cur=$(grep -n "$pat" "$PCODER_TEST_LOG" | head -1 | cut -d: -f1)
+      [ -n "$cur" ] && [ "$cur" -gt "$prev" ] || return 1
+      prev=$cur
+    done
+  }
+  # Happy path, fresh clone, health green on the 3rd poll.
+  export PCODER_TEST_HEALTH_OK_AFTER=3
+  : > "$PCODER_TEST_LOG"
+  rm -f "$PCODER_TEST_COUNT"
+  out="$( (INSTALL_DIR="$INSTALL_DIR/bootroot" boot) )" \
+    || die "test: boot happy path failed"
+  case "$out" in *"is live"*) ;; *) die "test: boot printed no live banner" ;; esac
+  [ -f "$INSTALL_DIR/bootroot/server/.env" ] || die "test: boot wrote no .env"
+  [ "$(grep -c "localhost:8080/health" "$PCODER_TEST_LOG")" = "3" ] \
+    || die "test: health retry loop polled wrong number of times"
+  order_ok "git clone" "compose build" "smtp-test" "compose up" \
+    || die "test: boot ran steps out of order"
+  unset PCODER_TEST_HEALTH_OK_AFTER
+  # Update path: existing checkout fetches, never re-clones.
+  mkdir -p "$INSTALL_DIR/bootroot2/.git"
+  : > "$PCODER_TEST_LOG"
+  ( INSTALL_DIR="$INSTALL_DIR/bootroot2" boot ) >/dev/null \
+    || die "test: boot update path failed"
+  grep -q " fetch " "$PCODER_TEST_LOG" || die "test: update path skipped fetch"
+  grep -q " clone " "$PCODER_TEST_LOG" && die "test: update path cloned over existing repo"
+  # Dead SMTP aborts before boot with the Gmail hint.
+  export PCODER_TEST_SMTP_FAIL=1
+  : > "$PCODER_TEST_LOG"
+  if out="$( (INSTALL_DIR="$INSTALL_DIR/bootroot3" boot) 2>&1 )"; then
+    die "test: boot with dead SMTP exited 0, want failure"
+  else
+    case "$out" in
+      *"SMTP delivery failed"*) ;;
+      *) die "test: SMTP failure misreported (output was: $out)" ;;
+    esac
+  fi
+  grep -q "compose up" "$PCODER_TEST_LOG" && die "test: boot launched the stack after SMTP failure"
+  unset PCODER_TEST_SMTP_FAIL
+  # Unhealthy server: all 60 polls, diagnostics, then the loud exit.
+  export PCODER_TEST_HEALTH_FAIL=1
+  : > "$PCODER_TEST_LOG"
+  if out="$( (INSTALL_DIR="$INSTALL_DIR/bootroot4" boot) 2>&1 )"; then
+    die "test: boot with dead server exited 0, want failure"
+  else
+    case "$out" in
+      *"never became healthy"*) ;;
+      *) die "test: health timeout misreported (output was: $out)" ;;
+    esac
+  fi
+  unset PCODER_TEST_HEALTH_FAIL
+  grep -q "compose logs" "$PCODER_TEST_LOG" || die "test: health timeout dumped no diagnostics"
+  [ "$(grep -c "localhost:8080/health" "$PCODER_TEST_LOG")" = "60" ] \
+    || die "test: health loop gave up early"
+  log "TEST MODE PASS — arg parsing, validation, install-dir, and stubbed boot all good (live SMTP + live boot stay manual per-release)"
   trap - EXIT
   rm -rf "$INSTALL_DIR"
 }
