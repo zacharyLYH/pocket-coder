@@ -1,5 +1,6 @@
 #!/bin/bash
-# Pocket Coder one-command setup for a fresh Linux box (EC2 user data or SSH).
+# Pocket Coder one-command setup for a fresh Linux box (EC2 user data or SSH)
+# or a Mac with Docker Desktop.
 #
 #   curl -fsSL https://raw.githubusercontent.com/zacharyLYH/pocket-coder/main/deploy/setup.sh | bash -s -- \
 #     --email you@example.com \
@@ -27,6 +28,12 @@ REPO_BRANCH="${PCODER_SETUP_BRANCH:-main}"
 INSTALL_DIR="${PCODER_INSTALL_DIR:-/opt/pocket-coder/src}"
 EMAIL=""
 SMTP_PASSWORD=""
+OS="$(uname -s 2>/dev/null || printf unknown)" # Darwin vs Linux — Mac has no apt/dnf/systemd
+# Homebrew lives outside the default PATH in non-interactive shells
+# (curl|bash): pick it up so git/docker/brew resolve on a stock Mac.
+for brewdir in /opt/homebrew/bin /usr/local/bin; do
+  case ":$PATH:" in *":$brewdir:"*) ;; *) [ -d "$brewdir" ] && PATH="$brewdir:$PATH" ;; esac
+done
 
 log() { printf '[setup] %s\n' "$*"; }
 die() { printf '[setup] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -35,9 +42,12 @@ usage() {
   cat >&2 <<'EOF'
 Usage: setup.sh --email you@example.com --smtp-password "xxxx app password"
 
-Bootstraps Pocket Coder on a fresh Linux box: installs git + docker,
-clones the repo, writes server/.env, validates SMTP delivery, and boots
-the production stack on port 8080.
+Bootstraps Pocket Coder on a fresh Linux box or a Mac (Docker Desktop):
+installs git + docker, clones the repo, writes server/.env, validates
+SMTP delivery, and boots the production stack on port 8080.
+
+Mac: install Docker Desktop first
+(https://www.docker.com/products/docker-desktop/), launch it, then re-run.
 EOF
 }
 
@@ -106,6 +116,17 @@ resolve_install_dir() {
   log "no write access to /opt — installing under $INSTALL_DIR (override with PCODER_INSTALL_DIR)"
 }
 
+# disk_avail_kb prints free KB under a path. GNU df has --output, BSD
+# (macOS) does not — fall back to `df -k` col 4. Empty = unknown, skip.
+disk_avail_kb() {
+  disk_dir="$1"
+  while [ ! -e "$disk_dir" ]; do disk_dir="$(dirname "$disk_dir")"; done
+  disk_out="$(df --output=avail "$disk_dir" 2>/dev/null | tail -1 | tr -d ' ' || true)"
+  case "$disk_out" in ''|*[!0-9]*) ;; *) printf '%s' "$disk_out"; return 0 ;; esac
+  disk_out="$(df -k "$disk_dir" 2>/dev/null | tail -1 | awk '{print $4}' || true)"
+  case "$disk_out" in ''|*[!0-9]*) return 1 ;; *) printf '%s' "$disk_out" ;; esac
+}
+
 # 2. validate — nothing is installed or downloaded before this passes.
 # Ordered cheapest-first. Distro/arch warn, everything else hards.
 # (--test never reaches here: test_main exits right after parse_args.)
@@ -117,7 +138,9 @@ validate() {
   probe="$INSTALL_DIR"
   while [ ! -e "$probe" ]; do probe="$(dirname "$probe")"; done
   [ -w "$probe" ] || die "cannot write to $INSTALL_DIR (running as $(id -un)) — re-run with sudo or set PCODER_INSTALL_DIR to a writable path"
-  if [ -f /etc/os-release ]; then
+  if [ "$OS" = "Darwin" ]; then
+    log "macOS detected — Docker Desktop must already be installed and running"
+  elif [ -f /etc/os-release ]; then
     # shellcheck disable=SC1091
     . /etc/os-release
     case "${ID:-unknown} ${VERSION_ID:-}" in
@@ -148,9 +171,9 @@ validate() {
       die "port 8080 is taken — free it before installing"
     fi
   fi
-  disk_kb="$(df --output=avail "${INSTALL_DIR%/*}" 2>/dev/null | tail -1 | tr -d ' ' || true)"
+  disk_kb="$(disk_avail_kb "$INSTALL_DIR" || true)"
   if [ -n "$disk_kb" ] && [ "$disk_kb" -lt 10485760 ]; then
-    die "need at least 10 GB free under ${INSTALL_DIR%/*} (have $((disk_kb / 1024 / 1024)) GB)"
+    die "need at least 10 GB free under $probe (have $((disk_kb / 1024 / 1024)) GB)"
   fi
   if [ -r /proc/meminfo ]; then
     mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
@@ -167,6 +190,28 @@ validate() {
 # never uninstalls binaries, so the daemon check always runs even when
 # the binaries are all present).
 install_deps() {
+  # macOS has no apt/dnf/yum: Docker comes from Docker Desktop, git/curl
+  # from Xcode CLT or Homebrew. Never suggest apt here.
+  if [ "$OS" = "Darwin" ]; then
+    missing_mac=""
+    command -v git >/dev/null 2>&1 || missing_mac="$missing_mac git"
+    command -v curl >/dev/null 2>&1 || missing_mac="$missing_mac curl"
+    [ -z "$missing_mac" ] || die "missing:$missing_mac — install Xcode CLT (xcode-select --install) or Homebrew, then re-run"
+    if ! command -v docker >/dev/null 2>&1; then
+      if command -v brew >/dev/null 2>&1; then
+        die "missing: docker — install it with: brew install --cask docker (then launch Docker Desktop and re-run)"
+      fi
+      die "missing: docker — install Docker Desktop from https://www.docker.com/products/docker-desktop/ (Apple Silicon build), launch it, then re-run"
+    fi
+    if [ "${RERUN:-0}" != "1" ]; then
+      install_compose_plugin
+    fi
+    ensure_docker_running
+    command -v docker >/dev/null 2>&1 || die "docker install failed — see https://docs.docker.com/desktop/setup/install/mac-install/"
+    docker compose version >/dev/null 2>&1 || die "docker compose plugin missing — update Docker Desktop to the latest version"
+    log "dependencies installed"
+    return 0
+  fi
   if [ "${RERUN:-0}" != "1" ]; then
     to_install=""
     for tool in git curl; do
@@ -215,9 +260,14 @@ install_deps() {
 # init scripts first (real boxes), then a direct dockerd launch
 # (containers and minimal images have no init). Only launches when the
 # daemon is actually unreachable, so a running daemon is never disturbed.
+# On macOS there is no systemd/dockerd — Docker Desktop owns the daemon.
 ensure_docker_running() {
-  # Failures are swallowed: `docker info` below is the real verdict, so no
-  # need to probe for systemctl/service first.
+  if [ "$OS" = "Darwin" ]; then
+    if docker info >/dev/null 2>&1; then
+      return 0
+    fi
+    die "docker daemon unreachable — launch Docker Desktop (open -a Docker), wait for the whale icon, then re-run"
+  fi
   systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true
   if docker info >/dev/null 2>&1; then
     return 0
@@ -242,6 +292,8 @@ ensure_docker_running() {
 # install_compose_plugin fetches the compose plugin from GitHub releases
 # when the distro packages did not provide it (Ubuntu) or at all. Pinned
 # version for reproducible setups; DOCKER_COMPOSE_VERSION overrides.
+# On macOS Docker Desktop bundles compose — only the bare-CLI (no
+# Desktop) case downloads, as a darwin binary into ~/.docker/cli-plugins.
 install_compose_plugin() {
   docker compose version >/dev/null 2>&1 && return 0
   arch="$(uname -m)"
@@ -251,6 +303,15 @@ install_compose_plugin() {
     *) die "unsupported arch for compose plugin download: $arch" ;;
   esac
   ver="${DOCKER_COMPOSE_VERSION:-v2.39.2}"
+  if [ "$OS" = "Darwin" ]; then
+    dest="$HOME/.docker/cli-plugins/docker-compose"
+    mkdir -p "$(dirname "$dest")"
+    log "installing compose plugin $ver (darwin-$arch)"
+    curl -fsSL "https://github.com/docker/compose/releases/download/${ver}/docker-compose-darwin-${arch}" -o "$dest" \
+      || die "compose plugin download failed"
+    chmod +x "$dest"
+    return 0
+  fi
   dest="/usr/libexec/docker/cli-plugins/docker-compose"
   mkdir -p "$(dirname "$dest")"
   log "installing compose plugin $ver ($arch)"
