@@ -77,8 +77,13 @@ run_group() {
   # bootstrap boots from a seeded state.json (see ALL_GROUPS above)
   seed=""
   [ "$name" = "bootstrap" ] && seed="E2E_SEED=bootstrap.seed.json"
-  # Clean up any leftover containers from crashed runs
-  docker compose -f ../docker-compose.e2e.yml -p "$(proj_name "$name")" down 2>/dev/null
+  # Clean up any leftover containers from crashed runs. down matches by
+  # project name; the data-dir/port vars only need to parse, so dummy
+  # values are fine (real values ride with the test process env below).
+  # Without them compose exits 1 on the blank :/data mount and the cleanup
+  # silently does nothing.
+  PCODER_E2E_DATA_DIR="${PCODER_E2E_DATA_DIR:-/tmp/pcoder-e2e-down}" PCODER_E2E_API_PORT="${PCODER_E2E_API_PORT:-8080}" \
+  docker compose -f ../docker-compose.yml -f ../docker-compose.e2e.yml -p "$(proj_name "$name")" down 2>/dev/null
   echo "[$name] starting: api:$api web:$web git:$git → test-results/$name.log + test-results/$name/progress.md"
   env E2E_RUN_ID="$name" E2E_API_PORT="$api" E2E_WEB_PORT="$web" E2E_GIT_PORT="$git" $seed \
     npx playwright test --config=playwright.config.ts --reporter=list --reporter=./e2e/progress-reporter.ts $specs > "test-results/$name.log" 2>&1 &
@@ -91,7 +96,9 @@ run_group() {
 cleanup_all() {
   kill "${AGG_PID:-}" 2>/dev/null
   for name in $STARTED_GROUPS; do
-    docker compose -f ../docker-compose.e2e.yml -p "$(proj_name "$name")" down 2>/dev/null
+    # Dummy vars: see the pre-run cleanup above — down needs them to parse.
+    PCODER_E2E_DATA_DIR="${PCODER_E2E_DATA_DIR:-/tmp/pcoder-e2e-down}" PCODER_E2E_API_PORT="${PCODER_E2E_API_PORT:-8080}" \
+    docker compose -f ../docker-compose.yml -f ../docker-compose.e2e.yml -p "$(proj_name "$name")" down 2>/dev/null
   done
 }
 trap cleanup_all EXIT INT TERM

@@ -7,19 +7,27 @@ import { login } from './helpers'
 
 test.use({ storageState: { cookies: [], origins: [] } })
 
-test('shows the login form when logged out', async ({ page }) => {
+test('shows the landing page at / when logged out', async ({ page }) => {
   await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Your dev box, in your pocket.' })).toBeVisible()
+  await page.getByRole('button', { name: 'Log in' }).first().click()
+  await expect(page.getByPlaceholder('you@example.com')).toBeVisible()
+})
+
+test('shows the login form at /login when logged out', async ({ page }) => {
+  await page.goto('/login')
   await expect(page.getByPlaceholder('you@example.com')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Send code' })).toBeVisible()
 })
 
-test('logs in with a PIN and shows the logged-in view', async ({ page }) => {
+test('logs in with a PIN and lands in the app', async ({ page }) => {
   await login(page)
+  await expect(page).toHaveURL(/\/app$/)
 })
 
-test('logs out from the logged-in view', async ({ page }) => {
+test('logs out back to the landing page', async ({ page }) => {
   await login(page)
 
   await page.getByRole('button', { name: 'Log out' }).click()
-  await expect(page.getByPlaceholder('you@example.com')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Your dev box, in your pocket.' })).toBeVisible()
 })

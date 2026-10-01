@@ -1,38 +1,47 @@
 # pocket-coder
 
-Rotate between free coding harnesses while vibe coding on the move.
+Vibe code on the move with your favourite coding CLIs, without sacrificing control and modern ergonomics. Like Devin and GH Codespaces, but free.
 
-## Quick start
+## Run it on a server (EC2)
 
-**Prereqs:** Go, Node, Docker.
+One command in the EC2 "User data" field (or over SSH as root) and you get
+a running Pocket Coder on port 8080. Open that port in the security group.
+Re-run the same command anytime to update to the latest version — your data
+(volume + `server/.env`) is never touched.
+
+**1. Get a Gmail app password**:
+1. Follow [this guide](https://help.meetalfred.com/en/articles/8160682-set-up-smtp-for-gmail-app-password-guide) to completion and obtain an SMTP password.
+
+**2. Paste** (replace the email + password):
+In your box, run:
+```sh
+curl -fsSL https://raw.githubusercontent.com/zacharyLYH/pocket-coder/main/deploy/setup.sh | bash -s -- \
+  --email you@example.com \
+  --smtp-password "xxxx app password"
+```
+
+**3. Log in** — open `http://<instance-ip>:8080`, enter the email, the PIN
+arrives by email. A setup-complete test email lands in the inbox first,
+so you know delivery works before you need it.
+
+## Developer
+
+### Setup
+Local dev uses the `docker-compose.dev.yml` stack (Vite HMR) with
+credentials in `server/.env`:
 
 ```sh
-make setup                      # checks tools, creates server/.env, installs deps, seeds from test/state.mock.json
+make setup                      # checks tools, creates server/.env, installs deps, seeds demo data
 # first run creates server/.env — edit PCODER_LOGIN_EMAIL, then re-run make setup
-
-make start-local                # :8080 backend + :5173 frontend (no docker)
-make start-docker               # full stack via docker compose
+make start-docker               # full dev stack (:8080 + :5173)
+make dev-seed                   # re-seed server/data from test/state.mock.json
+make nuke                       # teardown containers, volumes, network and server/data
 ```
 
-Open `http://localhost:5173` and log in with that email. PIN prints to the server log; set `SMTP_*` in `server/.env` to receive it by email instead (https://help.meetalfred.com/en/articles/8160682-set-up-smtp-for-gmail-app-password-guide).
+**Persistent storage**: local dev keeps state in `server/data/`. On your box
+it's the `pcoder-data` volume (mounted at `/data` in the container).
 
-Manual alternative:
-```sh
-echo "PCODER_LOGIN_EMAIL=you@example.com" > server/.env
-make dev-seed                   # same seed step as make setup
-```
-
-## Notes
-
-- Containers survive server restarts; next attach recreates them if deleted.
-- Stop the server before hand-editing `server/data/state.json`.
-- Teardown: `make nuke` (or manually `docker rm -f $(docker ps -aq --filter name=pcoder-)` + `docker volume rm …` + `docker network rm pcoder-net` + `rm -rf server/data`)
-
-## Configuration
-
-`server/data/state.json` is the source of truth. Env vars only fill missing values on first boot — to change SMTP, stop the server, delete the `smtp` key from `state.json`, update `server/.env`, and restart.
-
-Config loads from `server/.env` (or `../.env` when run inside `server/`). Real env vars override the file; compose uses `env_file`.
+**Env vars** :
 
 | Variable | Description |
 |---|---|
@@ -46,13 +55,8 @@ Config loads from `server/.env` (or `../.env` when run inside `server/`). Real e
 | `PCODER_BIND` | Listen addr (default `:8080`) |
 | `PCODER_DOCKER_SOCK` | Docker endpoint (default `unix:///var/run/docker.sock`) |
 
-## Tests
 
-| Command | What it runs | Needs |
-|---|---|---|
-| `make setup` | First-time setup (tools + `server/.env` + `npm install` + seed `test/state.mock.json`) | Go, Node, Docker |
-| `make start-local` | Backend + frontend directly (no docker) | Go, Node |
-| `make start-docker` | Full stack via docker compose | Docker |
-| `make test` | Full stack tests (Go unit+integration, web unit+build+e2e) | — |
-| `make check-ci` | Run CI workflow locally via act (mirrors GitHub Actions) | Docker, act |
-| `make nuke` | Teardown containers, volumes, network and `server/data` | Docker |
+### Tests
+```sh
+make test                       # everything: setup.sh self-test + Go + web
+```

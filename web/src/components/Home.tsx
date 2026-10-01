@@ -69,7 +69,9 @@ export function Home({ email, onLogout, navigate }: {
         <RunEverywhereCard projects={projects} busy={harnessBusy} onBusy={setHarnessBusy} />
       </main>
       {harnessBusy && <BusyOverlay />}
-      <ButlerFab projectHint={null} />
+      {/* Same gate as the codemap tab: no model key, no butler. Hidden
+          until the config loads so key-less backends never show it. */}
+      {aiStatus?.configured ? <ButlerFab projectHint={null} /> : null}
     </>
   )
 }

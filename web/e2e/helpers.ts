@@ -34,7 +34,7 @@ export function terminalUrl(id: string, session: string): string {
 
 // login drives the real email + console-mailer PIN flow end to end.
 export async function login(page: Page) {
-  await page.goto('/')
+  await page.goto('/login')
   const pinOffset = logSize()
   await page.getByPlaceholder('you@example.com').fill(LOGIN_EMAIL)
   await page.getByRole('button', { name: 'Send code' }).click()

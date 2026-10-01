@@ -1,0 +1,5 @@
+# Server build context: never bake local credentials or live state
+# into the image (compose injects config via env_file at runtime).
+data
+.env
+bin

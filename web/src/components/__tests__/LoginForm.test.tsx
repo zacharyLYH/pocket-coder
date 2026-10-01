@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { LoginForm } from '@/components/LoginForm'
 import { mockFetch } from '@/test/mockFetch'
@@ -33,5 +33,33 @@ describe('LoginForm', () => {
     fireEvent.change(screen.getByPlaceholderText('6-digit PIN'), { target: { value: '123456' } })
     fireEvent.click(screen.getByRole('button', { name: 'Log in' }))
     await waitFor(() => expect(onLoggedIn).toHaveBeenCalledWith('me@example.com'))
+  })
+})
+
+// PWA card pins: an install prompt that fired before React mounted (the
+// inline index.html stash) must still offer Install, and inside the
+// installed app the card must not dead-end on "no prompt".
+describe('LoginForm PWA card', () => {
+  beforeEach(() => {
+    delete (window as unknown as Record<string, unknown>).__pwaInstallEvent
+  })
+
+  it('offers install from a pre-mount stashed prompt', async () => {
+    ;(window as unknown as Record<string, unknown>).__pwaInstallEvent = {
+      prompt: vi.fn(async () => {}),
+      userChoice: Promise.resolve({ outcome: 'accepted' }),
+    }
+    render(<LoginForm onLoggedIn={vi.fn()} />)
+    expect(await screen.findByRole('button', { name: 'Install Pocket Coder' })).toBeInTheDocument()
+  })
+
+  it('reports installed when running standalone', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
+    })
+    render(<LoginForm onLoggedIn={vi.fn()} />)
+    expect(await screen.findByText('Installed. Open it from your home screen.')).toBeInTheDocument()
+    Object.defineProperty(window, 'matchMedia', { writable: true, value: undefined })
   })
 })

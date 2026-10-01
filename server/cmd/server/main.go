@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,7 +16,6 @@ import (
 	"time"
 
 	"pcoder/internal/auth"
-	"pcoder/internal/threads"
 	"pcoder/internal/config"
 	"pcoder/internal/docker"
 	"pcoder/internal/events"
@@ -27,12 +27,28 @@ import (
 	"pcoder/internal/session"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
+	"pcoder/internal/threads"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".
 var version = "dev"
 
 func main() {
+	// smtp-test is the setup script's delivery probe: send one email
+	// through the configured SMTP and exit 0/1 without booting.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "smtp-test":
+			smtpTestMain()
+			return
+		case "-h", "--help", "help":
+			fmt.Fprintln(os.Stderr, "usage: pcoder [smtp-test]  (no args boots the server)")
+			return
+		default:
+			slog.Error("unknown subcommand", "arg", os.Args[1])
+			os.Exit(2)
+		}
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("invalid configuration", "err", err)

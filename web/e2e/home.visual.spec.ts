@@ -16,7 +16,7 @@ test.describe('login form', () => {
   test.use({ viewport: { width: 1280, height: 720 }, storageState: loggedOut.storageState })
 
   test('login form renders on desktop', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/login')
     await expect(page.getByPlaceholder('you@example.com')).toBeVisible()
     await expect(page).toHaveScreenshot('login-desktop.png', { fullPage: true })
   })
@@ -26,7 +26,7 @@ test.describe('login form phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, storageState: loggedOut.storageState })
 
   test('login form renders on phone', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/login')
     await expect(page.getByPlaceholder('you@example.com')).toBeVisible()
     await expect(page).toHaveScreenshot('login-phone.png', { fullPage: true })
   })

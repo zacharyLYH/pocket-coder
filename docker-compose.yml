@@ -1,0 +1,50 @@
+# Production stack: nginx serves the built UI on 8080 and proxies
+# /api + /ws + /health to the Go server, which has no host port.
+# Credentials live in server/.env (written by deploy/setup.sh — same file
+# local dev uses); every key is optional to compose (required: false) so
+# a missing file surfaces as the server's own "PCODER_LOGIN_EMAIL must
+# be set" error.
+#
+#   docker compose up -d --build
+#   curl http://localhost:8080/health
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    env_file:
+      - path: server/.env
+        required: false
+    environment:
+      PCODER_DATA_DIR: /data
+      PCODER_BIND: :8080
+      PCODER_DOCKER_SOCK: unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - pcoder-data:/data
+    networks:
+      - pcoder-net
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - server
+    networks:
+      - pcoder-net
+    restart: unless-stopped
+
+volumes:
+  pcoder-data:
+
+networks:
+  # External and created by setup.sh before first boot (the TEST-mode fake
+  # SMTP server also joins it before the stack creates anything). `down`
+  # leaves it behind on purpose; `make nuke` removes it.
+  pcoder-net:
+    name: pcoder-net
+    external: true

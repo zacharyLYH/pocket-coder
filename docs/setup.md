@@ -11,7 +11,7 @@ User data runs as root on first boot, so the script must install its own
 dependencies. The one-liner (hosted at a stable raw-GitHub URL):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/OWNER/pocket-coder/main/deploy/setup.sh | bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/zacharyLYH/pocket-coder/main/deploy/setup.sh | bash -s -- \
   --email you@example.com \
   --smtp-password "xxxx app password"
 ```
@@ -45,7 +45,7 @@ above the dev quick start:
 3. **Log in** — open `http://<instance-ip>:8080`, enter the email, PIN
    arrives by email.
 
-The dev/local sections (make setup, make start-local, configuration table)
+The dev/local sections (make setup, configuration table)
 move below this block. The one command shown in the README must be
 byte-identical to the hosted script's actual interface.
 
@@ -66,13 +66,13 @@ server's own defaults; `PCODER_JWT_SECRET` is generated + persisted by the
 server into the data dir on first boot. Future non-Gmail providers can add
 optional flags without breaking the two-flag contract.
 
-The script writes these into `<repo-clone>/.env` (chmod 600), which the
+The script writes these into `<install-dir>/server/.env` (chmod 600), which the
 production compose file consumes via `env_file`.
 
 ## Deliverables
 
 1. **`deploy/setup.sh`** — the bootstrap script (structure below).
-2. **`deploy/docker-compose.prod.yml`** — production stack (see the Docker
+2. **`docker-compose.yml`** — production stack (see the Docker
    reconciliation section).
 3. **`pcoder smtp-test` subcommand** (small, `cmd/server` or `internal/auth`):
    sends one test email through `auth.SmtpMailer` and exits 0/1. The script
@@ -80,15 +80,15 @@ production compose file consumes via `env_file`.
 
 ## Root `.env` — deleted
 
-The root `.env` is gone. Its only job was keeping logins alive across
-`make dev-seed` wipes by pinning `PCODER_JWT_SECRET`; the server already
-auto-generates and persists its own signing key (`server/data/jwt-secret`),
-so the file was redundant. Accepted tradeoff: after a dev-seed wipe, local
-dev logins reset.
+The root `.env` is gone. Its only job was keeping the JWT signing key
+stable across `make dev-seed` wipes; the server now auto-generates and
+persists its own signing key (`server/data/jwt-secret`, which dev-seed
+keeps), so the file was redundant. Accepted tradeoff: after a dev-seed
+wipe, local dev logins reset (sessions live in the wiped state.json).
 
-Cleanup that follows from the deletion (rollout step 4):
-- Makefile: drop `-include .env`, the root-JWT-secret generation blocks in
-  `setup`/`start-docker`, and the `export PCODER_JWT_SECRET` line.
+Cleanup that followed from the deletion (done during rollout):
+- Makefile: dropped the root-`.env` include, the root-JWT-secret
+  generation blocks in `setup`/`start-docker`, and the JWT export line.
   Dev credentials read from `server/.env` only.
 - `docker-compose.dev.yml` env_file points at `server/.env` (required:
   false), matching the Makefile.
@@ -145,7 +145,7 @@ pipefail`, one `log`/`die` pair. ~200 lines target.
 1. parse_args        # --email, --smtp-password; unknown flag → usage + exit 2
 2. validate          # nothing is installed or downloaded before this passes
 3. install_deps      # git, docker engine + compose plugin (apt or dnf)
-4. write_env         # <repo-clone>/.env, chmod 600
+4. write_env         # <install-dir>/server/.env, chmod 600
 5. boot              # clone → build → smtp-test → compose up → wait healthy
 ```
 
@@ -162,7 +162,7 @@ pipefail`, one `log`/`die` pair. ~200 lines target.
   fail loudly on truly unsupported archs.
 - Root (EUID 0) — hard requirement, user data always is; a manual run
   without sudo dies.
-- Not already installed: `<repo-clone>/.env` exists → idempotent re-run
+- Not already installed: `<install-dir>/server/.env` exists → idempotent re-run
   (update flags only, skip to boot) instead of a destructive second pass.
 - Port: 8080 free (`ss -ltn`) — warn if taken (maybe a re-run), die only if
   the re-run detection above didn't already claim it.
@@ -180,7 +180,7 @@ pipefail`, one `log`/`die` pair. ~200 lines target.
 ### Section 4 — write_env
 
 - Fresh file, `umask 077`, chmod 600 after write.
-- Exactly three keys (`PCODER_LOGIN_EMAIL`, `SMTP_USER`, `SMTP_FROM`,
+- Exactly four keys (`PCODER_LOGIN_EMAIL`, `SMTP_USER`, `SMTP_FROM`,
   `SMTP_PASSWORD`) — no defaults duplicated from config.go.
 - Password never echoed, never in `set -x`.
 
@@ -190,7 +190,7 @@ pipefail`, one `log`/`die` pair. ~200 lines target.
    (idempotent: fetch + reset if it exists). Opinionated on purpose: no
    `--ref`, no `--install-dir`.
 2. `docker compose build`.
-3. **SMTP test email** — `docker compose run --rm server pcoder smtp-test`
+3. **SMTP test email** — `docker compose run --rm server smtp-test`
    with the .env loaded. Failure → die with the mailer's error text and a
    pointer to the Gmail app-password guide. Nothing boots on bad
    credentials.
@@ -202,37 +202,27 @@ pipefail`, one `log`/`die` pair. ~200 lines target.
 
 ## Testing the script
 
-Four tiers, cheapest first. The script must be testable without real Gmail
-credentials, so it honors pre-set `SMTP_HOST`/`SMTP_PORT` env vars as an
-override (test hook only; the documented interface stays two flags).
+Two tiers, cheapest first. KISS: the self-test is pure-local with mocks
+(~1s, zero side effects), full delivery + boot stay manual per-release.
 
-1. **Static (CI, every push):** `bash -n` + ShellCheck on
-   `deploy/setup.sh`. Catches syntax errors and most quoting bugs for
-   free.
+`bash deploy/setup.sh --test` (or `PCODER_SETUP_TEST=1` in the
+environment, as used through `curl ... | VAR=1 bash -s -- ...`) runs arg
+parsing plus the real `write_env` into a temp dir — asserting the exact
+Gmail `.env` contract — then deletes everything. Mocked: root, distro,
+disk/RAM/port, apt/dnf, docker, clone, SMTP delivery, boot. Flags become
+optional test defaults so bare `--test` works.
 
-2. **Container matrix (CI, reproducible):** run the script inside fresh
-   distro containers — this replaces "just run it on my machine":
-   - `docker run --privileged ubuntu:24.04` and
-     `docker run --privileged amazonlinux:2023`, each starting dockerd,
-     then executing `deploy/setup.sh` with `SMTP_HOST` pointed at a MailHog
-     (or smtp4dev) container on the same network.
-   - Assert: exit 0, `docker compose ps` shows both services up,
-     `curl localhost:8080/health` returns 200, MailHog's API shows the
-     test email was received.
-   - Wired as `make test-setup` so it runs locally with one command and in
-     CI with the same target. ~5 min runtime.
+1. **Static + self-test (CI, every push):** `bash -n` + ShellCheck +
+`bash deploy/setup.sh --test`. Catches syntax errors, quoting bugs, and
+`.env` contract regressions for free.
 
-3. **Manual Gmail smoke (per release):** one real run with a real app
-   password — verifies the piece the fakes cannot: Gmail's STARTTLS/auth
-   quirks and the actual inbox delivery.
+2. **Manual Gmail smoke (per release):** one real run with a real app
+password — verifies the piece the mocks cannot: Gmail auth quirks and
+actual inbox delivery.
 
-4. **Real EC2 gate (per release):** spot instance + the README command in
-   actual user data, destroy after. The only tier that exercises instance
-   metadata, security groups, and the true first-boot path.
-
-Tier 2 is the workhorse: fully scripted, no cloud spend, catches regressions
-in every script section except the EC2-specific bits (metadata lookup),
-which tier 4 covers cheaply.
+3. **Real EC2 gate (per release):** spot instance + the README command in
+actual user data, destroy after. The only tier that exercises instance
+metadata, security groups, and the true first-boot path.
 
 ## Security notes (documented, not solved here)
 
@@ -257,8 +247,8 @@ which tier 4 covers cheaply.
    update the three playwright call sites. Verify: `make start-docker`, e2e
    suite, manual prod compose up.
 2. `pcoder smtp-test` subcommand + test.
-3. `deploy/setup.sh` with all validations; verified via the four-tier
-   testing ladder (static → container matrix → Gmail smoke → real EC2).
+3. `deploy/setup.sh` with all validations; verified via the two-tier
+   testing ladder (self-test → real Gmail run).
 4. Makefile + README cleanup from the root-`.env` deletion; README top
    section rewritten per the README block above (app-password steps → one
    command → login), pointing at the hosted script URL.

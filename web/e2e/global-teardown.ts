@@ -18,7 +18,7 @@ export default function globalTeardown(): void {
   try {
     execFileSync(
       'docker',
-      ['compose', '-f', '../docker-compose.e2e.yml', '-p', COMPOSE_PROJECT, 'down'],
+      ['compose', '-f', '../docker-compose.yml', '-f', '../docker-compose.e2e.yml', '-p', COMPOSE_PROJECT, 'down'],
       {
         stdio: 'ignore',
         timeout: 60_000,

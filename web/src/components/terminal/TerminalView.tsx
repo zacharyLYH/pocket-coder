@@ -279,7 +279,8 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
         harnesses={harnesses}
         onLaunched={onLaunched}
       />
-      <ButlerFab projectHint={projectId} />
+      {/* Same gate as the codemap tab: no model key, no butler. */}
+      {aiStatus?.configured ? <ButlerFab projectHint={projectId} /> : null}
     </div>
   )
 }

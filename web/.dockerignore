@@ -1,0 +1,8 @@
+# Web production build context: never ship host install output, build
+# output, or local test artifacts into the nginx image.
+node_modules
+dist
+test-results
+playwright-report
+.env
+.env.*

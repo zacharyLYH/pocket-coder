@@ -176,3 +176,37 @@
 .dark .hljs-selector-class {
   color: #7ee787;
 }
+
+/* Landing logo-cloud marquee: two rows drifting opposite directions. The
+   track holds two identical halves, so the -50% loop point is seamless. */
+@keyframes tooling-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.tooling-track {
+  display: flex;
+  width: max-content;
+  animation: tooling-marquee 36s linear infinite;
+}
+.tooling-track-reverse {
+  animation-direction: reverse;
+}
+.tooling-marquee:hover .tooling-track {
+  animation-play-state: paused;
+}
+.tooling-viewport {
+  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tooling-track {
+    animation: none;
+  }
+  .tooling-viewport {
+    overflow-x: auto;
+  }
+}

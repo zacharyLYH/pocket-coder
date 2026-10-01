@@ -63,11 +63,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate compose file
-        run: docker compose -f docker-compose.dev.yml config --quiet
-      - name: Create .env (server requires it; gitignored locally)
+      - name: Validate compose files
         run: |
-          cat > .env <<'EOF'
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.dev.yml config --quiet
+          PCODER_E2E_DATA_DIR=/tmp/e2e-data PCODER_E2E_API_PORT=8081 \
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml config --quiet
+      - name: Create server/.env (server requires it; gitignored locally)
+        run: |
+          cat > server/.env <<'EOF'
           PCODER_LOGIN_EMAIL=ci@example.com
           SMTP_HOST=smtp.gmail.com
           SMTP_PORT=587
@@ -103,3 +107,17 @@ jobs:
             | grep -q '"ok":true'
       - name: Tear down
         run: docker compose -f docker-compose.dev.yml down
+
+  setup-script:
+    name: Setup script — static + fast self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax check
+        run: bash -n deploy/setup.sh
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning deploy/setup.sh
+      - name: Fast self-test (mocked, ~1s, zero side effects)
+        run: bash deploy/setup.sh --test

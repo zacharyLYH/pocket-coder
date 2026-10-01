@@ -3,11 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#171717" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="/pcoder-icon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Pocket Coder</title>
     <script>
       try {
         if ((localStorage.getItem('pcoder-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark') document.documentElement.classList.add('dark')
       } catch (e) {}
+    </script>
+    <script>
+      // Stash the PWA install prompt the moment it fires: it fires at most
+      // once per load and can precede React, so the hook reads it from here.
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault()
+        window.__pwaInstallEvent = e
+      })
     </script>
   </head>
   <body>

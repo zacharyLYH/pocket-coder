@@ -1,7 +1,6 @@
 # Dev stack. Boots the Go server and the Vite dev server proxying /api and
-# /ws to it. Email (Phase 4) is sent with net/smtp against Google SMTP using
-# credentials from .env (SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASSWORD/
-# SMTP_FROM) — no SMTP server to run.
+# /ws to it. Dev credentials come from server/.env only (PIN recipient +
+# SMTP_*); the server itself loads the same file via config.Load.
 #
 #   docker compose -f docker-compose.dev.yml up
 #   curl http://localhost:8080/health
@@ -9,9 +8,9 @@ services:
   server:
     build:
       context: ./server
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
     env_file:
-      - path: .env
+      - path: server/.env
         required: false
     environment:
       PCODER_DATA_DIR: /data

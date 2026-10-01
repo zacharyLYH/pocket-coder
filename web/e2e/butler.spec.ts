@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { mockProject } from './mocks'
+import { mockConfigured, mockProject } from './mocks'
 import { TID, mockButlerThreads, mockButlerTurn } from './threadMocks'
 
 const FAKE_ID = 'e2e/butler-fake'
@@ -8,8 +8,16 @@ const FAKE_ID = 'e2e/butler-fake'
 test.describe('butler desktop', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
+  test('fab hidden without a key', async ({ page }) => {
+    await page.goto('/app')
+    // real /api/ai/models: the seed state has no key
+    await expect(page.getByText('Run a command')).toBeVisible()
+    await expect(page.getByTestId('butler-fab')).toHaveCount(0)
+  })
+
   test('fab opens sheet with presets on home', async ({ page }) => {
-    await page.goto('/')
+    await mockConfigured(page)
+    await page.goto('/app')
     await expect(page.getByTestId('butler-fab')).toBeVisible()
     await page.getByTestId('butler-fab').click()
     await expect(page.getByTestId('butler-sheet')).toBeVisible()
@@ -19,7 +27,8 @@ test.describe('butler desktop', () => {
   })
 
   test('clicking outside closes the popup on desktop', async ({ page }) => {
-    await page.goto('/')
+    await mockConfigured(page)
+    await page.goto('/app')
     await page.getByTestId('butler-fab').click()
     await expect(page.getByTestId('butler-sheet')).toBeVisible()
     await page.mouse.click(20, 20)
@@ -51,7 +60,8 @@ test.describe('butler phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
 
   test('sheet opens bottom-anchored on phone', async ({ page }) => {
-    await page.goto('/')
+    await mockConfigured(page)
+    await page.goto('/app')
     await page.getByTestId('butler-fab').click()
     await expect(page.getByTestId('butler-sheet')).toBeVisible()
     await expect(page.getByTestId('butler-prompt')).toBeVisible()
