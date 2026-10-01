@@ -29,9 +29,10 @@ INSTALL_DIR="${PCODER_INSTALL_DIR:-/opt/pocket-coder/src}"
 EMAIL=""
 SMTP_PASSWORD=""
 OS="$(uname -s 2>/dev/null || printf unknown)" # Darwin vs Linux — Mac has no apt/dnf/systemd
-# Homebrew lives outside the default PATH in non-interactive shells
-# (curl|bash): pick it up so git/docker/brew resolve on a stock Mac.
-for brewdir in /opt/homebrew/bin /usr/local/bin; do
+# Homebrew + Docker Desktop helpers live outside the default PATH in
+# non-interactive shells (curl|bash): pick them up so git/docker and the
+# desktop credential helper resolve on a stock Mac.
+for brewdir in /opt/homebrew/bin /usr/local/bin "$HOME/Applications/Docker.app/Contents/Resources/bin" /Applications/Docker.app/Contents/Resources/bin; do
   case ":$PATH:" in *":$brewdir:"*) ;; *) [ -d "$brewdir" ] && PATH="$brewdir:$PATH" ;; esac
 done
 
