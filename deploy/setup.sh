@@ -21,7 +21,9 @@ set -euo pipefail
 
 REPO_URL="${PCODER_SETUP_REPO:-https://github.com/zacharyLYH/pocket-coder}"
 REPO_BRANCH="${PCODER_SETUP_BRANCH:-main}"
-INSTALL_DIR="/opt/pocket-coder/src"
+# Overridable for rootless runs: PCODER_INSTALL_DIR=~/.pocket-coder/src keeps
+# everything under your home when /opt is not writable.
+INSTALL_DIR="${PCODER_INSTALL_DIR:-/opt/pocket-coder/src}"
 EMAIL=""
 SMTP_PASSWORD=""
 
@@ -76,25 +78,12 @@ if [ "${PCODER_SETUP_TEST:-0}" = "1" ]; then
   TEST_MODE=1
 fi
 
-# port_taken reports whether anything LISTENs on a TCP port. Reads
-# /proc/net directly — zero dependencies, works on bare images without
-# ss/netstat. Falls back to ss/netstat when /proc is unavailable.
+# port_taken reports whether anything LISTENs on a TCP port via bash's
+# /dev/tcp (Linux + macOS, zero dependencies). A bash without net
+# redirections just reports free — same as the old "continuing" fallback.
 port_taken() {
-  port_hex="$(printf '%04X' "$1")"
-  for f in /proc/net/tcp /proc/net/tcp6; do
-    if [ -r "$f" ]; then
-      if awk -v p="$port_hex" 'NR>1 && $4=="0A" {split($2,a,":"); if (a[2]==p) found=1} END{exit !found}' "$f"; then
-        return 0
-      fi
-    fi
-  done
-  if [ ! -r /proc/net/tcp ] && [ ! -r /proc/net/tcp6 ]; then
-    if command -v ss >/dev/null 2>&1; then
-      ss -ltn 2>/dev/null | grep -q ":$1 " && return 0 || return 1
-    elif command -v netstat >/dev/null 2>&1; then
-      netstat -ltn 2>/dev/null | grep -q ":$1 " && return 0 || return 1
-    fi
-    log "no way to check port $1 — continuing"
+  if (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; then
+    return 0
   fi
   return 1
 }
@@ -103,7 +92,12 @@ port_taken() {
 # Ordered cheapest-first. Distro/arch warn, everything else hards.
 # (--test never reaches here: test_main exits right after parse_args.)
 validate() {
-  [ "$(id -u)" = "0" ] || die "must run as root (EC2 user data always is; manual runs need sudo)"
+  # No root gate: non-root works when the install dir is writable and the
+  # user can reach the docker daemon (docker group). Anything privileged
+  # below fails loudly with a sudo-or-fix hint instead.
+  probe="$INSTALL_DIR"
+  while [ ! -e "$probe" ]; do probe="$(dirname "$probe")"; done
+  [ -w "$probe" ] || die "cannot write to $INSTALL_DIR (running as $(id -un)) — re-run with sudo or set PCODER_INSTALL_DIR to a writable path"
   if [ -f /etc/os-release ]; then
     # shellcheck disable=SC1091
     . /etc/os-release
@@ -119,8 +113,9 @@ validate() {
     x86_64|aarch64|arm64) ;;
     *) log "untested arch ($arch) — docker itself will fail loudly if truly unsupported" ;;
   esac
-  command -v apt-get >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1 \
-    || die "no usable package manager (need apt-get, dnf, or yum)"
+  # No package-manager gate here: one is only needed when something must
+  # be installed (checked in install_deps). A Mac with Docker Desktop and
+  # git/curl already present sails straight through.
   if [ -f "$INSTALL_DIR/server/.env" ]; then
     log "existing install at $INSTALL_DIR — re-run: flags updated, dependencies skipped"
     RERUN=1
@@ -168,6 +163,11 @@ install_deps() {
       fi
     fi
     if [ -n "$to_install" ]; then
+      if [ "$(id -u)" != "0" ]; then
+        die "missing:$to_install — install them first or re-run with sudo"
+      fi
+      command -v apt-get >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1 \
+        || die "no usable package manager (need apt-get, dnf, or yum)"
       if command -v apt-get >/dev/null 2>&1; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
@@ -197,21 +197,26 @@ install_deps() {
 # (containers and minimal images have no init). Only launches when the
 # daemon is actually unreachable, so a running daemon is never disturbed.
 ensure_docker_running() {
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true
-  else
-    service docker start 2>/dev/null || true
-  fi
+  # Failures are swallowed: `docker info` below is the real verdict, so no
+  # need to probe for systemctl/service first.
+  systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true
   if docker info >/dev/null 2>&1; then
     return 0
   fi
   log "daemon not running under init — starting dockerd directly"
   (dockerd > /tmp/pcoder-dockerd.log 2>&1 &)
-  for _ in $(seq 1 12); do
+  # No seq: stock macOS has no GNU coreutils (it ships jot instead), so
+  # plain while loops everywhere a counter is needed.
+  i=0
+  while [ "$i" -lt 12 ]; do
     docker info >/dev/null 2>&1 && return 0
     sleep 5
+    i=$((i + 1))
   done
   tail -20 /tmp/pcoder-dockerd.log 2>/dev/null || true
+  if [ "$(id -u)" != "0" ]; then
+    die "docker daemon unreachable (non-root: is your user in the docker group? sudo usermod -aG docker \$USER, then log back in)"
+  fi
   die "docker daemon unreachable"
 }
 
@@ -251,8 +256,8 @@ write_env() {
     [ -z "${SMTP_PORT:-}" ] || printf 'SMTP_PORT=%s\n' "$SMTP_PORT"
   } > "$tmp"
   chmod 600 "$tmp"
+  # mv preserves the mode, so no second chmod needed.
   mv "$tmp" "$INSTALL_DIR/server/.env"
-  chmod 600 "$INSTALL_DIR/server/.env"
   log "wrote $INSTALL_DIR/server/.env (mode 600)"
 }
 
@@ -339,18 +344,21 @@ boot() {
   log "booting the stack"
   docker compose up -d
   log "waiting for /health (120s)"
-  for _ in $(seq 1 60); do
+  i=0
+  while [ "$i" -lt 60 ]; do
     if curl -fsS http://localhost:8080/health >/dev/null 2>&1; then
       break
     fi
     sleep 2
-    if [ "${_}" = "60" ]; then
+    i=$((i + 1))
+    if [ "$i" = "60" ]; then
       docker compose logs --tail=50 server || true
       die "server never became healthy — logs above"
     fi
   done
   ip="$(curl -fsS --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)"
   [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  [ -n "$ip" ] || ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
   [ -n "$ip" ] || ip="<this-host>"
   cat <<EOF
 
