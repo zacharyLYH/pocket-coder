@@ -591,7 +591,13 @@ boot() {
   done
   ip="$(curl -fsS --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)"
   [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-  [ -n "$ip" ] || ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
+  # macOS: first active Wi-Fi/Ethernet interface wins (en0 empty on some Macs).
+  if [ -z "$ip" ]; then
+    for iface in en0 en1; do
+      ip="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"
+      [ -n "$ip" ] && break
+    done
+  fi
   [ -n "$ip" ] || ip="<this-host>"
   cat <<EOF
 
