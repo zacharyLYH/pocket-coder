@@ -139,7 +139,7 @@ function PwaCard() {
               href="https://support.apple.com/en-my/guide/iphone/iphea86e5236/ios"
               target="_blank"
               rel="noopener noreferrer"
-              className="underline"
+              className="text-primary underline underline-offset-4"
             >
               Apple guide
             </a>
