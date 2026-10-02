@@ -117,13 +117,27 @@ resolve_install_dir() {
   log "no write access to /opt — installing under $INSTALL_DIR (override with PCODER_INSTALL_DIR)"
 }
 
-# disk_avail_kb prints free KB under a path. GNU df has --output, BSD
-# (macOS) does not — fall back to `df -k` col 4. Empty = unknown, skip.
+# disk_avail_kb routes by OS — GNU df (--output) exists only on Linux,
+# BSD df (-k col 4) only on macOS. Split so a df flag change on one
+# platform can never break the other.
 disk_avail_kb() {
+  if [ "$OS" = "Darwin" ]; then
+    disk_avail_kb_mac "$@"
+  else
+    disk_avail_kb_linux "$@"
+  fi
+}
+
+disk_avail_kb_linux() {
   disk_dir="$1"
   while [ ! -e "$disk_dir" ]; do disk_dir="$(dirname "$disk_dir")"; done
   disk_out="$(df --output=avail "$disk_dir" 2>/dev/null | tail -1 | tr -d ' ' || true)"
-  case "$disk_out" in ''|*[!0-9]*) ;; *) printf '%s' "$disk_out"; return 0 ;; esac
+  case "$disk_out" in ''|*[!0-9]*) return 1 ;; *) printf '%s' "$disk_out" ;; esac
+}
+
+disk_avail_kb_mac() {
+  disk_dir="$1"
+  while [ ! -e "$disk_dir" ]; do disk_dir="$(dirname "$disk_dir")"; done
   disk_out="$(df -k "$disk_dir" 2>/dev/null | tail -1 | awk '{print $4}' || true)"
   case "$disk_out" in ''|*[!0-9]*) return 1 ;; *) printf '%s' "$disk_out" ;; esac
 }
@@ -131,34 +145,28 @@ disk_avail_kb() {
 # 2. validate — nothing is installed or downloaded before this passes.
 # Ordered cheapest-first. Distro/arch warn, everything else hards.
 # (--test never reaches here: test_main exits right after parse_args.)
+# OS-routed: edit one routine without touching the other.
 validate() {
+  if [ "$OS" = "Darwin" ]; then
+    validate_mac
+  else
+    validate_linux
+  fi
+}
+
+validate_mac() {
   resolve_install_dir
-  # No root gate: non-root works when the install dir is writable and the
-  # user can reach the docker daemon (docker group). Anything privileged
-  # below fails loudly with a sudo-or-fix hint instead.
   probe="$INSTALL_DIR"
   while [ ! -e "$probe" ]; do probe="$(dirname "$probe")"; done
   [ -w "$probe" ] || die "cannot write to $INSTALL_DIR (running as $(id -un)) — re-run with sudo or set PCODER_INSTALL_DIR to a writable path"
-  if [ "$OS" = "Darwin" ]; then
-    log "macOS detected — Docker Desktop must already be installed and running"
-  elif [ -f /etc/os-release ]; then
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    case "${ID:-unknown} ${VERSION_ID:-}" in
-      "ubuntu 22.04"|"ubuntu 24.04"|"amzn 2023") ;;
-      *) log "untested distro (${ID:-unknown} ${VERSION_ID:-unknown}) — will try apt/dnf; report issues if this fails" ;;
-    esac
-  else
-    log "no /etc/os-release — will try apt/dnf; report issues if this fails"
-  fi
+  log "macOS detected — Docker Desktop must already be installed and running"
   arch="$(uname -m)"
   case "$arch" in
     x86_64|aarch64|arm64) ;;
     *) log "untested arch ($arch) — docker itself will fail loudly if truly unsupported" ;;
   esac
-  # No package-manager gate here: one is only needed when something must
-  # be installed (checked in install_deps). A Mac with Docker Desktop and
-  # git/curl already present sails straight through.
+  # No package-manager gate: a Mac with Docker Desktop and git/curl
+  # already present sails straight through.
   if [ -f "$INSTALL_DIR/server/.env" ]; then
     log "existing install at $INSTALL_DIR — re-run: flags updated, dependencies skipped"
     RERUN=1
@@ -172,7 +180,52 @@ validate() {
       die "port 8080 is taken — free it before installing"
     fi
   fi
-  disk_kb="$(disk_avail_kb "$INSTALL_DIR" || true)"
+  disk_kb="$(disk_avail_kb_mac "$INSTALL_DIR" || true)"
+  if [ -n "$disk_kb" ] && [ "$disk_kb" -lt 10485760 ]; then
+    die "need at least 10 GB free under $probe (have $((disk_kb / 1024 / 1024)) GB)"
+  fi
+  # No /proc/meminfo on macOS — warn only, containers want 2 GB.
+  log "cannot read RAM size — continuing, project containers want 2 GB"
+  log "validations passed"
+}
+
+validate_linux() {
+  resolve_install_dir
+  # No root gate: non-root works when the install dir is writable and the
+  # user can reach the docker daemon (docker group). Anything privileged
+  # below fails loudly with a sudo-or-fix hint instead.
+  probe="$INSTALL_DIR"
+  while [ ! -e "$probe" ]; do probe="$(dirname "$probe")"; done
+  [ -w "$probe" ] || die "cannot write to $INSTALL_DIR (running as $(id -un)) — re-run with sudo or set PCODER_INSTALL_DIR to a writable path"
+  if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case "${ID:-unknown} ${VERSION_ID:-}" in
+      "ubuntu 22.04"|"ubuntu 24.04"|"amzn 2023") ;;
+      *) log "untested distro (${ID:-unknown} ${VERSION_ID:-unknown}) — will try apt/dnf; report issues if this fails" ;;
+    esac
+  else
+    log "no /etc/os-release — will try apt/dnf; report issues if this fails"
+  fi
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|aarch64) ;;
+    *) log "untested arch ($arch) — docker itself will fail loudly if truly unsupported" ;;
+  esac
+  if [ -f "$INSTALL_DIR/server/.env" ]; then
+    log "existing install at $INSTALL_DIR — re-run: flags updated, dependencies skipped"
+    RERUN=1
+  else
+    RERUN=0
+  fi
+  if port_taken 8080; then
+    if [ "$RERUN" = "1" ]; then
+      log "port 8080 taken — assuming our own stack from the previous run"
+    else
+      die "port 8080 is taken — free it before installing"
+    fi
+  fi
+  disk_kb="$(disk_avail_kb_linux "$INSTALL_DIR" || true)"
   if [ -n "$disk_kb" ] && [ "$disk_kb" -lt 10485760 ]; then
     die "need at least 10 GB free under $probe (have $((disk_kb / 1024 / 1024)) GB)"
   fi
@@ -189,30 +242,38 @@ validate() {
 
 # 3. install_deps — missing tools only (a reboot stops the daemon but
 # never uninstalls binaries, so the daemon check always runs even when
-# the binaries are all present).
+# the binaries are all present). OS-routed: macOS never touches apt/dnf.
 install_deps() {
+  if [ "$OS" = "Darwin" ]; then
+    install_deps_mac
+  else
+    install_deps_linux
+  fi
+}
+
+install_deps_mac() {
   # macOS has no apt/dnf/yum: Docker comes from Docker Desktop, git/curl
   # from Xcode CLT or Homebrew. Never suggest apt here.
-  if [ "$OS" = "Darwin" ]; then
-    missing_mac=""
-    command -v git >/dev/null 2>&1 || missing_mac="$missing_mac git"
-    command -v curl >/dev/null 2>&1 || missing_mac="$missing_mac curl"
-    [ -z "$missing_mac" ] || die "missing:$missing_mac — install Xcode CLT (xcode-select --install) or Homebrew, then re-run"
-    if ! command -v docker >/dev/null 2>&1; then
-      if command -v brew >/dev/null 2>&1; then
-        die "missing: docker — install it with: brew install --cask docker (then launch Docker Desktop and re-run)"
-      fi
-      die "missing: docker — install Docker Desktop from https://www.docker.com/products/docker-desktop/ (Apple Silicon build), launch it, then re-run"
+  missing_mac=""
+  command -v git >/dev/null 2>&1 || missing_mac="$missing_mac git"
+  command -v curl >/dev/null 2>&1 || missing_mac="$missing_mac curl"
+  [ -z "$missing_mac" ] || die "missing:$missing_mac — install Xcode CLT (xcode-select --install) or Homebrew, then re-run"
+  if ! command -v docker >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+      die "missing: docker — install it with: brew install --cask docker (then launch Docker Desktop and re-run)"
     fi
-    if [ "${RERUN:-0}" != "1" ]; then
-      install_compose_plugin
-    fi
-    ensure_docker_running
-    command -v docker >/dev/null 2>&1 || die "docker install failed — see https://docs.docker.com/desktop/setup/install/mac-install/"
-    docker compose version >/dev/null 2>&1 || die "docker compose plugin missing — update Docker Desktop to the latest version"
-    log "dependencies installed"
-    return 0
+    die "missing: docker — install Docker Desktop from https://www.docker.com/products/docker-desktop/ (Apple Silicon build), launch it, then re-run"
   fi
+  if [ "${RERUN:-0}" != "1" ]; then
+    install_compose_plugin_mac
+  fi
+  ensure_docker_running_mac
+  command -v docker >/dev/null 2>&1 || die "docker install failed — see https://docs.docker.com/desktop/setup/install/mac-install/"
+  docker compose version >/dev/null 2>&1 || die "docker compose plugin missing — update Docker Desktop to the latest version"
+  log "dependencies installed"
+}
+
+install_deps_linux() {
   if [ "${RERUN:-0}" != "1" ]; then
     to_install=""
     for tool in git curl; do
@@ -247,9 +308,9 @@ install_deps() {
     else
       log "git, curl, docker already present — skipping package install"
     fi
-    install_compose_plugin
+    install_compose_plugin_linux
   fi
-  ensure_docker_running
+  ensure_docker_running_linux
   command -v git >/dev/null 2>&1 || die "git install failed"
   command -v curl >/dev/null 2>&1 || die "curl install failed"
   command -v docker >/dev/null 2>&1 || die "docker install failed — see https://docs.docker.com/engine/install/"
@@ -257,18 +318,24 @@ install_deps() {
   log "dependencies installed"
 }
 
-# ensure_docker_running starts the daemon when the init system did not:
-# init scripts first (real boxes), then a direct dockerd launch
-# (containers and minimal images have no init). Only launches when the
-# daemon is actually unreachable, so a running daemon is never disturbed.
-# On macOS there is no systemd/dockerd — Docker Desktop owns the daemon.
+# ensure_docker_running — OS-routed. Linux owns the daemon via
+# systemd/dockerd; macOS never touches either (Docker Desktop owns it).
 ensure_docker_running() {
   if [ "$OS" = "Darwin" ]; then
-    if docker info >/dev/null 2>&1; then
-      return 0
-    fi
-    die "docker daemon unreachable — launch Docker Desktop (open -a Docker), wait for the whale icon, then re-run"
+    ensure_docker_running_mac
+  else
+    ensure_docker_running_linux
   fi
+}
+
+ensure_docker_running_mac() {
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+  die "docker daemon unreachable — launch Docker Desktop (open -a Docker), wait for the whale icon, then re-run"
+}
+
+ensure_docker_running_linux() {
   systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true
   if docker info >/dev/null 2>&1; then
     return 0
@@ -290,12 +357,19 @@ ensure_docker_running() {
   die "docker daemon unreachable"
 }
 
-# install_compose_plugin fetches the compose plugin from GitHub releases
-# when the distro packages did not provide it (Ubuntu) or at all. Pinned
-# version for reproducible setups; DOCKER_COMPOSE_VERSION overrides.
-# On macOS Docker Desktop bundles compose — only the bare-CLI (no
-# Desktop) case downloads, as a darwin binary into ~/.docker/cli-plugins.
+# install_compose_plugin — OS-routed. Pinned version for reproducible
+# setups; DOCKER_COMPOSE_VERSION overrides. macOS bundles compose in
+# Desktop (bare-CLI fallback downloads a darwin binary to ~/.docker);
+# Linux downloads to /usr/libexec (Ubuntu ships no compose plugin).
 install_compose_plugin() {
+  if [ "$OS" = "Darwin" ]; then
+    install_compose_plugin_mac
+  else
+    install_compose_plugin_linux
+  fi
+}
+
+install_compose_plugin_mac() {
   docker compose version >/dev/null 2>&1 && return 0
   arch="$(uname -m)"
   case "$arch" in
@@ -304,15 +378,23 @@ install_compose_plugin() {
     *) die "unsupported arch for compose plugin download: $arch" ;;
   esac
   ver="${DOCKER_COMPOSE_VERSION:-v2.39.2}"
-  if [ "$OS" = "Darwin" ]; then
-    dest="$HOME/.docker/cli-plugins/docker-compose"
-    mkdir -p "$(dirname "$dest")"
-    log "installing compose plugin $ver (darwin-$arch)"
-    curl -fsSL "https://github.com/docker/compose/releases/download/${ver}/docker-compose-darwin-${arch}" -o "$dest" \
-      || die "compose plugin download failed"
-    chmod +x "$dest"
-    return 0
-  fi
+  dest="$HOME/.docker/cli-plugins/docker-compose"
+  mkdir -p "$(dirname "$dest")"
+  log "installing compose plugin $ver (darwin-$arch)"
+  curl -fsSL "https://github.com/docker/compose/releases/download/${ver}/docker-compose-darwin-${arch}" -o "$dest" \
+    || die "compose plugin download failed"
+  chmod +x "$dest"
+}
+
+install_compose_plugin_linux() {
+  docker compose version >/dev/null 2>&1 && return 0
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64) ;;
+    aarch64) ;;
+    *) die "unsupported arch for compose plugin download: $arch" ;;
+  esac
+  ver="${DOCKER_COMPOSE_VERSION:-v2.39.2}"
   dest="/usr/libexec/docker/cli-plugins/docker-compose"
   mkdir -p "$(dirname "$dest")"
   log "installing compose plugin $ver ($arch)"
@@ -540,6 +622,37 @@ EOF
   rm -rf "$INSTALL_DIR"
 }
 
+# get_ip — OS-routed. Linux uses EC2 metadata then hostname -I;
+# macOS uses EC2 metadata (fails fast off-cloud) then ipconfig en0/en1.
+# Split so hostname/ipconfig flag changes stay on their own platform.
+get_ip() {
+  if [ "$OS" = "Darwin" ]; then
+    get_ip_mac
+  else
+    get_ip_linux
+  fi
+}
+
+get_ip_linux() {
+  ip="$(curl -fsS --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)"
+  [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  [ -n "$ip" ] || ip="<this-host>"
+  printf '%s' "$ip"
+}
+
+get_ip_mac() {
+  ip="$(curl -fsS --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)"
+  # First active Wi-Fi/Ethernet interface wins (en0 empty on some Macs).
+  if [ -z "$ip" ]; then
+    for iface in en0 en1; do
+      ip="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"
+      [ -n "$ip" ] && break
+    done
+  fi
+  [ -n "$ip" ] || ip="<this-host>"
+  printf '%s' "$ip"
+}
+
 # 5. boot — fetch/pull → build → smtp-test → up → wait healthy → banner.
 # Update-safe: the same curl command re-runs on an existing install.
 # `server/.env` is gitignored so fetch+reset never deletes it (write_env
@@ -589,15 +702,7 @@ boot() {
       die "server never became healthy — logs above"
     fi
   done
-  ip="$(curl -fsS --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)"
-  [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-  # macOS: first active Wi-Fi/Ethernet interface wins (en0 empty on some Macs).
-  if [ -z "$ip" ]; then
-    for iface in en0 en1; do
-      ip="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"
-      [ -n "$ip" ] && break
-    done
-  fi
+  ip="$(get_ip)"
   [ -n "$ip" ] || ip="<this-host>"
   cat <<EOF
 

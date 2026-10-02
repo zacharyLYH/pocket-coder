@@ -133,7 +133,18 @@ function PwaCard() {
       </CardHeader>
       <CardContent className="flex flex-col gap-2 text-sm text-muted-foreground">
         <ul className="flex list-disc flex-col gap-1 pl-5">
-          <li>iPhone: Share, then Add to Home Screen.</li>
+          <li>
+            iPhone: Share, then Add to Home Screen.{' '}
+            <a
+              href="https://support.apple.com/en-my/guide/iphone/iphea86e5236/ios"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              Apple guide
+            </a>
+            .
+          </li>
           <li>Android and desktop Chrome: use the Install button below.</li>
         </ul>
         {installed ? (

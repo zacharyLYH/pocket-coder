@@ -39,7 +39,7 @@ export function Home({ email, onLogout, navigate }: {
   }
   return (
     <>
-      <header className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur-xl">
+      <header className="sticky top-0 z-10 border-b border-border/60 bg-background/80 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
         <div className="mx-auto flex w-full max-w-md items-center gap-2 px-4 py-3">
           <h1 className="text-[17px] font-semibold tracking-tight">Pocket Coder</h1>
           <span className="flex-1" />

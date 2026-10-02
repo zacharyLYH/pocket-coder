@@ -193,7 +193,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   }
 
   return (
-    <div className="flex h-dvh w-full flex-col gap-3 bg-muted/40 p-0">
+    <div className="flex h-dvh w-full flex-col gap-3 bg-muted/40 p-0 pt-[env(safe-area-inset-top)]">
       <div className="px-3 pt-3">
         <TerminalHeader
           projectId={projectId}
