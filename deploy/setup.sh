@@ -579,7 +579,7 @@ EOF
   [ -f "$INSTALL_DIR/bootroot/server/.env" ] || die "test: boot wrote no .env"
   [ "$(grep -c "localhost:8080/health" "$PCODER_TEST_LOG")" = "3" ] \
     || die "test: health retry loop polled wrong number of times"
-  order_ok "git clone" "compose build" "smtp-test" "compose up" \
+  order_ok "git clone" "compose build" "pcoder-project" "pcoder-browser" "smtp-test" "compose up" \
     || die "test: boot ran steps out of order"
   unset PCODER_TEST_HEALTH_OK_AFTER
   # Update path: existing checkout fetches, never re-clones.
@@ -681,6 +681,12 @@ boot() {
   docker network create pcoder-net >/dev/null 2>&1 || true
   log "building images (several minutes on first run)"
   docker compose build
+  # Pre-build on-demand runtime images so the first clone/preview doesn't
+  # block on a 2-5 min Docker build inside the HTTP request — that was the
+  # original 504 Gateway Timeout source. The tags must match the constants
+  # in server/internal/project/service.go and server/internal/preview/docker_runtime.go.
+  docker build -t pcoder-project:v3 "$INSTALL_DIR/server/internal/project/image"
+  docker build -t pcoder-browser:v12 "$INSTALL_DIR/server/internal/preview/image"
   log "probing SMTP delivery"
   # The image ENTRYPOINT is already ["pcoder"], so the subcommand is
   # appended bare (not `pcoder smtp-test`, which would repeat the binary).
