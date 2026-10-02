@@ -56,6 +56,7 @@ const (
 	GitSwitch    = "git.switch"
 	GitCommitMsg = "git.commit_message"
 	GitPRBody    = "git.pr_body"
+	GitOpsPrompt = "git.ops_prompt"
 	GitExplain   = "git.explain"
 
 	// Codemap turns + threads + file reader.
@@ -154,4 +155,5 @@ var AuditTypes = []string{
 	GitPush,
 	GitPull,
 	GitSwitch,
+	GitOpsPrompt,
 }

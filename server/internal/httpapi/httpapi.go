@@ -131,6 +131,7 @@ func New(d Deps) http.Handler {
 		authedProject("POST", "/api/projects/{id}/git/switch", handleGitSwitch)
 		authedProject("POST", "/api/projects/{id}/git/commit-message", handleGitCommitMessage)
 		authedProject("POST", "/api/projects/{id}/git/pr-body", handleGitPRBody)
+		authedProject("POST", "/api/projects/{id}/git/ops-prompt", handleGitOpsPrompt)
 		authedProject("POST", "/api/projects/{id}/git/explain", handleGitExplain)
 		authedProject("POST", "/api/projects/{id}/codemap", handleCodemap)
 		authedProject("GET", "/api/projects/{id}/codemap/threads", handleCodemapThreads)

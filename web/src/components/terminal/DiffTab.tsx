@@ -10,6 +10,7 @@ import { Separator } from '@/components/ui/separator'
 import { api, ApiError, errMsg, projectPath } from '@/lib/api'
 import { copyToClipboard } from '@/lib/clipboard'
 import { BranchSheet } from '@/components/terminal/BranchSheet'
+import { GitOpsPrompt } from '@/components/terminal/GitOpsPrompt'
 import type { GitBranchList, GitDiffResponse, GitFileStatus, GitStatusResponse } from '@/lib/types'
 
 // Context levels for the per-file progressive expansion.
@@ -610,7 +611,7 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
             ↻ Refresh
           </Button>
         </div>
-        <CardDescription>Review what the harness changed, then commit and push.</CardDescription>
+        <CardDescription>Review what the harness changed, then commit and push. Pushes go straight to the current branch — PRs and syncs run in your terminal AI (below).</CardDescription>
       </CardHeader>
       <Separator />
       <CardContent className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pt-3">
@@ -819,6 +820,8 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
             )}
           </div>
         )}
+
+                <GitOpsPrompt projectId={projectId} branch={status?.branch ?? null} />
 
         {branchOpen && (
           <BranchSheet
