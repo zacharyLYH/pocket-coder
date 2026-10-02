@@ -11,9 +11,10 @@ import { ProjectMenu } from '@/components/ProjectMenu'
 // in the per-project menu; the clone form hides in a disclosure. Every
 // clone runs over the server deploy key — HTTPS and SSH pastes alike,
 // normalized server-side.
-export function ProjectsCard({ projects, loading, error, refresh, navigate }: {
+export function ProjectsCard({ projects, loading, error, refresh, navigate, onBusy }: {
   projects: Project[]; loading: boolean; error: string | null; refresh: () => Promise<void>
   navigate: (to: string) => void
+  onBusy?: (b: boolean) => void
 }) {
   const [repoUrl, setRepoUrl] = useState('')
   const [creating, setCreating] = useState(false)
@@ -21,10 +22,11 @@ export function ProjectsCard({ projects, loading, error, refresh, navigate }: {
   async function createProject(e: FormEvent) {
     e.preventDefault()
     setCreating(true); setCreateError(null)
+    onBusy?.(true)
     try {
       await api('/api/projects', { method: 'POST', body: JSON.stringify({ repoUrl: repoUrl.trim() }) })
       setRepoUrl(''); await refresh()
-    } catch (err) { setCreateError(errMsg(err)) } finally { setCreating(false) }
+    } catch (err) { setCreateError(errMsg(err)) } finally { setCreating(false); onBusy?.(false) }
   }
   return (
     <Card className="gap-3 py-4">

@@ -26,7 +26,7 @@ export function Home({ email, onLogout, navigate }: {
   email: string; onLogout: () => void; navigate: (to: string) => void
 }) {
   const { projects, loading, error, refresh } = useProjects()
-  const [harnessBusy, setHarnessBusy] = useState(false)
+  const [busy, setBusy] = useState(false)
   // Only the first probe starts at 'checking': rechecks (after Test or a
   // regenerate) keep the current view until the answer lands, so the page
   // swaps only when the verdict actually changes.
@@ -87,7 +87,7 @@ export function Home({ email, onLogout, navigate }: {
         )}
         {ssh === 'ok' && (
           <>
-            <ProjectsCard projects={projects} loading={loading} error={error} refresh={refresh} navigate={navigate} />
+            <ProjectsCard projects={projects} loading={loading} error={error} refresh={refresh} navigate={navigate} onBusy={setBusy} />
             <Card className="gap-2 py-4">
               <CardHeader className="px-4">
                 <div className="flex items-center gap-2">
@@ -101,12 +101,12 @@ export function Home({ email, onLogout, navigate }: {
                 <SetupRows ai={aiStatus} onGit={checkSsh} onAi={loadAi} />
               </CardContent>
             </Card>
-            <RunEverywhereCard projects={projects} busy={harnessBusy} onBusy={setHarnessBusy} />
-            <SettingsCard onReset={() => { void refresh(); checkSsh() }} />
+            <RunEverywhereCard projects={projects} busy={busy} onBusy={setBusy} />
+            <SettingsCard onReset={() => { void refresh(); checkSsh() }} onBusy={setBusy} />
           </>
         )}
       </main>
-      {harnessBusy && <BusyOverlay />}
+      {busy && <BusyOverlay />}
       {/* Same gate as the codemap tab: no model key, no butler. Hidden
           until the config loads so key-less backends never show it. */}
       {ssh === 'ok' && aiStatus?.configured ? <ButlerFab projectHint={null} /> : null}

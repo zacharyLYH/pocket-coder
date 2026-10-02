@@ -45,6 +45,27 @@ test.describe('codemap desktop', () => {
     await expect(page).toHaveScreenshot('codemap-ai-card.png', { fullPage: true })
   })
 
+  test('AI card with configured model does not overflow', async ({ page }) => {
+    await page.route('**/api/ai/models', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ models: [{ id: 'm1', label: 'test', baseURL: 'https://api.openai.com/v1', model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', hasKey: true }] }),
+      })
+    })
+    await page.goto('/')
+    await page.getByTestId('setup-ai').click()
+    const dialog = page.getByRole('dialog')
+    // The model row should render inside the dialog.
+    await expect(dialog.getByText('nvidia/nemotron')).toBeVisible()
+    // Save is disabled until Test is clicked (no prior test).
+    await expect(dialog.getByTestId('ai-save')).toBeDisabled()
+    // No horizontal scroll = no overflow.
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(overflow).toBeLessThanOrEqual(1)
+    await expect(page).toHaveScreenshot('codemap-ai-card-with-model.png', { fullPage: true })
+  })
+
   test('codemap tab hidden without a key', async ({ page }) => {
     await mockSessions(page)
     await page.goto(terminalUrl(FAKE_ID, 'main'))

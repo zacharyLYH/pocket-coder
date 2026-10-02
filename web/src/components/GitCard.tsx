@@ -160,7 +160,7 @@ export function GitCard({ onChanged, showRegenerate = true }: {
         </AlertDialogContent>
       </AlertDialog>
 
-      {key?.fingerprint && <p data-testid="git-fingerprint" className="font-mono text-xs text-muted-foreground">{key.fingerprint}</p>}
+      {key?.fingerprint && <p data-testid="git-fingerprint" className="font-mono text-xs text-muted-foreground break-all">{key.fingerprint}</p>}
     </div>
   )
 }

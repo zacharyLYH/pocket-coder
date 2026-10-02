@@ -4,6 +4,7 @@ import { FlaskConical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { api, errMsg, probeErr, probeSignal } from '@/lib/api'
 import type { AIModel } from '@/lib/types'
 
@@ -130,31 +131,40 @@ export function AICard({ onChanged }: { onChanged?: () => void }) {
   const condemnedName = condemned ? condemned.label || condemned.model : ''
 
   return (
-    <div data-testid="ai-card" className="flex flex-col gap-2">
+    <div data-testid="ai-card" className="flex flex-col gap-2 overflow-hidden">
       <p className="text-xs text-muted-foreground">Shared model list for codemaps and the butler. Test first, then save.
         {tested && <span> tested</span>}
         {saved && <span> saved</span>}
       </p>
       {models.length === 0 && <p className="text-sm text-muted-foreground">No models yet. Codemaps stay disabled until one is saved.</p>}
-      {models.map((m) => (
-        <div key={m.id} className="flex min-h-[44px] items-center justify-between gap-2 text-sm">
+      <TooltipProvider>
+        {models.map((m) => (
+        <div className="flex min-h-[44px] w-full items-center justify-between gap-2 overflow-hidden text-sm">
           <Input
             type="text"
             defaultValue={m.label}
             placeholder="Label"
             aria-label={`Label for ${m.model}`}
-            className="min-h-[44px] max-w-28 font-mono text-xs"
+            className="min-h-[44px] w-20 shrink-0 font-mono text-xs sm:w-28"
             onBlur={(e) => { void saveLabel(m, e.target.value) }}
           />
-          <span className="truncate text-xs text-muted-foreground" title={`${m.baseURL} ${m.model}`}>{m.model}{testedId === m.id && ' tested'}</span>
-          <span className="flex gap-1">
-            <Button size="sm" variant="ghost" className="min-h-[44px]" disabled={busy !== null} onClick={() => void retest(m.id)}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="min-w-0 flex-1 cursor-help truncate text-xs text-muted-foreground" title={`${m.model}`}>{m.model}{testedId === m.id && ' tested'}</span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs">
+              <p className="font-mono text-xs">{m.model}</p>
+            </TooltipContent>
+          </Tooltip>
+          <span className="flex shrink-0 gap-1">
+            <Button size="sm" variant="ghost" className="min-h-[44px] shrink-0" disabled={busy !== null} onClick={() => void retest(m.id)}>
               <FlaskConical className="size-4" />{busy === m.id ? '...' : 'Test'}
             </Button>
             <Button size="sm" variant="ghost" className="min-h-[44px] text-destructive" disabled={busy !== null} onClick={() => setDeleteId(m.id)}>Delete</Button>
           </span>
         </div>
-      ))}
+        ))}
+      </TooltipProvider>
       <Input type="text" placeholder="Label (e.g. cheap-mini)" value={label} onChange={(e) => { setLabel(e.target.value); markDirty() }} data-testid="ai-label" className="min-h-[44px]" />
       <Input type="text" placeholder="Base URL (https://api.openai.com/v1)" value={baseURL} onChange={(e) => { setBaseURL(e.target.value); markDirty() }} data-testid="ai-base-url" className="min-h-[44px]" />
       <Input type="password" placeholder="API key" value={apiKey} onChange={(e) => { setApiKey(e.target.value); markDirty() }} data-testid="ai-api-key" className="min-h-[44px]" />
