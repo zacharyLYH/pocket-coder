@@ -25,7 +25,7 @@ func TestTerminalLiveLifecycle(t *testing.T) {
 	cookie := login(t, h, pinOut)
 
 	// fixture project (embedded image ships tmux)
-	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
+	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "")
 	waitForStatus(t, h, cookie, id, "running")
 
 	// create → 201 + event; duplicate → 409; list → [main]

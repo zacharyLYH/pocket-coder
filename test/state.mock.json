@@ -2,11 +2,16 @@
   "user": {
     "email": "dev@example.com"
   },
+  "serverKey": {
+    "privateKey": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACAa7v3V96xCjvvdD8aafvirS/o2QvxaqefDa7qQiXJvSwAAAJjSSUWi0klF\nogAAAAtzc2gtZWQyNTUxOQAAACAa7v3V96xCjvvdD8aafvirS/o2QvxaqefDa7qQiXJvSw\nAAAEBOVJXIsoU5WOY8ReKc0p3B1gok1nn5pIRhMUSJZV0IVhru/dX3rEKO+90Pxpp++KtL\n+jZC/Fqp58NrupCJcm9LAAAADnBjb2Rlci1maXh0dXJlAQIDBAUGBw==\n-----END OPENSSH PRIVATE KEY-----\n",
+    "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBru/dX3rEKO+90Pxpp++KtL+jZC/Fqp58NrupCJcm9L pcoder-fixture",
+    "fingerprint": "SHA256:HxcF3z3cltfQ8FGo2ThIMUm3TmjpQtVAV0cAR2b8IyE",
+    "createdAt": "2025-01-01T00:00:00Z"
+  },
   "projects": {
     "developit/preact-vite-template": {
       "repo": "https://github.com/developit/preact-vite-template.git",
       "branch": "main",
-      "cloneMethod": "http",
       "harnesses": ["opencode"],
       "sessions": {
         "main": {},

@@ -9,11 +9,10 @@ import { mockFetch } from '@/test/mockFetch'
 describe('App routes', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/')
-    vi.stubGlobal('fetch', mockFetch((url) => {
+    vi.stubGlobal('fetch', mockFetch((url, init) => {
       if (url === '/api/auth/me') return { status: 200, body: { email: 'me@example.com' } }
       if (url === '/api/projects') return { status: 200, body: { projects: [] } }
-      if (url === '/api/ssh-keys') return { status: 200, body: { keys: [] } }
-      if (url === '/api/git/identities') return { status: 200, body: { identities: [{ id: 'g1' }] } }
+      if (url === '/api/ssh/test' && init?.method === 'POST') return { status: 200, body: { ok: true, user: 'octocat' } }
       if (url === '/api/ai/models') return { status: 200, body: { models: [] } }
       return undefined
     }))

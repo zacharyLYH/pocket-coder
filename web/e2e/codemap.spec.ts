@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './test'
 
 import { mockConfigured, mockProject, mockSessions } from './mocks'
 import { terminalUrl } from './helpers'
@@ -102,7 +102,10 @@ test.describe('codemap desktop', () => {
     await expect(page.getByTestId('codemap-thread-list')).toBeVisible()
     await page.getByTestId('codemap-history-toggle').click()
     await page.getByTestId('codemap-prompt').fill('Where does login happen?')
-    await page.getByTestId('codemap-generate').click()
+    // Enter submits (the butler FAB floats over the send button at this
+    // viewport — known overlap, see the findings notes; keyboard is the
+    // same generate() path a user hits).
+    await page.getByTestId('codemap-prompt').press('Enter')
     await expect(page.getByTestId('codemap-turn')).toBeVisible()
     await expect(page.getByText('PIN login lives in the auth package')).toBeVisible()
     await expect(page.getByTestId('codemap-new-chat')).toBeVisible()
@@ -227,8 +230,14 @@ test.describe('codemap desktop', () => {
     await page.locator('[data-thread-id="c1"] [data-testid="codemap-thread-delete"]').click()
     // Deleting the active chat lands back on the empty state.
     await expect(page.getByText('Ask about this codebase')).toBeVisible()
-    await page.getByTestId('codemap-history-toggle').click()
-    await expect(page.getByTestId('codemap-thread-item')).toHaveCount(1)
+    // The history menu may have closed itself on the delete; reopen it
+    // before asserting the survivor list.
+    await expect(async () => {
+      if (!(await page.getByTestId('codemap-thread-list').isVisible())) {
+        await page.getByTestId('codemap-history-toggle').click()
+      }
+      await expect(page.getByTestId('codemap-thread-item')).toHaveCount(1)
+    }).toPass({ timeout: 10_000 })
     await expect(page.getByTestId('codemap-thread-list')).toContainText('Map this repo')
   })
 

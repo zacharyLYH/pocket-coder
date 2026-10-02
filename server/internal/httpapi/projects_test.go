@@ -36,7 +36,7 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
 	md.EXPECT().InspectImage(mock.Anything, project.ProjectImage).Return(nil)
 	md.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
-	md.EXPECT().Exec(mock.Anything, "cid", []string{"git", "clone", "https://github.com/x/hello.git", "/workspace/repo"}, false).
+	md.EXPECT().Exec(mock.Anything, "cid", []string{"git", "clone", "git@github.com:x/hello.git", "/workspace/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 
 	cookie := loginCookie(t, h, pinOut)
@@ -50,7 +50,8 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 		Repo   string `json:"repo"`
 		Branch string `json:"branch"`
 	}
-	want := "https://github.com/x/hello.git"
+	// The API echoes the normalized SSH repo (that's what gets cloned).
+	want := "git@github.com:x/hello.git"
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil ||
 		created.ID != "x/hello" ||
 		created.Repo != want || created.Branch != "" {
@@ -60,10 +61,9 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 	// the source of truth on disk is exactly this project — repo only
 	// (branch empty → omitted), nothing else in the document
 	statetest.AssertEqual(t, st.Path(), map[string]any{
-		"user":           map[string]any{"email": ""},
-		"git_identities": []any{map[string]any{"id": "default", "label": "Default", "name": "Test", "email": "test@example.com", "token": "test-token"}},
+		"user": map[string]any{"email": ""},
 		"projects": map[string]any{
-			created.ID: map[string]any{"repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
+			created.ID: map[string]any{"repo": "git@github.com:x/hello.git"},
 		},
 	})
 
@@ -98,8 +98,10 @@ func TestCreateCloneFailureSurfacesDetail(t *testing.T) {
 
 	cookie := loginCookie(t, h, pinOut)
 	rec := authedPost(t, h, cookie, "/api/projects", `{"repoUrl":"https://github.com/x/nope.git"}`)
-	want := "{\"error\":\"clone https://github.com/x/nope.git: fatal: repository not found\"}\n"
-	if rec.Code != http.StatusInternalServerError || rec.Body.String() != want {
+	// SSH-era clone failures surface the deploy-key rot signal, not raw
+	// git output: the fix is re-adding the server key, not debugging refs.
+	want := "{\"error\":\"" + gitAuthMsg + "\"}\n"
+	if rec.Code != http.StatusBadGateway || rec.Body.String() != want {
 		t.Fatalf("create failure: got %d %q, want 500 %q", rec.Code, rec.Body, want)
 	}
 }

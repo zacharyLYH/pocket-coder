@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs'
-import { expect, test } from '@playwright/test'
+import { expect, test } from './test'
 
 import { SERVER_LOG } from './env'
 import { deleteAllProjects, engineUp, fetchEvents } from './helpers'
 
 // Boot-bootstrap journey (the 422 regression): state.json is seeded BEFORE
-// the backend boots (E2E_SEED=bootstrap.seed.json in e2e-parallel.sh) with a
+// the backend boots (E2E_SEED=bootstrap in e2e-parallel.sh — the seeder
+// factory e2e/stateSeed.ts derives the state from test/state.mock.json) with a
 // project that records opencode installed and a session oc1 — while Docker
 // has NO container and NO volume for it. The server must rebuild the
 // container, re-clone, and download opencode BEFORE it accepts requests.

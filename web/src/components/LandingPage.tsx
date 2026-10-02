@@ -57,7 +57,7 @@ export function LandingPage({ onLogin }: { onLogin: () => void }) {
             </CardHeader>
             <CardContent>
               <Button variant="outline" asChild>
-                <a href={GMAIL_GUIDE_URL} target="_blank" rel="noreferrer">
+                <a href={GMAIL_GUIDE_URL} className='underline text-blue-500' target="_blank" rel="noreferrer">
                   Open the Gmail app-password guide
                 </a>
               </Button>

@@ -102,7 +102,7 @@ func TestMutatePersistsAndRollsBackOnError(t *testing.T) {
 
 func TestFreshInstallIsEmpty(t *testing.T) {
 	_, doc := open(t, t.TempDir(), Bootstrap{})
-	if doc.User.Email != "" || doc.Projects != nil || doc.Harnesses != nil || doc.SSHKeys != nil {
+	if doc.User.Email != "" || doc.Projects != nil || doc.Harnesses != nil || doc.ServerKey != nil {
 		t.Fatalf("fresh install should be empty, got %+v", doc)
 	}
 }

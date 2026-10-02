@@ -15,6 +15,11 @@ function intEnv(name: string, def: number): number {
 export const API_PORT = intEnv('E2E_API_PORT', 8081)
 export const WEB_PORT = intEnv('E2E_WEB_PORT', 5174)
 
+// The one login identity every e2e account uses (the compose stack pins
+// PCODER_LOGIN_EMAIL to match). Lives here so the seeder factory and the
+// login helpers can't drift apart.
+export const LOGIN_EMAIL = 'me@example.com'
+
 // Host port of the per-run git daemon (see global-setup.ts). Each parallel
 // group gets its own daemon + port via E2E_GIT_PORT, so fixture repo URLs
 // — and therefore project ids — never collide across groups sharing one
@@ -33,17 +38,20 @@ export const DATA_DIR = `${RUN_DIR}/pcoder-stack-data`
 export const SERVER_LOG = `${RUN_DIR}/pcoder-stack-server.log`
 export const AUTH_STATE = `${RUN_DIR}/auth-state.json`
 
-// state.json fixture copied into the data dir before the server boots.
-// E2E_SEED=bootstrap.seed.json (bootstrap group) starts the stack from a
-// pre-existing project so the boot-bootstrap journey can be tested from an
-// empty Docker state; the default seed is a fresh user with no projects.
+// SEED_KIND picks the boot state written before the server boots (see
+// playwright.config.ts): the seeder factory (e2e/stateSeed.ts) derives
+// every kind from the canonical test/state.mock.json — no checked-in seed
+// copies. 'bootstrap' starts the stack from a pre-existing project so the
+// boot-bootstrap journey can be tested from an empty Docker state; the
+// default kind is a fresh user + server key with no projects.
 //
 // Auto-detects: if the command-line filters include the bootstrap spec
 // (e.g. `npx playwright test e2e/bootstrap.spec.ts`), default to the
-// bootstrap seed so the test works standalone without `e2e-parallel.sh`.
+// bootstrap kind so the test works standalone without `e2e-parallel.sh`.
 const argv = process.argv.slice(2).join(' ')
-const isBootstrapRun = /bootstrap\.spec/.test(argv) || process.env.E2E_SEED === 'bootstrap.seed.json'
-export const SEED_FILE = process.env.E2E_SEED ?? (isBootstrapRun ? 'bootstrap.seed.json' : 'state.seed.json')
+const isBootstrapRun = /bootstrap\.spec/.test(argv) || process.env.E2E_SEED === 'bootstrap'
+export type SeedKind = 'default' | 'bootstrap'
+export const SEED_KIND: SeedKind = isBootstrapRun ? 'bootstrap' : 'default'
 
 // Compose project name for this run's backend stack. Single source of truth
 // shared by playwright.config.ts (webServer up) and global-teardown.ts

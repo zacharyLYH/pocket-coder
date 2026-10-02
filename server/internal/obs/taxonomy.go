@@ -57,6 +57,8 @@ const (
 	GitCommitMsg = "git.commit_message"
 	GitPRBody    = "git.pr_body"
 	GitOpsPrompt = "git.ops_prompt"
+	SSHKeyTest   = "ssh.test"
+	SSHKeyRegen  = "ssh.regen"
 	GitExplain   = "git.explain"
 
 	// Codemap turns + threads + file reader.

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -38,6 +39,33 @@ func gitopsSetup(t *testing.T) (Deps, *http.Cookie, http.Handler) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 	return d, cookie, h
+}
+
+// isGitAuthError unit probe: SSH transport must map to the rot signal.
+// firstLine stays rune-safe on multi-byte probe output.
+func TestIsGitAuthErrorSSH(t *testing.T) {
+	for _, s := range []string{
+		"git@github.com: Permission denied (publickey). fatal: Could not read from remote repository.",
+		"ERROR: Repository not found. fatal: Could not read from remote repository.",
+		"Host key verification failed. fatal: Could not read from remote repository.",
+	} {
+		if !isGitAuthError(s) {
+			t.Fatalf("isGitAuthError(%q) = false, want true", s)
+		}
+	}
+}
+
+func TestFirstLineRuneSafe(t *testing.T) {
+	in := strings.Repeat("é", 300) + "\nsecond"
+	got := firstLine(in)
+	if got != strings.Repeat("é", 200)+"…" {
+		t.Fatalf("firstLine runes = %d, want 201", len([]rune(got)))
+	}
+	// []byte slicing would leave 0xA9 alone (invalid UTF-8); rune slicing
+	// consumes the whole two-byte é.
+	if !utf8.ValidString(got) {
+		t.Fatalf("firstLine not valid UTF-8: %q", got)
+	}
 }
 
 func TestGitCommitNothingToCommit(t *testing.T) {
@@ -178,9 +206,9 @@ func TestGitPushSurfacesErrors(t *testing.T) {
 	if !pushCalled {
 		t.Fatalf("push command missing GIT_TERMINAL_PROMPT=0 / push -u origin")
 	}
-	// Auth-shaped failures point at Git setup, not the terminal.
-	if !strings.Contains(rec.Body.String(), "Git credentials rejected") {
-		t.Fatalf("push auth error must point at Git setup: %q", rec.Body)
+	// Auth-shaped failures point at SSH setup, not the terminal.
+	if !strings.Contains(rec.Body.String(), "GitHub rejected the server key") {
+		t.Fatalf("push auth error must point at SSH setup: %q", rec.Body)
 	}
 }
 

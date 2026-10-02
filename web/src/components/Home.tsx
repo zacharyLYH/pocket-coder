@@ -1,38 +1,46 @@
 import { useEffect, useState } from 'react'
+import { Info } from 'lucide-react'
 import { BusyOverlay } from '@/components/BusyOverlay'
 import { ProjectsCard } from '@/components/ProjectsCard'
 import { SetupRows } from '@/components/SetupRows'
+import { SettingsCard } from '@/components/SettingsCard'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { api, errMsg } from '@/lib/api'
-import type { ExecResult, GitIdentity, Project, SSHKey } from '@/lib/types'
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import { api, errMsg, probeSignal } from '@/lib/api'
+import type { ExecResult, Project } from '@/lib/types'
 import { useAiConfig } from '@/hooks/useAiConfig'
 import { ButlerFab } from '@/components/ButlerFab'
+import { GitCard } from '@/components/GitCard'
 import { useProjects } from '@/hooks/useProjects'
 
-// Home: projects first, connections as three status rows, power tools last.
-// No stacked cards implying one combined flow.
+// Home: projects first, connections as two status rows, power tools last.
+// No stacked cards implying one combined flow. The ssh probe gates the
+// page — until the server key authenticates, projects stay hidden behind
+// a card that says where to paste the public key.
 export function Home({ email, onLogout, navigate }: {
   email: string; onLogout: () => void; navigate: (to: string) => void
 }) {
   const { projects, loading, error, refresh } = useProjects()
-  const [sshKeys, setSshKeys] = useState<SSHKey[]>([])
   const [harnessBusy, setHarnessBusy] = useState(false)
-  const [gitConfigured, setGitConfigured] = useState(true)
+  // Only the first probe starts at 'checking': rechecks (after Test or a
+  // regenerate) keep the current view until the answer lands, so the page
+  // swaps only when the verdict actually changes.
+  const [ssh, setSsh] = useState<'checking' | 'ok' | 'fail'>('checking')
   const { status: aiStatus, refresh: refreshAi } = useAiConfig()
-  const loadSshKeys = () => api<{ keys: SSHKey[] }>('/api/ssh-keys').then((d) => setSshKeys(d.keys)).catch(() => {})
-  const loadGit = () => api<{ identities: GitIdentity[] }>('/api/git/identities').then((d) => setGitConfigured((d.identities ?? []).length > 0)).catch(() => {})
+  const checkSsh = () => {
+    api<{ ok: boolean }>('/api/ssh/test', { method: 'POST', signal: probeSignal() })
+      .then(() => setSsh('ok'))
+      .catch(() => setSsh('fail'))
+  }
   const loadAi = () => { void refreshAi() }
-  useEffect(() => { loadSshKeys() }, [])
-  useEffect(() => { loadGit() }, [])
+  useEffect(() => { checkSsh() }, [])
   useEffect(() => { void refreshAi() }, [refreshAi])
-  // SSH keys are optional (HTTPS clone needs none), so they never
-  // trigger the action-needed badge — Git and AI setup do.
-  const needsAttention = !gitConfigured || !aiStatus?.configured
+  const needsAttention = !aiStatus?.configured
   async function logout() {
     try { await api('/api/auth/logout', { method: 'POST' }) } catch { /* still sign out */ }
     onLogout()
@@ -50,28 +58,58 @@ export function Home({ email, onLogout, navigate }: {
       <main className="mx-auto flex w-full max-w-md flex-col gap-3 px-4 pb-16 pt-4">
         <span className="sr-only">Welcome, {email}</span>
         <p className="text-sm text-muted-foreground" aria-label={`Signed in as ${email}`}>
-          {projects.length === 0 && !loading ? `Hey ${email}, clone your first repo.` : `${projects.length} project${projects.length === 1 ? '' : 's'}`}
+          {ssh === 'ok' && (projects.length === 0 && !loading ? `Hey ${email}, clone your first repo.` : `${projects.length} project${projects.length === 1 ? '' : 's'}`)}
         </p>
-        <ProjectsCard projects={projects} loading={loading} error={error} refresh={refresh} sshKeyCount={sshKeys.length} gitConfigured={gitConfigured} navigate={navigate} />
-        <Card className="gap-2 py-4">
-          <CardHeader className="px-4">
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-[17px] tracking-tight">Connections</CardTitle>
-              {needsAttention
-                ? <span className="rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">action needed</span>
-                : <span className="text-sm font-normal text-muted-foreground">done</span>}
-            </div>
-          </CardHeader>
-          <CardContent className="px-2">
-            <SetupRows sshKeys={sshKeys} gitConfigured={gitConfigured} ai={aiStatus} onGit={loadGit} onKeys={loadSshKeys} onAi={loadAi} />
-          </CardContent>
-        </Card>
-        <RunEverywhereCard projects={projects} busy={harnessBusy} onBusy={setHarnessBusy} />
+        {ssh === 'checking' && (
+          <p className="text-sm text-muted-foreground" data-testid="ssh-checking">Checking the git connection…</p>
+        )}
+        {ssh === 'fail' && (
+          <Card data-testid="ssh-gate" className="gap-3 py-4">
+            <CardHeader className="px-4">
+              <CardTitle className="flex items-center gap-2 text-[17px] tracking-tight">
+                Connect GitHub first
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="size-4 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs">
+                      Set this up on a desktop browser — copying keys and navigating GitHub settings is much easier with a desktop clipboard and screen.
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3 px-4">
+              <GitCard onChanged={checkSsh} showRegenerate={false} />
+            </CardContent>
+          </Card>
+        )}
+        {ssh === 'ok' && (
+          <>
+            <ProjectsCard projects={projects} loading={loading} error={error} refresh={refresh} navigate={navigate} />
+            <Card className="gap-2 py-4">
+              <CardHeader className="px-4">
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-[17px] tracking-tight">Connections</CardTitle>
+                  {needsAttention
+                    ? <span className="rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">action needed</span>
+                    : <span className="text-sm font-normal text-muted-foreground">done</span>}
+                </div>
+              </CardHeader>
+              <CardContent className="px-2">
+                <SetupRows ai={aiStatus} onGit={checkSsh} onAi={loadAi} />
+              </CardContent>
+            </Card>
+            <RunEverywhereCard projects={projects} busy={harnessBusy} onBusy={setHarnessBusy} />
+            <SettingsCard onReset={() => { void refresh(); checkSsh() }} />
+          </>
+        )}
       </main>
       {harnessBusy && <BusyOverlay />}
       {/* Same gate as the codemap tab: no model key, no butler. Hidden
           until the config loads so key-less backends never show it. */}
-      {aiStatus?.configured ? <ButlerFab projectHint={null} /> : null}
+      {ssh === 'ok' && aiStatus?.configured ? <ButlerFab projectHint={null} /> : null}
     </>
   )
 }

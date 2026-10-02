@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"pcoder/internal/state"
@@ -159,113 +160,7 @@ func TestAIModelsAllowDuplicates(t *testing.T) {
 	}
 }
 
-func TestGitIdentitiesCRUDRedacted(t *testing.T) {
-	d, _, pinOut, st := newProjectDeps(t)
-	_ = st.Mutate(func(doc *state.Document) error {
-		doc.GitIDs = nil
-		return nil
-	})
-	fakeGitHub(t)
-	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
-
-	rec := authedPost(t, h, cookie, "/api/git/identities",
-		`{"label":"work","name":"N","email":"n@e.com","token":"bad-token"}`)
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("bad create: got %d, want 502", rec.Code)
-	}
-	rec = authedPost(t, h, cookie, "/api/git/identities",
-		`{"label":"work","name":"N","email":"n@e.com","token":"good-token"}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create: got %d %q, want 201", rec.Code, rec.Body)
-	}
-	var created struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &created)
-
-	rec = authedGet(t, h, cookie, "/api/git/identities")
-	var list struct {
-		Identities []map[string]any `json:"identities"`
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &list)
-	if len(list.Identities) != 1 || list.Identities[0]["hasToken"] != true {
-		t.Fatalf("list = %v", list.Identities)
-	}
-	if _, ok := list.Identities[0]["token"]; ok {
-		t.Fatalf("list leaks token: %v", list.Identities[0])
-	}
-
-	// Stored-entry test with an empty body.
-	rec = authedPost(t, h, cookie, "/api/git/identities/"+created.ID+"/test", ``)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("stored test: got %d %q", rec.Code, rec.Body)
-	}
-
-	rec = authedPost(t, h, cookie, "/api/git/identities/"+created.ID+"/test",
-		`{"name":"N","email":"n@e.com","token":"good-token"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("test: got %d %q", rec.Code, rec.Body)
-	}
-
-	// Partial bodies never reach the live check.
-	rec = authedPost(t, h, cookie, "/api/git/identities/"+created.ID+"/test", `{"name":"N"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("partial test: got %d, want 400", rec.Code)
-	}
-
-	// Rename with an empty token keeps the stored one and probes nothing.
-	rec = authedMethodBody(t, h, cookie, http.MethodPut, "/api/git/identities/"+created.ID,
-		`{"label":"home","name":"N","email":"n@e.com","token":""}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("rename: got %d %q, want 200", rec.Code, rec.Body)
-	}
-	rec = authedGet(t, h, cookie, "/api/git/identities")
-	_ = json.Unmarshal(rec.Body.Bytes(), &list)
-	if len(list.Identities) != 1 || list.Identities[0]["label"] != "home" {
-		t.Fatalf("list after rename = %v, want home row", list.Identities)
-	}
-	rec = authedPost(t, h, cookie, "/api/git/identities/"+created.ID+"/test", ``)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("stored test after rename: got %d %q", rec.Code, rec.Body)
-	}
-	if ev := lastEvent(t, d); ev.Type != "git.updated" {
-		t.Fatalf("last event = %q, want git.updated", ev.Type)
-	}
-
-	// Unknown ids 404 without a live call.
-	rec = authedPost(t, h, cookie, "/api/git/identities/deadbeef/test", ``)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("unknown test: got %d, want 404", rec.Code)
-	}
-	rec = authedMethodBody(t, h, cookie, http.MethodPut, "/api/git/identities/deadbeef",
-		`{"label":"w","name":"N","email":"n@e.com","token":"good-token"}`)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("unknown update: got %d, want 404", rec.Code)
-	}
-
-	// Update then delete.
-	rec = authedMethodBody(t, h, cookie, http.MethodPut, "/api/git/identities/"+created.ID,
-		`{"label":"home","name":"N2","email":"n2@e.com","token":"good-token"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("update: got %d %q", rec.Code, rec.Body)
-	}
-	rec = authedRequest(t, h, cookie, http.MethodDelete, "/api/git/identities/"+created.ID)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("delete: got %d %q", rec.Code, rec.Body)
-	}
-	if ev := lastEvent(t, d); ev.Type != "git.removed" {
-		t.Fatalf("last event = %q, want git.removed", ev.Type)
-	}
-	rec = authedGet(t, h, cookie, "/api/git/identities")
-	_ = json.Unmarshal(rec.Body.Bytes(), &list)
-	if len(list.Identities) != 0 {
-		t.Fatalf("after delete = %v, want empty", list.Identities)
-	}
-}
-
-// Delete of an unknown id reports success (idempotent), but a delete that
-// cannot persist must 500 — reporting ok while the entry survives on disk
+// A delete that cannot persist must 500 — reporting ok while the entry
 // lies about the outcome.
 func TestDeletePersistsOrFails(t *testing.T) {
 	d, pinOut := newTestDeps(t)
@@ -273,7 +168,6 @@ func TestDeletePersistsOrFails(t *testing.T) {
 	d.State = st
 	if err := st.Mutate(func(doc *state.Document) error {
 		doc.AIModels = []state.AIModel{{ID: "m1", BaseURL: "https://x", APIKey: "k", Model: "m"}}
-		doc.GitIDs = []state.GitIdentity{{ID: "g1", Name: "N", Email: "n@e.com", Token: "t"}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -292,13 +186,9 @@ func TestDeletePersistsOrFails(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("ai delete with failed save: got %d, want 500", rec.Code)
 	}
-	rec = authedRequest(t, h, cookie, http.MethodDelete, "/api/git/identities/g1")
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("git delete with failed save: got %d, want 500", rec.Code)
-	}
 
-	// Memory agrees with disk: the failed deletes changed nothing, so
-	// both rows still list (no resurrect-on-restart divergence).
+	// Memory agrees with disk: the failed delete changed nothing, so the
+	// row still lists (no resurrect-on-restart divergence).
 	rec = authedGet(t, h, cookie, "/api/ai/models")
 	var models struct {
 		Models []struct {
@@ -309,63 +199,53 @@ func TestDeletePersistsOrFails(t *testing.T) {
 	if len(models.Models) != 1 || models.Models[0].ID != "m1" {
 		t.Fatalf("ai list after failed delete = %+v, want m1", models.Models)
 	}
-	rec = authedGet(t, h, cookie, "/api/git/identities")
-	var ids struct {
-		Identities []struct {
-			ID string `json:"id"`
-		} `json:"identities"`
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &ids)
-	if len(ids.Identities) != 1 || ids.Identities[0].ID != "g1" {
-		t.Fatalf("git list after failed delete = %+v, want g1", ids.Identities)
-	}
 }
 
-func TestSSHUpdateAndTest(t *testing.T) {
+func TestServerKeyShowAndRegen(t *testing.T) {
 	d, _, pinOut, _ := newSessionDeps(t)
+	if d.SSHKeys == nil {
+		t.Fatal("no ssh store in deps")
+	}
+	first, err := d.SSHKeys.EnsureKeypair()
+	if err != nil {
+		t.Skipf("ssh-keygen unavailable: %v", err)
+	}
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	rec := authedPost(t, h, cookie, "/api/ssh-keys",
-		`{"publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGITest","label":"a"}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("add: %d %s", rec.Code, rec.Body)
+	// Show: public half only, never the private half.
+	rec := authedGet(t, h, cookie, "/api/ssh")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("show: %d %s", rec.Code, rec.Body)
 	}
-	var added struct {
+	var shown struct {
+		PublicKey   string `json:"publicKey"`
+		Fingerprint string `json:"fingerprint"`
+		CreatedAt   string `json:"createdAt"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &shown)
+	if shown.PublicKey != first.PublicKey || shown.Fingerprint != first.Fingerprint || shown.CreatedAt == "" {
+		t.Fatalf("show = %+v, want the stored pair", shown)
+	}
+	if strings.Contains(rec.Body.String(), "PRIVATE") {
+		t.Fatalf("show leaks the private key: %q", rec.Body)
+	}
+
+	// Regen rotates and persists.
+	rec = authedPost(t, h, cookie, "/api/ssh/regenerate", ``)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("regen: %d %s", rec.Code, rec.Body)
+	}
+	var rotated struct {
+		PublicKey   string `json:"publicKey"`
 		Fingerprint string `json:"fingerprint"`
 	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &added)
-
-	rec = authedMethodBody(t, h, cookie, http.MethodPut, "/api/ssh-keys/"+added.Fingerprint, `{"label":" b "}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("update: %d %q", rec.Code, rec.Body)
+	_ = json.Unmarshal(rec.Body.Bytes(), &rotated)
+	if rotated.PublicKey == first.PublicKey || rotated.Fingerprint == first.Fingerprint {
+		t.Fatalf("regen kept the old key: %+v", rotated)
 	}
-
-	// Unknown fingerprints 404 instead of silently succeeding.
-	rec = authedMethodBody(t, h, cookie, http.MethodPut, "/api/ssh-keys/sha256-nope", `{"label":"x"}`)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("unknown update: got %d, want 404", rec.Code)
-	}
-
-	// The label stuck.
-	rec = authedGet(t, h, cookie, "/api/ssh-keys")
-	var keys struct {
-		Keys []struct {
-			Label string `json:"label"`
-		} `json:"keys"`
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &keys)
-	if len(keys.Keys) != 1 || keys.Keys[0].Label != "b" {
-		t.Fatalf("keys after update = %+v, want label b", keys.Keys)
-	}
-
-	// Test validates without saving.
-	rec = authedPost(t, h, cookie, "/api/ssh-keys/test", `{"publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINewKey"}`)
-	if rec.Code != http.StatusOK || !json.Valid(rec.Body.Bytes()) {
-		t.Fatalf("test: %d %q", rec.Code, rec.Body)
-	}
-	rec = authedPost(t, h, cookie, "/api/ssh-keys/test", `{"publicKey":"nope"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("bad test: %d, want 400", rec.Code)
+	got, ok := d.SSHKeys.Get()
+	if !ok || got.PublicKey != rotated.PublicKey {
+		t.Fatalf("regen not persisted: %+v", got)
 	}
 }

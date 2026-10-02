@@ -1,88 +1,17 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
 
 	"pcoder/internal/docker"
-	"pcoder/internal/state"
 )
 
-// fakeGitHub serves the token live-check: only "good-token" passes.
-func fakeGitHub(t *testing.T) {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") == "Bearer good-token" {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"login":"me"}`))
-			return
-		}
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	t.Cleanup(srv.Close)
-	old := gitHubUserURL
-	gitHubUserURL = srv.URL
-	t.Cleanup(func() { gitHubUserURL = old })
-}
-
-func clearGit(t *testing.T, st *state.Store) {
-	t.Helper()
-	if err := st.Mutate(func(doc *state.Document) error {
-		doc.GitIDs = nil
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestGitConfigTestThenSave(t *testing.T) {
-	d, _, pinOut, st := newProjectDeps(t)
-	clearGit(t, st)
-	fakeGitHub(t)
-	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
-
-	// Bad token: 502, nothing saved.
-	rec := authedPost(t, h, cookie, "/api/git/identities", `{"label":"w","name":"N","email":"n@e.com","token":"bad-token"}`)
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("bad token: %d %q, want 502", rec.Code, rec.Body)
-	}
-
-	// Good token saves, and the stored secret never renders.
-	rec = authedPost(t, h, cookie, "/api/git/identities", `{"label":"w","name":"N","email":"n@e.com","token":"good-token"}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("save: %d %q", rec.Code, rec.Body)
-	}
-	rec = authedGet(t, h, cookie, "/api/git/identities")
-	var got struct {
-		Identities []map[string]any `json:"identities"`
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &got)
-	if len(got.Identities) != 1 || got.Identities[0]["name"] != "N" || got.Identities[0]["hasToken"] != true {
-		t.Fatalf("get configured: %d %v", rec.Code, got)
-	}
-	if strings.Contains(rec.Body.String(), "good-token") {
-		t.Fatalf("GET must never leak the token: %q", rec.Body)
-	}
-}
-
-func TestCreateProjectGatedOnGit(t *testing.T) {
-	d, _, pinOut, st := newProjectDeps(t)
-	clearGit(t, st)
-	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
-
-	rec := authedPost(t, h, cookie, "/api/projects", `{"repoUrl":"https://github.com/x/hello.git"}`)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "git not configured") {
-		t.Fatalf("create ungated: %d %q, want 409 git not configured", rec.Code, rec.Body)
-	}
-}
-
+// There is no stored git identity or token to rotate: clone and pull auth
+// failures always point at the server deploy key.
 func TestGitPullAuthErrorCopy(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
@@ -99,7 +28,7 @@ func TestGitPullAuthErrorCopy(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("pull failure: got %d %q, want 502", rec.Code, rec.Body)
 	}
-	if !strings.Contains(rec.Body.String(), "Git credentials rejected") {
-		t.Fatalf("pull auth error must point at Git setup: %q", rec.Body)
+	if !strings.Contains(rec.Body.String(), "GitHub rejected the server key") {
+		t.Fatalf("pull auth error must point at SSH setup: %q", rec.Body)
 	}
 }

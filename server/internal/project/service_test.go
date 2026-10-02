@@ -98,17 +98,17 @@ func TestCreateDerivesIDFromRepo(t *testing.T) {
 	var name string
 	expectProjectReady(d, &name)
 	d.EXPECT().Exec(mock.Anything, "cid123",
-		[]string{"git", "clone", testRepo, repoTarget + "/repo"}, false).
+		[]string{"git", "clone", "git@github.com:x/hello.git", repoTarget + "/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 
-	id, p, err := s.Create(t.Context(), testRepo, "", "")
+	id, p, err := s.Create(t.Context(), testRepo, "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if id != "x/hello" {
 		t.Fatalf("id = %q, want x/hello", id)
 	}
-	want := Project{Repo: testRepo, Branch: "", CloneMethod: "http"}
+	want := Project{Repo: "git@github.com:x/hello.git", Branch: ""}
 	if !reflect.DeepEqual(p, want) {
 		t.Fatalf("project = %+v, want %+v", p, want)
 	}
@@ -132,7 +132,7 @@ func TestCreateRequiresGitHubRepo(t *testing.T) {
 		{"https://github.com/onlyone.git", ""},
 		{"not a url at all", ""},
 	} {
-		_, _, err := s.Create(t.Context(), tc.repo, tc.branch, "")
+		_, _, err := s.Create(t.Context(), tc.repo, tc.branch)
 		if err == nil || !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("Create(%q) err = %v, want ErrInvalidInput", tc.repo, err)
 		}
@@ -149,15 +149,15 @@ func TestCreateDuplicateRepoIsConflict(t *testing.T) {
 	d.EXPECT().Exec(mock.Anything, "cid123", mock.Anything, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 
-	if _, _, err := s.Create(t.Context(), testRepo, "", ""); err != nil {
+	if _, _, err := s.Create(t.Context(), testRepo, ""); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	_, _, err := s.Create(t.Context(), testRepo, "", "")
+	_, _, err := s.Create(t.Context(), testRepo, "")
 	if err == nil || !errors.Is(err, ErrConflict) {
 		t.Fatalf("second create err = %v, want ErrConflict", err)
 	}
 	// same repo with different URL spellings is the same project
-	_, _, err = s.Create(t.Context(), "git@github.com:x/hello.git", "", "")
+	_, _, err = s.Create(t.Context(), "git@github.com:x/hello.git", "")
 	if err == nil || !errors.Is(err, ErrConflict) {
 		t.Fatalf("alias create err = %v, want ErrConflict", err)
 	}
@@ -173,16 +173,16 @@ func TestCreateClonesInsideContainer(t *testing.T) {
 		if tc.branch != "" {
 			wantArgs = append(wantArgs, "--branch", tc.branch, "--single-branch")
 		}
-		wantArgs = append(wantArgs, testRepo, repoTarget+"/repo")
+		wantArgs = append(wantArgs, "git@github.com:x/hello.git", repoTarget+"/repo")
 		d.EXPECT().Exec(mock.Anything, "cid123", wantArgs, false).
 			Return(docker.ExecResult{ExitCode: 0}, nil)
 
-		id, p, err := s.Create(t.Context(), testRepo, tc.branch, "")
+		id, p, err := s.Create(t.Context(), testRepo, tc.branch)
 		if err != nil {
 			t.Fatalf("create: %v", err)
 		}
 		wantBranch := tc.branch
-		want := Project{Repo: testRepo, Branch: wantBranch, CloneMethod: "http"}
+		want := Project{Repo: "git@github.com:x/hello.git", Branch: wantBranch}
 		if !reflect.DeepEqual(p, want) {
 			t.Fatalf("project = %+v, want %+v", p, want)
 		}
@@ -203,11 +203,11 @@ func TestCreateCloneFailureKeepsProject(t *testing.T) {
 	s, d, _, _ := newService(t)
 	var cname string
 	expectProjectReady(d, &cname)
-	d.EXPECT().Exec(mock.Anything, "cid123", []string{"git", "clone", testRepo, repoTarget + "/repo"}, false).
+	d.EXPECT().Exec(mock.Anything, "cid123", []string{"git", "clone", "git@github.com:x/hello.git", repoTarget + "/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 128, Output: "fatal: repository not found"}, nil)
 
-	_, _, err := s.Create(t.Context(), testRepo, "", "")
-	want := "clone " + testRepo + ": fatal: repository not found"
+	_, _, err := s.Create(t.Context(), testRepo, "")
+	want := "clone git@github.com:x/hello.git: fatal: repository not found"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
 	}
@@ -238,7 +238,7 @@ func TestCreateBuildsMissingProjectImage(t *testing.T) {
 	d.EXPECT().Exec(mock.Anything, "cid", mock.Anything, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 
-	if _, _, err := s.Create(t.Context(), testRepo, "", ""); err != nil {
+	if _, _, err := s.Create(t.Context(), testRepo, ""); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 }
@@ -249,7 +249,7 @@ func TestCreateRunFailureCleansUpMetadata(t *testing.T) {
 	d.EXPECT().InspectImage(mock.Anything, ProjectImage).Return(nil)
 	d.EXPECT().Run(mock.Anything, mock.Anything).Return("", errors.New("engine on fire"))
 
-	if _, _, err := s.Create(t.Context(), testRepo, "", ""); err == nil {
+	if _, _, err := s.Create(t.Context(), testRepo, ""); err == nil {
 		t.Fatal("expected run failure")
 	}
 	if entries, _ := s.List(); len(entries) != 0 {
@@ -260,7 +260,7 @@ func TestCreateRunFailureCleansUpMetadata(t *testing.T) {
 func TestCreateRejectsOptionInjection(t *testing.T) {
 	s, _, _, _ := newService(t)
 	for _, bad := range [][2]string{{"--upload-pack=evil", ""}, {"", "-oProxyCommand=x"}} {
-		_, _, err := s.Create(t.Context(), bad[0], bad[1], "")
+		_, _, err := s.Create(t.Context(), bad[0], bad[1])
 		want := "invalid input: repo url and branch must not start with \"-\""
 		if err == nil || err.Error() != want {
 			t.Fatalf("Create(%+v) err = %v, want %q", bad, err, want)
@@ -274,7 +274,7 @@ func TestStartStopRestartEvents(t *testing.T) {
 	expectProjectReady(d, &cname)
 	d.EXPECT().Exec(mock.Anything, "cid123", mock.Anything, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
-	id, _, err := s.Create(t.Context(), testRepo, "", "")
+	id, _, err := s.Create(t.Context(), testRepo, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,8 +430,8 @@ func TestCreateCloneExecErrorSurfaces(t *testing.T) {
 	d.EXPECT().Exec(mock.Anything, "cid123", mock.Anything, false).
 		Return(docker.ExecResult{}, errors.New("exec infra exploded"))
 
-	_, _, err := s.Create(t.Context(), testRepo, "", "")
-	want := "clone " + testRepo + ": exec infra exploded"
+	_, _, err := s.Create(t.Context(), testRepo, "")
+	want := "clone git@github.com:x/hello.git: exec infra exploded"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
 	}
@@ -648,7 +648,7 @@ func TestBringAllUpInstallsRecordedHarnesses(t *testing.T) {
 func TestBringAllUpReclonesEmptyRepoVolume(t *testing.T) {
 	s, d, _, _ := newService(t)
 	if err := s.store.Create("abc", Project{
-		Repo:      testRepo,
+		Repo:      "git@github.com:x/hello.git",
 		Harnesses: []string{"opencode"},
 	}); err != nil {
 		t.Fatal(err)
@@ -661,7 +661,7 @@ func TestBringAllUpReclonesEmptyRepoVolume(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 	// ...so boot re-clones the repo from state.json
 	d.EXPECT().Exec(mock.Anything, "pcoder-abc",
-		[]string{"git", "clone", testRepo, repoTarget + "/repo"}, false).
+		[]string{"git", "clone", "git@github.com:x/hello.git", repoTarget + "/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
 
@@ -772,33 +772,55 @@ func TestInstallRecordedHarnessesSkipsUnknown(t *testing.T) {
 	}
 }
 
-func TestCreateCloneMethodSSH(t *testing.T) {
+func TestCreateNormalizesToSSH(t *testing.T) {
 	s, d, st, _ := newService(t)
 	var cid string
 	expectProjectReady(d, &cid)
 
-	// set up ssh key store so injectSSHKeys writes authorized_keys
+	// deploy key injection: mkdir .ssh, key files, config, marker
 	s.sshKeys = sshkeys.New(st)
-	if _, err := s.sshKeys.Add("me@example.com", "ssh-ed25519 AAAA-testkey", "test"); err != nil {
-		t.Fatal(err)
+	kp, err := s.sshKeys.EnsureKeypair()
+	if err != nil {
+		t.Skipf("ssh-keygen unavailable: %v", err)
 	}
-	// injectSSHKeys runs mkdir -p /root/.ssh + chmod + write authorized_keys
 	d.EXPECT().Exec(mock.Anything, "cid123",
 		[]string{"sh", "-c", "mkdir -p /root/.ssh && chmod 700 /root/.ssh"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
-	d.EXPECT().WriteFile(mock.Anything, "cid123", "/root/.ssh/authorized_keys",
-		[]byte("ssh-ed25519 AAAA-testkey\n")).Return(nil)
-	// git clone
+	d.EXPECT().WriteFile(mock.Anything, "cid123", "/root/.ssh/id_ed25519",
+		[]byte(kp.PrivateKey)).Return(nil)
+	d.EXPECT().WriteFile(mock.Anything, "cid123", "/root/.ssh/id_ed25519.pub", mock.Anything).Return(nil)
+	// config guard misses on a fresh container, so our block is appended
+	// (never overwrites user additions) and scoped to github.com.
 	d.EXPECT().Exec(mock.Anything, "cid123",
-		[]string{"git", "clone", testRepo, repoTarget + "/repo"}, false).
+		[]string{"sh", "-c", "grep -q 'IdentityFile /root/.ssh/id_ed25519' /root/.ssh/config 2>/dev/null"}, false).
+		Return(docker.ExecResult{ExitCode: 1}, nil)
+	var appended string
+	d.EXPECT().Exec(mock.Anything, "cid123",
+		mock.MatchedBy(func(argv []string) bool {
+			if len(argv) != 3 || argv[0] != "sh" || argv[1] != "-c" {
+				return false
+			}
+			appended = argv[2]
+			return strings.Contains(argv[2], ">> /root/.ssh/config") &&
+				strings.Contains(argv[2], "Host github.com")
+		}), false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	d.EXPECT().WriteFile(mock.Anything, "cid123", "/root/.ssh-configured-sha",
+		[]byte(kp.Fingerprint)).Return(nil)
+	// git clone uses the normalized ssh URL even for https input
+	d.EXPECT().Exec(mock.Anything, "cid123",
+		[]string{"git", "clone", "git@github.com:x/hello.git", repoTarget + "/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 
-	id, p, err := s.Create(t.Context(), testRepo, "", "ssh")
+	id, p, err := s.Create(t.Context(), testRepo, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.CloneMethod != "ssh" {
-		t.Fatalf("CloneMethod = %q, want ssh", p.CloneMethod)
+	if p.Repo != "git@github.com:x/hello.git" {
+		t.Fatalf("stored = %+v, want ssh-normalized", p)
+	}
+	if strings.Contains(appended, "Host *") {
+		t.Fatalf("ssh config leaks deploy key via Host *: %q", appended)
 	}
 	d.EXPECT().Inspect(mock.Anything, ContainerName(id)).Return(docker.Container{Running: true}, nil)
 	if _, status, err := s.Get(t.Context(), id); err != nil || status.State != "running" {
@@ -806,10 +828,34 @@ func TestCreateCloneMethodSSH(t *testing.T) {
 	}
 }
 
-func TestCreateCloneMethodInvalid(t *testing.T) {
-	s, _, _, _ := newService(t)
-	_, _, err := s.Create(t.Context(), testRepo, "", "ftp")
-	if err == nil {
-		t.Fatal("expected error for invalid cloneMethod")
+func TestToSSHURL(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"https://github.com/x/hello.git", "git@github.com:x/hello.git"},
+		{"https://github.com/x/hello", "git@github.com:x/hello.git"},
+		{"github.com/x/hello", "git@github.com:x/hello.git"},
+		{"git@github.com:x/hello.git", "git@github.com:x/hello.git"},
+		{"git@github.com:x/hello", "git@github.com:x/hello"},
+		{"ssh://git@github.com/x/hello.git", "git@github.com:x/hello.git"},
+	} {
+		got, err := toSSHURL(tc.in, false)
+		if err != nil || got != tc.want {
+			t.Fatalf("toSSHURL(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+		}
+	}
+	for _, bad := range []string{"", "git://github.com/x/hello", "https://github.com/x", "http://github.com/x/hello.git"} {
+		if _, err := toSSHURL(bad, false); err == nil {
+			t.Fatalf("toSSHURL(%q) accepted, want error", bad)
+		}
+	}
+	// scp passthrough still validates: malformed SSH URLs fail here,
+	// not at clone time. Ports survive only where scp can carry none:
+	// plain https with a port is rejected, not silently rewritten.
+	for _, bad := range []string{"git@github.com:x", "git@github.com:../..", "git@github.com:/x/y/z", "https://github.com:8443/x/hello.git"} {
+		if _, err := toSSHURL(bad, false); err == nil {
+			t.Fatalf("toSSHURL(%q) accepted, want error", bad)
+		}
+	}
+	if got, err := toSSHURL("ssh://git@example.com:2222/x/hello.git", false); err != nil || got != "ssh://git@example.com:2222/x/hello.git" {
+		t.Fatalf("custom-port ssh passthrough = %q, %v", got, err)
 	}
 }

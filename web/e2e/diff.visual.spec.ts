@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './test'
 import { createProject, deleteAllProjects, engineUp, projectURL, waitForRunning } from './helpers'
 
 // Visual + behavioral tests for the Diff tab against the real backend:

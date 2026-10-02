@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './test'
 import { login } from './helpers'
 
 // Auth flows against the real backend. The suite shares one logged-in
@@ -9,7 +9,8 @@ test.use({ storageState: { cookies: [], origins: [] } })
 
 test('shows the landing page at / when logged out', async ({ page }) => {
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Your dev box, in your pocket.' })).toBeVisible()
+  // substring match on the stable tail: the headline copy may be retuned
+  await expect(page.getByRole('heading', { name: /dev box, in your pocket\./i })).toBeVisible()
   await page.getByRole('button', { name: 'Log in' }).first().click()
   await expect(page.getByPlaceholder('you@example.com')).toBeVisible()
 })
@@ -29,5 +30,5 @@ test('logs out back to the landing page', async ({ page }) => {
   await login(page)
 
   await page.getByRole('button', { name: 'Log out' }).click()
-  await expect(page.getByRole('heading', { name: 'Your dev box, in your pocket.' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /dev box, in your pocket\./i })).toBeVisible()
 })

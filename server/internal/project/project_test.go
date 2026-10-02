@@ -27,8 +27,8 @@ func TestCRUD(t *testing.T) {
 	if err := s.Create("x/hello", p); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	// on disk: exactly this project, exactly these fields — set fields only
-	// (no empty cloneMethod), nothing else in the document
+	// on disk: exactly this project, exactly these fields — set fields
+	// only, nothing else in the document
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user":     map[string]any{"email": ""},
 		"projects": map[string]any{"x/hello": map[string]any{"repo": "https://github.com/x/hello", "branch": "main"}},

@@ -18,14 +18,22 @@ import (
 	"pcoder/internal/obs"
 )
 
-// gitAuthMsg is the rot signal: the stored token died — update it in Git
-// setup. Distinct from conflict output, which keeps the terminal hint.
-const gitAuthMsg = "Git credentials rejected — update them in Git setup"
+// gitAuthMsg is the rot signal: GitHub rejected the deploy key —
+// re-add the server public key. Distinct from conflict output, which
+// keeps the terminal hint.
+const gitAuthMsg = "GitHub rejected the server key — re-add the public key in SSH setup"
 
-// isGitAuthError matches the one auth shape across push/pull/clone.
+// isGitAuthError matches auth shapes across push/pull/clone, both HTTPS
+// (401/403) and SSH (permission denied, lost repo access, host-key
+// refusal — the deploy-key rot signals). Matched output maps to gitAuthMsg
+// so the user re-adds the server key instead of debugging in the terminal.
 func isGitAuthError(s string) bool {
 	s = strings.ToLower(s)
-	for _, sub := range []string{"could not read username", "authentication failed", "401", "403"} {
+	for _, sub := range []string{
+		"could not read username", "authentication failed", "401", "403",
+		"permission denied", "could not read from remote repository",
+		"repository not found", "host key verification failed",
+	} {
 		if strings.Contains(s, sub) {
 			return true
 		}
@@ -160,21 +168,11 @@ func handleGitIdentity(d Deps) http.HandlerFunc {
 			return
 		}
 		if r.Method == http.MethodPost {
-			var body struct {
-				Name  string `json:"name"`
-				Email string `json:"email"`
-			}
-			if !decodeBody(w, r, &body, false) {
+			body, ok := decodeGitBody(w, r)
+			if !ok {
 				return
 			}
-			name := strings.TrimSpace(body.Name)
-			email := strings.TrimSpace(body.Email)
-			if name == "" || email == "" || len(name) > 200 || len(email) > 200 ||
-				strings.HasPrefix(name, "-") || strings.HasPrefix(email, "-") {
-				err = errors.New("name and email must be non-empty, ≤ 200 chars, and not start with -")
-				writeErr(w, http.StatusBadRequest, err.Error())
-				return
-			}
+			name, email := body.Name, body.Email
 			qd := shellQuote(dir)
 			if _, xerr := d.Sessions.ExecCommand(r.Context(), container,
 				"git -C "+qd+" config user.name "+shellQuote(name)+
@@ -413,10 +411,27 @@ func commitExists(ctx context.Context, d Deps, container, dir, sha string) bool 
 }
 
 // tailLines keeps the last n lines of s (shared with AI output caps).
+// Truncation is rune-safe so multi-byte output can't split mid-rune.
 func tailLines(s string, n int) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	if len(lines) > n {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// firstLine keeps the first line of s for an error message, capped to 200
+// runes so multi-byte output can't split mid-rune.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.Index(s, "\n"); i >= 0 {
+		s = s[:i]
+	}
+	if r := []rune(s); len(r) > 200 {
+		s = string(r[:200]) + "…"
+	}
+	if s == "" {
+		s = "no output"
+	}
+	return s
 }

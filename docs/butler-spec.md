@@ -46,7 +46,7 @@ Write tools, each behind a confirm card with a Confirm button:
 * `save_shortcut` stores a `state.Shortcut`: either a command shortcut (`Run tests` runs `npm test`) or a key shortcut (`Undo` sends `Ctrl-Z`). Shortcuts store per project.
 * `preview_start`, `preview_close` open or close a preview port.
 * `git_pull`, `git_push`, `git_switch` run boring git ops.
-* `save_git_identity`, `add_ssh_key` fix connections by id from the lists below.
+* Connection fixes stay out of the butler: commit identity is prompted per repo at commit time, and the server deploy key is tested or regenerated from the Git card.
 
 The server enforces the bounds. A tool call with a repo path fails. A test pins this refusal.
 
@@ -70,7 +70,7 @@ Limits lists what the feature cannot do yet, so the butler answers "not availabl
 
 Ordered. Each lands with tests. No big bang. Phase 2 stays out.
 
-1. Lists for models, git, keys. `ai` becomes `ai_models`, `git` becomes `git_identities`, `sshKeys` gains update plus test. Old `GET /api/ai/config` goes away for `/api/ai/models` CRUD plus `/api/ai/models/{id}/test`. Git and SSH match that shape. Keys never render in full. Test runs a live check before save. Example: an empty list disables codemaps until the first model is saved. Unit: lists CRUD plus redaction. Smoke: `go -C server test ./internal/httpapi -run TestAIModels`. E2e: saving the first model enables the codemap tab. The per-feature model picker lands in checkpoint 10, not here.
+1. Lists for models. `ai` becomes `ai_models`. Old `GET /api/ai/config` goes away for `/api/ai/models` CRUD plus `/api/ai/models/{id}/test`. Keys never render in full. Test runs a live check before save. The git and SSH lists planned here since shipped smaller: commit identity is per repo at commit time (container git config, never state.json), SSH is one server deploy key in the Git card. Example: an empty list disables codemaps until the first model is saved. Unit: lists CRUD plus redaction. Smoke: `go -C server test ./internal/httpapi -run TestAIModels`. E2e: saving the first model enables the codemap tab. The per-feature model picker lands in checkpoint 10, not here.
 
 2. Transcript store. Server stores under `data/butler/<threadID>/` with `manifest.json` plus `N.json` turn files. List sorts by creation time. Delete removes the folder. No cap. No search or export. Example: thread `a1b2` holds `manifest.json` plus `1.json`. Unit: create, get, list order, delete idempotent. Smoke: `go -C server test ./internal/butlerthreads -run TestReserveGetListDelete`.
 
@@ -78,13 +78,13 @@ Ordered. Each lands with tests. No big bang. Phase 2 stays out.
 
 4. Turn round trip. `POST /api/butler/turn` returns one 200 with the final answer. SSE streams one line per tool start and finish while the turn runs. Loop caps at 6 steps. No action without a user message. No background work. Example: "brief me" streams "checked 3 projects" then returns a summary. Unit: loop cap plus SSE order. Smoke: POST with fake model returns 200. E2e: pending turn shows status lines under it.
 
-5. Read tools. 11 tools: `list_projects`, `project_detail`, `list_sessions`, `preview_state`, `git_meta`, `events_tail`, `health`, `harness_inventory`, `env_names`, `config_status`, `architecture`. Names and counts only, no paths, no hunks, no secret values. Example: "brief me" chains `list_projects` plus `events_tail` then stops. Unit: each tool against fakes. Smoke: `go -C server test ./internal/httpapi -run TestButlerReadTools`. E2e: mocked read flow renders one summary.
+5. Read tools. 12 tools: `list_projects`, `project_detail`, `list_sessions`, `preview_state`, `git_meta`, `events_tail`, `health`, `harness_inventory`, `env_names`, `config_status`, `list_ai_models`, `architecture`. Names and counts only, no paths, no hunks, no secret values. Example: "brief me" chains `list_projects` plus `events_tail` then stops. Unit: each tool against fakes. Smoke: `go -C server test ./internal/httpapi -run TestButlerReadTools`. E2e: mocked read flow renders one summary.
 
 6. Bounds wall. No `/workspace/repo`, no file content, no diff hunks, no `tmux capture-pane`, no `tmux load-buffer`, no app source, no secret values. Repo path in a tool call fails. Code ask refuses and points at Codemap. Example: "read main.go" gets "Sorry, I am firewalled from reading source code by design. As a butler, I help manage the smooth running of all your projects. For source code related queries, ask your own LLM or CodeMaps." Unit: denied path fails. Smoke: test pins the refusal string. E2e: chat shows refusal plus redirect.
 
 7. Confirm card and safe writes. Writes need a Confirm tap, no typed confirm. Card states blast radius. This checkpoint covers `create_project`, `start`, `stop`, `restart`, `session_create`, `session_kill`, `session_restart`, `session_rename`, `preview_start`, `preview_close`, `git_pull`, `git_push`, `git_switch`. Example: "Delete project api? This removes the container, its 3 sessions, both volumes, and the project record." Unit: write without confirm never runs. Smoke: confirm then apply, discard does nothing. E2e: card shows old and new value with Confirm and Discard.
 
-8. Sensitive writes. `delete_project`, `create_harness`, `install_harness`, `delete_harness`, `fanout_exec`, `propose_env_fix` with masked field, `switch_model` with one line diff, `save_shortcut`, `save_git_identity`, `add_ssh_key`. Example: "update opencode everywhere" runs `npm i -g opencode-ai@latest` in each picked project only after Confirm. Unit: scope check plus masked value never logs. Smoke: destructive tool needs explicit confirm id. E2e: delete flow shows blast radius before Confirm.
+8. Sensitive writes. `delete_project`, `create_harness`, `install_harness`, `delete_harness`, `fanout_exec`, `propose_env_fix` with masked field, `switch_model` with one line diff, `save_shortcut`. Example: "update opencode everywhere" runs `npm i -g opencode-ai@latest` in each picked project only after Confirm. Unit: scope check plus masked value never logs. Smoke: destructive tool needs explicit confirm id. E2e: delete flow shows blast radius before Confirm.
 
 9. Visibility, limits, image, issue. Turn shows collapsed "N steps" row with tool name, args, result summary. Confirm cards stay expanded. Limits answer stays one line, such as "Preview automation is not available." One image per turn, stored beside the thread, deleted with it, vision-less model refuses plainly. Wall case offers a one line issue draft and asks "File this on GitHub?" then one sync create returns the URL. Example: blank preview shot checks `preview_state` before answering. Unit: step row redacts full output, second image rejects, no silent filing. Smoke: image delete cleans folder. E2e: attach button flow plus issue confirm flow.
 
@@ -108,9 +108,13 @@ Typical workflows ride a second prompt on in-scope turns, after the scope gate: 
 
 ## Models, git, and keys
 
-One list pattern serves AI models, git identities, and SSH keys. Each entry has an id, a label, and its fields. Each supports list, add, update, delete, and test. Keys and tokens never render in full after save. Each test runs a live check before save, so a stored entry worked once.
+AI models are the one remaining list. Each entry has an id, a label, and its fields, and supports list, add, update, delete, and test. Keys never render in full after save. Each test runs a live check before save, so a stored entry worked once.
 
-`state.json` changes: `ai` becomes `ai_models`, `git` becomes `git_identities`. `sshKeys` already has the list shape and only gains update plus test. The old single-value `GET /api/ai/config` and `POST /api/ai/config` give way to `/api/ai/models` CRUD plus `/api/ai/models/{id}/test`. Git and SSH follow the same shape.
+`state.json` keeps `ai_models`. The old single-value `GET /api/ai/config` and `POST /api/ai/config` give way to `/api/ai/models` CRUD plus `/api/ai/models/{id}/test`.
+
+Git identity is per repo, not a list: `GET`/`POST /api/projects/{id}/git/identity` reads and writes `git config user.name` and `user.email` inside the project container at commit time — never state.json.
+
+SSH is one server deploy key, not a list: `GET /api/ssh` shows the public half and fingerprint, `POST /api/ssh/test` probes GitHub with it, `POST /api/ssh/regenerate` rotates the pair. Home gates the project list behind a successful test; a failure hands over the key card and a link to https://github.com/settings/keys. There is no per-user key registry.
 
 The codemap composer and the butler each carry a model picker bound to the same list. No fallback exists. When the user picks nothing, each feature uses its last picked model, or stays disabled when the list is empty. Example: codemaps runs gpt-4o for grounding while the butler runs a cheap mini model for briefings.
 

@@ -11,12 +11,12 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"pcoder/internal/agent"
-	"pcoder/internal/threads"
 	"pcoder/internal/docker"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
 	"pcoder/internal/prompt"
 	"pcoder/internal/state"
+	"pcoder/internal/threads"
 )
 
 // butlerToolByName finds one tool in a registry by name, reserving its
@@ -247,8 +247,8 @@ func TestButlerReadTools(t *testing.T) {
 // order, so the lists and the registries cannot drift.
 func TestButlerToolNames(t *testing.T) {
 	d, _, _, _ := newSessionDeps(t)
-	if len(butlerReadNames) != 12 || len(butlerWriteNames) != 24 {
-		t.Fatalf("consts = %d reads + %d writes, want 12 + 24",
+	if len(butlerReadNames) != 12 || len(butlerWriteNames) != 22 {
+		t.Fatalf("consts = %d reads + %d writes, want 12 + 22",
 			len(butlerReadNames), len(butlerWriteNames))
 	}
 	var built []string
@@ -493,8 +493,6 @@ func TestButlerWriteProposeAll(t *testing.T) {
 		{butlerToolSwitchModel, `{"harness":"fake","model":"gpt-4o"}`},
 		{butlerToolUpdateAIModel, `{"id":"m2","label":"Production"}`},
 		{butlerToolSaveShortcut, `{"project":"a/b","alias":"retest","kind":"cmd","command":"npm test"}`},
-		{butlerToolSaveGitIdentity, `{"project":"a/b","identityId":"default"}`},
-		{butlerToolAddSSHKey, `{"publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF AKEL","label":"laptop"}`},
 	}
 	if len(rows) != len(butlerWriteTable) {
 		t.Fatalf("table rows = %d, write tools = %d: add the new tool here", len(rows), len(butlerWriteTable))
@@ -546,7 +544,6 @@ func TestButlerWriteProposeAll(t *testing.T) {
 		{butlerToolUpdateAIModel, `{"id":"nope","label":"X"}`},
 		{butlerToolUpdateAIModel, `{"id":"m1"}`},
 		{butlerToolSaveShortcut, `{"project":"a/b","alias":"x","kind":"bogus"}`},
-		{butlerToolAddSSHKey, `{"publicKey":"not-a-key"}`},
 	}
 	before := d.Butler.ApprovalCount()
 	for _, row := range bad {
@@ -627,10 +624,6 @@ func TestButlerWriteApplyStateOnly(t *testing.T) {
 	st.View(func(doc *state.Document) { shortcuts = doc.Projects["a/b"].Shortcuts })
 	if len(shortcuts) != 1 || shortcuts[0].Alias != "retest" || shortcuts[0].Command != "npm test" {
 		t.Fatalf("shortcuts = %+v, want the saved row", shortcuts)
-	}
-	fp := apply(butlerToolAddSSHKey, `{"publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF AKEL","label":"laptop"}`)
-	if !strings.HasPrefix(fp, "Added ") {
-		t.Fatalf("add_ssh_key = %q", fp)
 	}
 	apply(butlerToolDeleteHarness, `{"id":"h"}`)
 	if _, err := d.Harnesses.Get("h"); err == nil {

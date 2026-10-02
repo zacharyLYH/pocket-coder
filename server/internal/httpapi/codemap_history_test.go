@@ -12,8 +12,8 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"pcoder/internal/threads"
 	"pcoder/internal/docker"
+	"pcoder/internal/threads"
 )
 
 // messagesOf extracts the messages array from a captured chat-completions body.

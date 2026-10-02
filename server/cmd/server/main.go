@@ -109,17 +109,14 @@ func main() {
 	}
 
 	sshKeyStore := sshkeys.New(st)
+	// The server deploy keypair is generated once on first boot and
+	// persists in state: setup re-runs and restarts never rotate it.
+	if _, err := sshKeyStore.EnsureKeypair(); err != nil {
+		slog.Error("ensure server ssh key", "err", err)
+		os.Exit(1)
+	}
 	svc := project.NewService(project.Open(st), dkr)
 	svc.SetSSHKeys(sshKeyStore)
-	svc.SetGit(func() (string, string, string) {
-		var name, email, token string
-		st.View(func(doc *state.Document) {
-			if g := state.FirstGit(doc); g != nil {
-				name, email, token = g.Name, g.Email, g.Token
-			}
-		})
-		return name, email, token
-	})
 	svc.SetAllowAnyRepo(cfg.AllowAnyRepo)
 
 	// Codemap chats are project-scoped artifacts: deleting a project

@@ -15,6 +15,7 @@
 # Usage:
 #   sh e2e-parallel.sh                       # all groups in parallel
 #   sh e2e-parallel.sh stack sessions        # only the named groups
+#   UPDATE_SNAPSHOTS=1 sh e2e-parallel.sh    # regenerate all baseline shots
 set -u
 cd "$(dirname "$0")"
 
@@ -24,34 +25,41 @@ mkdir -p test-results
 # suffix, the offset maps to distinct api/web ports (8080+offset*10), and
 # the rest is the spec list passed to `npx playwright test`.
 #
-# Three preview groups, sized so no group dominates the wall-clock
-# (estimates: npm install + Vite boot ~30s, preinstalled+shots ~10s,
-#  screenshot ~5s):
+# Four preview groups, rebalanced so the slowest npm-install previews run
+# isolated and the fast static/no-npm ones are spread to balance wall-clock
+# (estimates: npm install + Vite boot ~30-45s, static fixture ~15s,
+# screenshot ~5s):
 #
-#   tools      ~180s  6 tests, 6 React projects
+#   tools      ~180s  6 tests, 6 React projects    (isolated — slowest)
+#   token      ~130s  4 tests, React + token waits  (isolated)
 #   journey     ~75s  3 preinstalled + 9 screenshots
 #   viewport    ~60s  2 React projects
-#   auth        ~60s  2 React projects
-#   port        ~30s  1 React (non-default-port)
+#   auth        ~40s  1 React project (cross-project isolation)
 #   htmx        ~40s  1 Vite + 2 screenshots
 #   vue         ~40s  1 Vite + 2 screenshots
 #   reconnect   ~35s  1 React + 1 screenshot
+#   port        ~30s  1 React (non-default-port)
+#   shortcuts   ~15s  3 tests, no npm install
 #   fit         ~15s  1 static + 2 screenshots
 #   vanilla     ~15s  1 static (no Vite/npm)
-#   quickcmds   ~10s  1 blank project, API-only
-#   bootstrap   ~120s 1 seeded project (opencode download at boot)
-# The bootstrap group boots from a SEEDED state.json (E2E_SEED): state has a
+# Group estimates:
+#   preview.a  ~180s  tools
+#   preview.b  ~160s  token + fit + vanilla
+#   preview.c  ~175s  journey + auth + viewport
+#   preview.d  ~160s  htmx + vue + reconnect + port + shortcuts
+# The bootstrap group boots from a SEEDED state.json (E2E_SEED=bootstrap,
+# materialized by the seeder factory e2e/stateSeed.ts): state has a
 # project with opencode recorded while Docker is empty, so the server must
 # finish its boot bootstrap (container + harness install) before serving.
 ALL_GROUPS='
-app|1|e2e/app.spec.ts e2e/preview.basic.spec.ts e2e/preview.hmr.spec.ts e2e/sshkeys.e2e.spec.ts
+app|1|e2e/app.spec.ts e2e/bugreport.spec.ts e2e/preview.basic.spec.ts e2e/preview.hmr.spec.ts
 stack|2|e2e/terminal.stack.spec.ts
 sessions|3|e2e/terminal.session.spec.ts e2e/terminal.mobile.spec.ts e2e/nerdy.mobile.spec.ts e2e/nerdy.desktop.spec.ts e2e/harness.inject.spec.ts e2e/harness.orchestration.spec.ts e2e/harness.relaunch.spec.ts
-visual|4|e2e/home.visual.spec.ts e2e/codemap.spec.ts e2e/butler.spec.ts e2e/butler.live.spec.ts e2e/butler.confirm.spec.ts
-preview.a|5|e2e/preview.tools.spec.ts e2e/preview.token.spec.ts
-preview.b|6|e2e/preview.journey.spec.ts e2e/preview.auth.spec.ts e2e/preview.port.spec.ts
-preview.c|7|e2e/preview.viewport.spec.ts e2e/preview.htmx.spec.ts e2e/shortcuts.spec.ts
-preview.d|8|e2e/preview.vue.spec.ts e2e/preview.reconnect.spec.ts e2e/preview.fit.spec.ts e2e/preview.vanilla.spec.ts
+visual|4|e2e/home.visual.spec.ts e2e/settings.spec.ts e2e/codemap.spec.ts e2e/butler.spec.ts e2e/butler.live.spec.ts e2e/butler.confirm.spec.ts
+preview.a|5|e2e/preview.tools.spec.ts
+preview.b|6|e2e/preview.token.spec.ts e2e/preview.fit.spec.ts e2e/preview.vanilla.spec.ts
+preview.c|7|e2e/preview.journey.spec.ts e2e/preview.auth.spec.ts e2e/preview.viewport.spec.ts
+preview.d|8|e2e/preview.htmx.spec.ts e2e/preview.vue.spec.ts e2e/preview.reconnect.spec.ts e2e/preview.port.spec.ts e2e/shortcuts.spec.ts
 bootstrap|9|e2e/bootstrap.spec.ts
 '
 
@@ -76,7 +84,7 @@ run_group() {
   git=$((9070 + offset * 10))
   # bootstrap boots from a seeded state.json (see ALL_GROUPS above)
   seed=""
-  [ "$name" = "bootstrap" ] && seed="E2E_SEED=bootstrap.seed.json"
+  [ "$name" = "bootstrap" ] && seed="E2E_SEED=bootstrap"
   # Clean up any leftover containers from crashed runs. down matches by
   # project name; the data-dir/port vars only need to parse, so dummy
   # values are fine (real values ride with the test process env below).
@@ -86,7 +94,7 @@ run_group() {
   docker compose -f ../docker-compose.yml -f ../docker-compose.e2e.yml -p "$(proj_name "$name")" down 2>/dev/null
   echo "[$name] starting: api:$api web:$web git:$git → test-results/$name.log + test-results/$name/progress.md"
   env E2E_RUN_ID="$name" E2E_API_PORT="$api" E2E_WEB_PORT="$web" E2E_GIT_PORT="$git" $seed \
-    npx playwright test --config=playwright.config.ts --reporter=list --reporter=./e2e/progress-reporter.ts $specs > "test-results/$name.log" 2>&1 &
+    npx playwright test --config=playwright.config.ts --reporter=list --reporter=./e2e/progress-reporter.ts ${UPDATE_SNAPSHOTS:+--update-snapshots} $specs > "test-results/$name.log" 2>&1 &
   GROUP_PIDS="$GROUP_PIDS $name:$!"
   STARTED_GROUPS="$STARTED_GROUPS $name"
 }

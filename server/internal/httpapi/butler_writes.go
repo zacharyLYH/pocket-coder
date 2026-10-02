@@ -15,12 +15,11 @@ import (
 	"strings"
 
 	"pcoder/internal/agent"
-	"pcoder/internal/threads"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
 	"pcoder/internal/session"
-	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
+	"pcoder/internal/threads"
 )
 
 // butlerWriteDef is one write tool: blast is pure (no mutation), exec
@@ -102,11 +101,6 @@ func butlerLiveEnums(d Deps) map[string]map[string][]string {
 				mids = append(mids, m.ID)
 			}
 			add(butlerToolUpdateAIModel, "id", mids)
-			gids := make([]string, 0, len(doc.GitIDs))
-			for _, g := range doc.GitIDs {
-				gids = append(gids, g.ID)
-			}
-			add(butlerToolSaveGitIdentity, "identityId", gids)
 		})
 	}
 	if d.Projects != nil {
@@ -119,7 +113,7 @@ func butlerLiveEnums(d Deps) map[string]map[string][]string {
 				butlerToolDeleteProject, butlerToolSessionCreate, butlerToolSessionKill,
 				butlerToolSessionRestart, butlerToolSessionRename, butlerToolPreviewStart,
 				butlerToolPreviewClose, butlerToolGitPull, butlerToolGitPush, butlerToolGitSwitch,
-				butlerToolSaveShortcut, butlerToolSaveGitIdentity, butlerToolInstallHarness,
+				butlerToolSaveShortcut, butlerToolInstallHarness,
 				butlerToolFanoutExec} {
 				add(tool, "project", ids)
 			}
@@ -198,7 +192,7 @@ func butlerWriteTools(d Deps, st *threads.Store, threadID, turnID string) []agen
 var butlerWriteTable = []butlerWriteDef{
 	{
 		name: butlerToolCreateProject, desc: "Clone a repo URL and branch, then report Ready.",
-		schema: butlerSchema(map[string]any{"repoUrl": strProp(), "branch": strProp(), "cloneMethod": strProp()}),
+		schema: butlerSchema(map[string]any{"repoUrl": strProp(), "branch": strProp()}),
 		blast: func(d Deps, _ context.Context, args map[string]any) (string, string, error) {
 			url := butlerStr(args, "repoUrl")
 			if url == "" {
@@ -209,10 +203,10 @@ var butlerWriteTable = []butlerWriteDef{
 				"Creates one project container and clones the repo, then reports Ready.", nil
 		},
 		exec: func(ctx context.Context, d Deps, args map[string]any, _ string) (string, error) {
-			if d.Projects == nil || !gitConfigured(d) {
-				return "", fmt.Errorf("git not configured")
+			if d.Projects == nil {
+				return "", fmt.Errorf("project service unavailable")
 			}
-			id, _, err := d.Projects.Create(ctx, butlerStr(args, "repoUrl"), butlerStr(args, "branch"), butlerStr(args, "cloneMethod"))
+			id, _, err := d.Projects.Create(ctx, butlerStr(args, "repoUrl"), butlerStr(args, "branch"))
 			if err != nil {
 				return "", err
 			}
@@ -834,78 +828,6 @@ var butlerWriteTable = []butlerWriteDef{
 				return "", err
 			}
 			return "Saved " + row.Alias, nil
-		},
-	},
-	{
-		name: butlerToolSaveGitIdentity, desc: "Apply a stored git identity into one project by id.",
-		schema: butlerSchema(map[string]any{"project": strProp(), "identityId": strProp()}),
-		blast: func(d Deps, _ context.Context, args map[string]any) (string, string, error) {
-			id, gid := butlerStr(args, "project"), butlerStr(args, "identityId")
-			if id == "" || gid == "" {
-				return "", "", fmt.Errorf("project and identityId are required")
-			}
-			name := gid
-			if d.State != nil {
-				d.State.View(func(doc *state.Document) {
-					for _, g := range doc.GitIDs {
-						if g.ID == gid {
-							name = g.Name + " <" + g.Email + ">"
-						}
-					}
-				})
-			}
-			return fmt.Sprintf("Set git identity in %s to %s?", id, name), "Runs git config user.name/email in that repo.", nil
-		},
-		exec: func(ctx context.Context, d Deps, args map[string]any, _ string) (string, error) {
-			container, dir, err := butlerContainer(ctx, d, butlerStr(args, "project"))
-			if err != nil {
-				return "", err
-			}
-			var name, email string
-			if d.State != nil {
-				d.State.View(func(doc *state.Document) {
-					for _, g := range doc.GitIDs {
-						if g.ID == butlerStr(args, "identityId") {
-							name, email = g.Name, g.Email
-						}
-					}
-				})
-			}
-			if name == "" || email == "" {
-				return "", fmt.Errorf("unknown identity")
-			}
-			qd := shellQuote(dir)
-			_, xerr := d.Sessions.ExecCommand(ctx, container,
-				"git -C "+qd+" config user.name "+shellQuote(name)+" && git -C "+qd+" config user.email "+shellQuote(email))
-			if xerr != nil {
-				return "", xerr
-			}
-			return "Set " + name, nil
-		},
-	},
-	{
-		name: butlerToolAddSSHKey, desc: "Register an SSH public key.",
-		schema: butlerSchema(map[string]any{"publicKey": strProp(), "label": strProp()}),
-		blast: func(_ Deps, _ context.Context, args map[string]any) (string, string, error) {
-			if _, err := sshkeys.Check(butlerStr(args, "publicKey")); err != nil {
-				return "", "", fmt.Errorf("publicKey is required and must look like an SSH public key")
-			}
-			return "Add this SSH key?", "Registers one public key. The private key never leaves your machine.", nil
-		},
-		exec: func(_ context.Context, d Deps, args map[string]any, _ string) (string, error) {
-			if d.SSHKeys == nil || d.State == nil {
-				return "", fmt.Errorf("no ssh store")
-			}
-			var email string
-			d.State.View(func(doc *state.Document) { email = doc.User.Email })
-			fp, err := d.SSHKeys.Add(email, butlerStr(args, "publicKey"), butlerStr(args, "label"))
-			if err != nil {
-				if err == sshkeys.ErrDuplicateKey {
-					return "", fmt.Errorf("key already registered")
-				}
-				return "", err
-			}
-			return "Added " + fp, nil
 		},
 	},
 }

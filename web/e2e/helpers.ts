@@ -1,13 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { expect, type Page, type APIRequestContext } from '@playwright/test'
 
-import { GIT_PORT, RUN_SLUG, SERVER_LOG } from './env'
+import { GIT_PORT, LOGIN_EMAIL, RUN_SLUG, SERVER_LOG } from './env'
+
+export { LOGIN_EMAIL } // one source: env.ts (the seeder factory uses it too)
 
 // Shared plumbing for the real-backend e2e suite: real PIN login, and
 // per-test cleanup so order never matters (the stack data dir only resets
 // between runs — see playwright.config.ts).
-
-export const LOGIN_EMAIL = 'me@example.com'
 
 // e2eRepo returns the fixture repo URL for a slot: one repo is one project
 // (ids are owner/repo), so tests holding N projects at once use slots
@@ -115,14 +115,6 @@ export async function ensureFakeHarness(request: APIRequestContext): Promise<voi
   if (res.status() !== 201) throw new Error(`ensureFakeHarness failed: ${res.status()}`)
 }
 
-// deleteAllSSHKeys likewise empties the key registry.
-export async function deleteAllSSHKeys(request: APIRequestContext): Promise<void> {
-  const res = await request.get('/api/ssh-keys')
-  if (!res.ok()) return
-  for (const k of ((await res.json()) as { keys: { fingerprint: string }[] }).keys) {
-    await request.delete(`/api/ssh-keys/${encodeURIComponent(k.fingerprint)}`)
-  }
-}
 
 function logSize(): number {
   try {
@@ -149,39 +141,26 @@ function waitForPin(afterOffset: number): string {
 // ensureCloneForm lands on home with the Clone disclosure open: the form
 // hides inside a closed <details> once a project exists, and inputs in a
 // closed disclosure are invisible to Playwright (fill would wait forever).
-// Fails fast when Git is not configured: the Clone button is permanently
-// disabled then (see ProjectsCard gitConfigured gating), so proceeding
-// would spin on an unclickable button until timeout. A stale state.json
-// without the git block is the usual cause — the e2e seeds carry one.
+// The card itself mounts only after the ssh gate resolves, so wait for the
+// summary BEFORE deciding to click — a premature click lands on the
+// auto-opened disclosure and closes it.
 async function ensureCloneForm(page: Page): Promise<void> {
   if ((await page.getByPlaceholder(/clone URL/i).count()) === 0) {
     await page.goto('/')
   }
   const input = page.getByPlaceholder(/clone URL/i)
+  const summary = page.locator('summary', { hasText: 'Clone a repo' })
+  await expect(summary).toBeVisible({ timeout: 10_000 })
   if (!(await input.first().isVisible())) {
-    await page.locator('summary', { hasText: 'Clone a repo' }).click()
+    await summary.click()
   }
   await expect(input.first()).toBeVisible({ timeout: 10_000 })
-  if ((await page.getByTestId('git-setup-hint').count()) > 0) {
-    throw new Error(
-      'Git not configured (git-setup-hint visible): Clone project is disabled. ' +
-        'The stack booted from a state.json without the git block — wipe the data dir and reboot from state.seed.json.',
-    )
-  }
 }
 // createProject clones a fixture repo via the API and returns its id
 // (owner/repo). The repo defaults to slot 1; tests holding several
 // projects at once pass distinct slots.
 export async function createProject(request: APIRequestContext, repoUrl = e2eRepo(1)): Promise<string> {
   let res = await request.post('/api/projects', { data: { repoUrl } })
-  if (res.status() === 409) {
-    const body = await res.text().catch(() => '')
-    if (/git not configured/i.test(body)) {
-      throw new Error(
-        `createProject: backend reports git not configured — the stack booted from a state.json without the git block. Body: ${body}`,
-      )
-    }
-  }
   for (let round = 0; res.status() === 409 && round < 3; round++) {
     // Same-id project leaked by an earlier cleanup failure (ids are this
     // run's fixture slots, so it is always ours): drop everything listed
@@ -228,19 +207,6 @@ export async function createProjectViaUI(
   repoUrl: string,
   expectedID: string,
 ): Promise<string> {
-  // Fail fast on a stale backend: without the git seed every create 409s
-  // with "git not configured" and the UI leaves Clone disabled, which
-  // otherwise surfaces as a timeout clicking Clone project.
-  const gitRes = await request.get('/api/git/identities')
-  if (gitRes.ok()) {
-    const gitBody = (await gitRes.json()) as { identities?: unknown[] }
-    if ((gitBody.identities ?? []).length === 0) {
-      throw new Error(
-        'Git not configured on the backend (/api/git/identities empty): ' +
-          'the stack booted from a state.json without the git block — wipe the data dir and reboot from state.seed.json.',
-      )
-    }
-  }
   const countNamed = async (): Promise<number> => {
     const res = await request.get('/api/projects')
     if (!res.ok()) return 0

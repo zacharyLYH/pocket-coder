@@ -19,23 +19,22 @@ import (
 func handleCreateProject(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			RepoURL     string `json:"repoUrl"`
-			Branch      string `json:"branch"`
-			CloneMethod string `json:"cloneMethod"` // "ssh" or "http"
+			RepoURL string `json:"repoUrl"`
+			Branch  string `json:"branch"`
 		}
 		if r.Body != nil && !decodeBody(w, r, &body, true) {
 			return
 		}
-		if !gitConfigured(d) {
-			writeErr(w, http.StatusConflict, "git not configured")
-			return
-		}
+		// No gate on a stored git identity: cloning authenticates with the
+		// server deploy key, so a fresh install clones before the user has
+		// configured anything. Commit authorship is asked per repo at commit
+		// time (handleGitIdentity), not here.
 		// No middleware injection here: the id doesn't exist until Create
 		// parses the repo URL, so there is no project ctx to log under on
 		// pre-parse failures. The service injects once known and owns all
 		// create logging (project.create/ready on success, project.clone
 		// on clone failure; same trace: the request ctx flows into Create).
-		id, p, err := d.Projects.Create(r.Context(), strings.TrimSpace(body.RepoURL), strings.TrimSpace(body.Branch), strings.TrimSpace(body.CloneMethod))
+		id, p, err := d.Projects.Create(r.Context(), strings.TrimSpace(body.RepoURL), strings.TrimSpace(body.Branch))
 		switch {
 		case errors.Is(err, project.ErrInvalidInput):
 			writeErr(w, http.StatusBadRequest, err.Error())
@@ -87,7 +86,7 @@ func handleGetProject(d Deps) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id": r.PathValue("id"), "repo": p.Repo,
-			"branch": p.Branch, "cloneMethod": p.CloneMethod, "status": status.State,
+			"branch": p.Branch, "status": status.State,
 			"shortcuts": p.Shortcuts,
 		})
 	}

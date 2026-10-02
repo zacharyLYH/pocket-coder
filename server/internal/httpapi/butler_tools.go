@@ -22,30 +22,28 @@ const (
 
 // Write tools: propose-only, Confirm applies. Safe first, sensitive after.
 const (
-	butlerToolCreateProject   = "create_project"
-	butlerToolStart           = "start"
-	butlerToolStop            = "stop"
-	butlerToolRestart         = "restart"
-	butlerToolSessionCreate   = "session_create"
-	butlerToolSessionKill     = "session_kill"
-	butlerToolSessionRestart  = "session_restart"
-	butlerToolSessionRename   = "session_rename"
-	butlerToolPreviewStart    = "preview_start"
-	butlerToolPreviewClose    = "preview_close"
-	butlerToolGitPull         = "git_pull"
-	butlerToolGitPush         = "git_push"
-	butlerToolGitSwitch       = "git_switch"
-	butlerToolDeleteProject   = "delete_project"
-	butlerToolCreateHarness   = "create_harness"
-	butlerToolInstallHarness  = "install_harness"
-	butlerToolDeleteHarness   = "delete_harness"
-	butlerToolFanoutExec      = "fanout_exec"
-	butlerToolProposeEnvFix   = "propose_env_fix"
-	butlerToolSwitchModel     = "switch_model"
-	butlerToolUpdateAIModel   = "update_ai_model"
-	butlerToolSaveShortcut    = "save_shortcut"
-	butlerToolSaveGitIdentity = "save_git_identity"
-	butlerToolAddSSHKey       = "add_ssh_key"
+	butlerToolCreateProject  = "create_project"
+	butlerToolStart          = "start"
+	butlerToolStop           = "stop"
+	butlerToolRestart        = "restart"
+	butlerToolSessionCreate  = "session_create"
+	butlerToolSessionKill    = "session_kill"
+	butlerToolSessionRestart = "session_restart"
+	butlerToolSessionRename  = "session_rename"
+	butlerToolPreviewStart   = "preview_start"
+	butlerToolPreviewClose   = "preview_close"
+	butlerToolGitPull        = "git_pull"
+	butlerToolGitPush        = "git_push"
+	butlerToolGitSwitch      = "git_switch"
+	butlerToolDeleteProject  = "delete_project"
+	butlerToolCreateHarness  = "create_harness"
+	butlerToolInstallHarness = "install_harness"
+	butlerToolDeleteHarness  = "delete_harness"
+	butlerToolFanoutExec     = "fanout_exec"
+	butlerToolProposeEnvFix  = "propose_env_fix"
+	butlerToolSwitchModel    = "switch_model"
+	butlerToolUpdateAIModel  = "update_ai_model"
+	butlerToolSaveShortcut   = "save_shortcut"
 )
 
 // butlerReadNames is every read tool in registry order.
@@ -88,6 +86,4 @@ var butlerWriteNames = []string{
 	butlerToolSwitchModel,
 	butlerToolUpdateAIModel,
 	butlerToolSaveShortcut,
-	butlerToolSaveGitIdentity,
-	butlerToolAddSSHKey,
 }

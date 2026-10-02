@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"pcoder/internal/threads"
 	"pcoder/internal/obs"
+	"pcoder/internal/threads"
 )
 
 const explainMaxPrompt = 60000

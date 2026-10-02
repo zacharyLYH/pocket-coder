@@ -193,7 +193,7 @@ func TestObserveCreateSharesTrace(t *testing.T) {
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
 	md.EXPECT().InspectImage(mock.Anything, project.ProjectImage).Return(nil)
 	md.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
-	md.EXPECT().Exec(mock.Anything, "cid", []string{"git", "clone", "https://github.com/x/hello.git", "/workspace/repo"}, false).
+	md.EXPECT().Exec(mock.Anything, "cid", []string{"git", "clone", "git@github.com:x/hello.git", "/workspace/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 	cookie := loginCookie(t, h, pinOut)
 	rec := authedPost(t, h, cookie, "/api/projects", `{"repoUrl":"https://github.com/x/hello.git"}`)

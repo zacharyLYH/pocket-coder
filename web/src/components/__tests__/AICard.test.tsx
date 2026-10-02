@@ -14,6 +14,7 @@ describe('AICard', () => {
       if (url === '/api/ai/models' && (init?.method ?? 'GET') === 'GET') {
         return { status: 200, body: { models: rows } }
       }
+      if (url === '/api/ai/models/test' && init?.method === 'POST') return { status: 200, body: { ok: true } }
       if (url === '/api/ai/models' && init?.method === 'POST') {
         rows = ROW
         return { status: 201, body: { id: 'm1' } }
@@ -38,14 +39,34 @@ describe('AICard', () => {
     fireEvent.change(screen.getByTestId('ai-model'), { target: { value: 'm' } })
   }
 
-  it('saves without a prior test and lists the new row', async () => {
+  it('Save is disabled until Test succeeds', async () => {
     stub()
     const onChanged = vi.fn()
     render(<AICard onChanged={onChanged} />)
     await screen.findByText(/No models yet/)
 
-    // No Test click: Save alone probes once server-side.
     await fill()
+    // No Test click yet: Save stays disabled.
+    expect(screen.getByTestId('ai-save')).toBeDisabled()
+
+    // Test passes — Save lights up.
+    fireEvent.click(screen.getByTestId('ai-test'))
+    await waitFor(() => expect(screen.getByTestId('ai-save')).toBeEnabled())
+
+    // Save, then the parent refreshes.
+    fireEvent.click(screen.getByTestId('ai-save'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalled())
+  })
+
+  it('saves only after testing and lists the new row', async () => {
+    stub()
+    const onChanged = vi.fn()
+    render(<AICard onChanged={onChanged} />)
+    await screen.findByText(/No models yet/)
+
+    await fill()
+    fireEvent.click(screen.getByTestId('ai-test'))
+    await waitFor(() => expect(screen.getByTestId('ai-save')).toBeEnabled())
     fireEvent.click(screen.getByTestId('ai-save'))
 
     await waitFor(() => expect(onChanged).toHaveBeenCalled())

@@ -1,10 +1,9 @@
 package httpapi
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -35,15 +34,22 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	keyBody := "ssh-ed25519 AAAA-mykey"
-	sum := sha256.Sum256([]byte(keyBody))
-	wantFp := "sha256-" + base64.RawURLEncoding.EncodeToString(sum[:16])
-
-	// --- 1. register an SSH key ---
-	rec := authedPost(t, h, cookie, "/api/ssh-keys",
-		`{"publicKey":"`+keyBody+`","label":"laptop"}`)
-	if rec.Code != 201 || rec.Body.String() != `{"fingerprint":"`+wantFp+`"}`+"\n" {
-		t.Fatalf("add ssh key: %d %s (want fp %s)", rec.Code, rec.Body, wantFp)
+	// --- 1. server key: generated on boot, shown without the private half ---
+	kp, err := d.SSHKeys.EnsureKeypair()
+	if err != nil {
+		t.Skipf("ssh-keygen unavailable: %v", err)
+	}
+	rec := authedGet(t, h, cookie, "/api/ssh")
+	var shown struct {
+		PublicKey   string `json:"publicKey"`
+		Fingerprint string `json:"fingerprint"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &shown)
+	if rec.Code != 200 || shown.PublicKey != kp.PublicKey || shown.Fingerprint != kp.Fingerprint {
+		t.Fatalf("show key: %d %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "PRIVATE") {
+		t.Fatalf("show leaks the private key: %q", rec.Body)
 	}
 
 	// --- 2. register a harness (native CLI config would ride along) ---
@@ -60,10 +66,18 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 	md.EXPECT().Exec(mock.Anything, "cid",
 		[]string{"sh", "-c", "mkdir -p /root/.ssh && chmod 700 /root/.ssh"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
-	md.EXPECT().WriteFile(mock.Anything, "cid", "/root/.ssh/authorized_keys",
-		[]byte(keyBody+"\n")).Return(nil)
+	md.EXPECT().WriteFile(mock.Anything, "cid", "/root/.ssh/id_ed25519", mock.Anything).Return(nil)
+	md.EXPECT().WriteFile(mock.Anything, "cid", "/root/.ssh/id_ed25519.pub", mock.Anything).Return(nil)
 	md.EXPECT().Exec(mock.Anything, "cid",
-		[]string{"git", "clone", "https://github.com/x/hello.git", "/workspace/repo"}, false).
+		[]string{"sh", "-c", "grep -q 'IdentityFile /root/.ssh/id_ed25519' /root/.ssh/config 2>/dev/null"}, false).
+		Return(docker.ExecResult{ExitCode: 1}, nil)
+	md.EXPECT().Exec(mock.Anything, "cid", mock.MatchedBy(func(argv []string) bool {
+		return len(argv) == 3 && argv[0] == "sh" && argv[1] == "-c" &&
+			strings.Contains(argv[2], ">> /root/.ssh/config")
+	}), false).Return(docker.ExecResult{ExitCode: 0}, nil)
+	md.EXPECT().WriteFile(mock.Anything, "cid", "/root/.ssh-configured-sha", mock.Anything).Return(nil)
+	md.EXPECT().Exec(mock.Anything, "cid",
+		[]string{"git", "clone", "git@github.com:x/hello.git", "/workspace/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 
 	rec = authedPost(t, h, cookie, "/api/projects",
@@ -79,32 +93,26 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 	}
 
 	// everything so far is already persisted — and the file is EXACTLY the
-	// sum of what the API did: one user, two harnesses, one key, one project
+	// sum of what the API did: user, identity, harnesses, server key, project.
+	// The private half is asserted present (never asserted by value).
 	statetest.AssertEqual(t, st.Path(), map[string]any{
-		"user":           map[string]any{"email": "me@example.com"},
-		"git_identities": []any{map[string]any{"id": "default", "label": "Default", "name": "Test", "email": "test@example.com", "token": "test-token"}},
+		"user": map[string]any{"email": "me@example.com"},
 		"harnesses": map[string]any{
 			"fake":     wantFakeHarnessEntry,
 			"my-agent": map[string]any{"id": "my-agent", "name": "My Agent", "command": "my-agent", "install": "npm i -g my-agent"},
 		},
-		"sshKeys": []any{map[string]any{
-			"fingerprint": wantFp,
-			"publicKey":   keyBody,
-			"label":       "laptop",
-			"email":       "me@example.com",
-		}},
+		"serverKey": map[string]any{
+			"privateKey":  kp.PrivateKey,
+			"fingerprint": kp.Fingerprint,
+			"publicKey":   kp.PublicKey,
+			"createdAt":   kp.CreatedAt,
+		},
 		"projects": map[string]any{
-			proj.ID: map[string]any{"repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
+			proj.ID: map[string]any{"repo": "git@github.com:x/hello.git"},
 		},
 	})
 
-	// --- 4. delete the ssh key ---
-	rec = authedRequest(t, h, cookie, "DELETE", "/api/ssh-keys/"+wantFp)
-	if rec.Code != 200 {
-		t.Fatalf("delete ssh key: %d %s", rec.Code, rec.Body)
-	}
-
-	// --- 5. delete the project entirely ---
+	// --- 4. delete the project entirely ---
 	cname := project.ContainerName(proj.ID)
 	md.EXPECT().Stop(mock.Anything, cname, mock.Anything).Return(nil)
 	md.EXPECT().Remove(mock.Anything, cname, true).Return(nil)
@@ -115,14 +123,19 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 		t.Fatalf("delete project: %d %s", rec.Code, rec.Body)
 	}
 
-	// --- deletions hit the same single file: the key and the project are
-	// gone, and ONLY the untouched harnesses remain ---
+	// --- deletions hit the same single file: the project is gone, and
+	// ONLY the untouched harnesses, identity, and server key remain ---
 	statetest.AssertEqual(t, st.Path(), map[string]any{
-		"user":           map[string]any{"email": "me@example.com"},
-		"git_identities": []any{map[string]any{"id": "default", "label": "Default", "name": "Test", "email": "test@example.com", "token": "test-token"}},
+		"user": map[string]any{"email": "me@example.com"},
 		"harnesses": map[string]any{
 			"fake":     wantFakeHarnessEntry,
 			"my-agent": map[string]any{"id": "my-agent", "name": "My Agent", "command": "my-agent", "install": "npm i -g my-agent"},
+		},
+		"serverKey": map[string]any{
+			"privateKey":  kp.PrivateKey,
+			"fingerprint": kp.Fingerprint,
+			"publicKey":   kp.PublicKey,
+			"createdAt":   kp.CreatedAt,
 		},
 	})
 }

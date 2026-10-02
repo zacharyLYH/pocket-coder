@@ -1,7 +1,8 @@
 // Package state owns state.json — the single source of truth for all
 // desired app state: identity, SMTP credentials, projects, harness
-// plugins, and SSH public keys. Live state (Docker containers, tmux
-// sessions) stays in Docker/tmux and is reconciled against this file.
+// plugins, and the server SSH deploy keypair. Live state (Docker
+// containers, tmux sessions) stays in Docker/tmux and is reconciled
+// against this file.
 //
 // One JSON file with owner-only permissions, rewritten atomically (temp
 // + rename) on every mutation. Small by construction — history lives in
@@ -24,10 +25,9 @@ type Document struct {
 	User      User               `json:"user"`
 	SMTP      *SMTP              `json:"smtp,omitempty"`
 	AIModels  []AIModel          `json:"ai_models,omitempty"`
-	GitIDs    []GitIdentity      `json:"git_identities,omitempty"`
 	Projects  map[string]Project `json:"projects,omitempty"`  // keyed by project id
 	Harnesses map[string]Harness `json:"harnesses,omitempty"` // keyed by harness slug id
-	SSHKeys   []SSHKey           `json:"sshKeys,omitempty"`
+	ServerKey *ServerSSHKey      `json:"serverKey,omitempty"`
 }
 
 // User is the single login identity.
@@ -59,12 +59,11 @@ type Shortcut struct {
 // repo's owner/repo (the display name), and the container/volumes are
 // derived from it.
 type Project struct {
-	Repo        string             `json:"repo"`
-	Branch      string             `json:"branch,omitempty"`
-	CloneMethod string             `json:"cloneMethod,omitempty"` // "ssh" or "http" (default)
-	Harnesses   []string           `json:"harnesses,omitempty"`   // installed harness ids, ordered by install
-	Sessions    map[string]Session `json:"sessions,omitempty"`    // keyed by session name
-	Shortcuts   []Shortcut         `json:"shortcuts,omitempty"`   // the one shortcuts list (commands and keys alike)
+	Repo      string             `json:"repo"`
+	Branch    string             `json:"branch,omitempty"`
+	Harnesses []string           `json:"harnesses,omitempty"` // installed harness ids, ordered by install
+	Sessions  map[string]Session `json:"sessions,omitempty"`  // keyed by session name
+	Shortcuts []Shortcut         `json:"shortcuts,omitempty"` // the one shortcuts list (commands and keys alike)
 }
 
 // Session is high-level metadata about a tmux session. Stored in
@@ -99,15 +98,6 @@ type AIModel struct {
 	Model   string `json:"model"`
 }
 
-// GitIdentity is one entry in the shared git list. Tokens never render.
-type GitIdentity struct {
-	ID    string `json:"id"`
-	Label string `json:"label,omitempty"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
-	Token string `json:"token"`
-}
-
 // MintID mints a hex id for list entries.
 func MintID() string {
 	var b [8]byte
@@ -125,21 +115,15 @@ func FirstAIModel(doc *Document) *AIModel {
 	return nil
 }
 
-// FirstGit returns the head of the shared git list, or nil when empty.
-func FirstGit(doc *Document) *GitIdentity {
-	if len(doc.GitIDs) > 0 {
-		return &doc.GitIDs[0]
-	}
-	return nil
-}
-
-// SSHKey is a registered public key, injected into projects for
-// git SSH clones. Fingerprint is derived from PublicKey content.
-type SSHKey struct {
-	Fingerprint string `json:"fingerprint"`
+// ServerSSHKey is the server's own git deploy keypair, generated once on
+// first boot. The public half goes to GitHub; the private half is injected
+// into project containers for git-over-SSH. Fingerprint is the standard
+// OpenSSH SHA256 form, for display only.
+type ServerSSHKey struct {
+	PrivateKey  string `json:"privateKey"`
 	PublicKey   string `json:"publicKey"`
-	Label       string `json:"label,omitempty"`
-	Email       string `json:"email"`
+	Fingerprint string `json:"fingerprint"`
+	CreatedAt   string `json:"createdAt"` // RFC3339
 }
 
 // Bootstrap seeds a fresh/empty document from environment-derived config.

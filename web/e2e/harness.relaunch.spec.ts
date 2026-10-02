@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, test } from '@playwright/test'
+import { expect, type APIRequestContext, test } from './test'
 import { createProject, deleteAllProjects, engineUp, projectURL, resetHarnessRegistry, terminalUrl, waitForRunning } from './helpers'
 
 // Read a marker file's mtime from inside the container. Returns 0 if absent.

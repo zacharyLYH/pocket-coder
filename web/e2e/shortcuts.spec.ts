@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './test'
 import { createProject, deleteAllProjects, engineUp, projectURL } from './helpers'
 
 test.describe('shortcuts', () => {

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './test'
 
 import { mockConfigured, mockProject } from './mocks'
 import { TID, mockButlerThreads, mockButlerTurn } from './threadMocks'

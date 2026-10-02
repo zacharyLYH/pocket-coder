@@ -24,6 +24,12 @@ curl -fsSL https://raw.githubusercontent.com/zacharyLYH/pocket-coder/main/deploy
 arrives by email. A setup-complete test email lands in the inbox first,
 so you know delivery works before you need it.
 
+**4. Connect GitHub (Desktop Recommended)**:
+Upon logging in, you'll be prompted to copy the generated SSH key to your [GitHub SSH keys](https://github.com/settings/keys). 
+> **Note:** It is highly recommended to perform this initial setup on a desktop device. Copying long SSH keys and navigating GitHub's settings page is significantly easier with a desktop clipboard and screen size. 
+
+Once your key is authenticated, switch to your mobile device and install the app as a PWA (Add to Home Screen) for maximum on-the-go convenience!
+
 ## Developer
 
 ### Setup

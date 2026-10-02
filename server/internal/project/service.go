@@ -2,8 +2,6 @@ package project
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -12,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"pcoder/internal/threads"
 	"pcoder/internal/docker"
 	"pcoder/internal/obs"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
 	"pcoder/internal/textutil"
+	"pcoder/internal/threads"
 )
 
 // ProjectImage is the shared project image; the tag version bumps
@@ -65,7 +63,6 @@ type Service struct {
 	store     Store
 	dkr       docker.Client
 	sshKeys   *sshkeys.Store
-	git       func() (name, email, token string)
 	installer Installer
 	// codemaps is the codemap chat store; chats are project-scoped
 	// artifacts, so when the record goes the chat files go with it. Wired
@@ -83,10 +80,6 @@ func NewService(store Store, dkr docker.Client) *Service {
 
 // SetSSHKeys attaches an SSH key store for container key injection.
 func (s *Service) SetSSHKeys(sk *sshkeys.Store) { s.sshKeys = sk }
-
-// SetGit attaches the global git identity provider (name, email, token;
-// empty token means unconfigured). Wired from state in main.
-func (s *Service) SetGit(fn func() (string, string, string)) { s.git = fn }
 
 // SetCodemaps attaches the codemap chat store for delete cascades.
 func (s *Service) SetCodemaps(cs *threads.Store) { s.codemaps = cs }
@@ -132,14 +125,13 @@ func homeVolume(id string) string { return "pcoder-" + SanitizeName(id) + "-home
 
 // Create clones the repoURL into a new project and returns when it is
 // ready or failed. repoURL is required and must be a GitHub repository
-// URL; the project id is the repo's owner/repo, so creating the same
+// URL; https URLs are normalized to SSH form so the server deploy key
+// applies. The project id is the repo's owner/repo, so creating the same
 // repo twice is a conflict. A clone failure keeps the project running so
 // the user can repair it from the terminal — only the error surfaces here.
-// cloneMethod is "ssh" or "http" (empty defaults to "http").
-func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod string) (string, Project, error) {
+func (s *Service) Create(ctx context.Context, repoURL, branch string) (string, Project, error) {
 	repoURL = strings.TrimSpace(repoURL)
 	branch = strings.TrimSpace(branch)
-	cloneMethod = strings.TrimSpace(cloneMethod)
 	if strings.HasPrefix(branch, "-") {
 		return "", Project{}, fmt.Errorf("%w: repo url and branch must not start with \"-\"", ErrInvalidInput)
 	}
@@ -147,23 +139,22 @@ func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod strin
 	if err != nil {
 		return "", Project{}, err
 	}
+	sshURL, err := toSSHURL(repoURL, s.allowAnyRepo)
+	if err != nil {
+		return "", Project{}, err
+	}
+	repoURL = sshURL
 	// The project never changes through this call chain, so it rides in
 	// ctx from here on — downstream logs name only key and message.
 	ctx = obs.WithProject(ctx, id)
-	if cloneMethod == "" {
-		cloneMethod = "http"
-	}
-	if cloneMethod != "ssh" && cloneMethod != "http" {
-		return "", Project{}, fmt.Errorf("%w: cloneMethod must be \"ssh\" or \"http\"", ErrInvalidInput)
-	}
 	if _, err := s.store.Get(id); err == nil {
 		return "", Project{}, fmt.Errorf("%w: project %q", ErrConflict, id)
 	}
-	p := Project{Repo: repoURL, Branch: branch, CloneMethod: cloneMethod}
+	p := Project{Repo: repoURL, Branch: branch}
 	if err := s.store.Create(id, p); err != nil {
 		return "", Project{}, err
 	}
-	obs.Info(ctx, obs.ProjectCreate, "project created", map[string]any{"repo": repoURL, "branch": branch, "cloneMethod": cloneMethod})
+	obs.Info(ctx, obs.ProjectCreate, "project created", map[string]any{"repo": repoURL, "branch": branch})
 
 	cid, err := s.runProject(ctx, id)
 	if err != nil {
@@ -171,16 +162,11 @@ func (s *Service) Create(ctx context.Context, repoURL, branch, cloneMethod strin
 		return "", Project{}, err
 	}
 
-	// Inject SSH keys before any clone so git SSH works.
-	if err := s.injectSSHKeys(ctx, cid); err != nil {
+	// Inject the deploy key before any clone so git SSH works.
+	if err := s.injectGitSSH(ctx, cid); err != nil {
 		obs.Warn(ctx, obs.ProjectSSHKeys, "ssh key injection failed: "+err.Error(),
 			map[string]any{"error": err.Error()})
 	}
-	if err := s.injectGitConfig(ctx, cid); err != nil {
-		obs.Warn(ctx, obs.ProjectSSHKeys, "git config injection failed: "+err.Error(),
-			map[string]any{"error": err.Error()})
-	}
-
 	if err := s.cloneRepo(ctx, id, cid, p); err != nil {
 		return "", Project{}, err
 	}
@@ -214,97 +200,84 @@ func (s *Service) runProject(ctx context.Context, id string) (string, error) {
 	return cid, nil
 }
 
-// injectSSHKeys writes the user's registered SSH public keys into
-// ~/.ssh/authorized_keys inside the container so git SSH clones work.
-func (s *Service) injectSSHKeys(ctx context.Context, container string) error {
+// sshConfigBlock is the platform's own addition to the container's ssh
+// config — appended, never overwritten, so user additions survive.
+const sshConfigBlock = "\nHost github.com\n  StrictHostKeyChecking accept-new\n  IdentityFile /root/.ssh/id_ed25519\n"
+
+// injectGitSSH provisions the server deploy key plus the ssh client
+// config inside the container so git-over-SSH works non-interactively.
+// accept-new answers the known-hosts prompt automatically on first
+// contact while still refusing changed keys afterwards. A fingerprint
+// marker drives rotation: after a regen the next Ensure re-injects.
+func (s *Service) injectGitSSH(ctx context.Context, container string) error {
 	if s.sshKeys == nil {
 		return nil
 	}
-	// Single-user deployment: inject every registered key.
-	allKeys, err := s.sshKeys.AllAuthorizedKeys()
+	kp, ok := s.sshKeys.Get()
+	if !ok {
+		return fmt.Errorf("no server ssh key — restart the server to generate one")
+	}
+	// mkdir -p ~/.ssh (WriteFile lands 0600, so the key needs no
+	// separate chmod). Exec is raw argv (no shell), so the compound
+	// command goes through sh -c.
+	if err := s.execOK(ctx, container, "sh", "-c", "mkdir -p /root/.ssh && chmod 700 /root/.ssh"); err != nil {
+		return fmt.Errorf("mkdir .ssh: %w", err)
+	}
+	if err := s.dkr.WriteFile(ctx, container, "/root/.ssh/id_ed25519", []byte(kp.PrivateKey)); err != nil {
+		return fmt.Errorf("write deploy key: %w", err)
+	}
+	if err := s.dkr.WriteFile(ctx, container, "/root/.ssh/id_ed25519.pub", []byte(kp.PublicKey+"\n")); err != nil {
+		return fmt.Errorf("write deploy pubkey: %w", err)
+	}
+	// Append our block, never overwrite: a full rewrite would drop user
+	// additions (other hosts, identities) and Host * would leak the deploy
+	// key to every ssh connection. Scoped to github.com only.
+	if res, err := s.dkr.Exec(ctx, container, []string{"sh", "-c", "grep -q 'IdentityFile /root/.ssh/id_ed25519' /root/.ssh/config 2>/dev/null"}, false); err != nil || res.ExitCode != 0 {
+		if err := s.execOK(ctx, container, "sh", "-c", "printf '%s' "+shQuote(sshConfigBlock)+" >> /root/.ssh/config"); err != nil {
+			return fmt.Errorf("write ssh config: %w", err)
+		}
+	}
+	if err := s.dkr.WriteFile(ctx, container, "/root/.ssh-configured-sha", []byte(kp.Fingerprint)); err != nil {
+		return fmt.Errorf("write ssh marker: %w", err)
+	}
+	return nil
+}
+
+// shQuote wraps s in single quotes for sh -c embedding.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+// execOK runs argv in the container, turning transport errors and
+// non-zero exits into one error. Shared by the provisioning injects.
+func (s *Service) execOK(ctx context.Context, container string, args ...string) error {
+	res, err := s.dkr.Exec(ctx, container, args, false)
 	if err != nil {
 		return err
 	}
-	if len(allKeys) == 0 {
-		return nil
-	}
-	// mkdir -p ~/.ssh, then write authorized_keys. Exec is raw argv (no
-	// shell), so the compound command goes through sh -c.
-	if res, err := s.dkr.Exec(ctx, container, []string{"sh", "-c", "mkdir -p /root/.ssh && chmod 700 /root/.ssh"}, false); err != nil {
-		return fmt.Errorf("mkdir .ssh: %w", err)
-	} else if res.ExitCode != 0 {
-		return fmt.Errorf("mkdir .ssh: %s", strings.TrimSpace(res.Output))
-	}
-	if err := s.dkr.WriteFile(ctx, container, "/root/.ssh/authorized_keys", allKeys); err != nil {
-		return fmt.Errorf("write authorized_keys: %w", err)
+	if res.ExitCode != 0 {
+		return fmt.Errorf("%s", strings.TrimSpace(res.Output))
 	}
 	return nil
 }
 
-// gitSHA is the rotation marker: hash of name+email+token.
-func gitSHA(name, email, token string) string {
-	sum := sha256.Sum256([]byte(name + "\x00" + email + "\x00" + token))
-	return hex.EncodeToString(sum[:])
-}
-
-// injectGitConfig provisions the global git identity + HTTPS credential
-// helper into the container. Warn-only at call sites, never bricks boot.
-func (s *Service) injectGitConfig(ctx context.Context, container string) error {
-	if s.git == nil {
+// EnsureGitSSH re-injects the deploy key when the fingerprint marker
+// disagrees (regen) or is absent (old container). Callers run it before
+// git reads so a rotated key lands while the container lives. Nil store
+// means tests.
+func (s *Service) EnsureGitSSH(ctx context.Context, container string) error {
+	if s.sshKeys == nil {
 		return nil
 	}
-	name, email, token := s.git()
-	if token == "" {
+	kp, ok := s.sshKeys.Get()
+	if !ok {
 		return nil
 	}
-	if err := s.dkr.WriteFile(ctx, container, "/root/.git-credentials",
-		[]byte("https://x-access-token:"+token+"@github.com")); err != nil {
-		return fmt.Errorf("write git-credentials: %w", err)
-	}
-	exec := func(args ...string) error {
-		res, err := s.dkr.Exec(ctx, container, args, false)
-		if err != nil {
-			return err
-		}
-		if res.ExitCode != 0 {
-			return fmt.Errorf("%s", strings.TrimSpace(res.Output))
-		}
+	if res, err := s.dkr.Exec(ctx, container, []string{"cat", "/root/.ssh-configured-sha"}, false); err == nil &&
+		strings.TrimSpace(res.Output) == kp.Fingerprint {
 		return nil
 	}
-	if err := exec("sh", "-c", "git config --global credential.helper 'store --file /root/.git-credentials' && chmod 600 /root/.git-credentials"); err != nil {
-		return err
-	}
-	if name != "" {
-		if err := exec("git", "config", "--global", "user.name", name); err != nil {
-			return err
-		}
-	}
-	if email != "" {
-		if err := exec("git", "config", "--global", "user.email", email); err != nil {
-			return err
-		}
-	}
-	if err := s.dkr.WriteFile(ctx, container, "/root/.git-configured-sha", []byte(gitSHA(name, email, token))); err != nil {
-		return fmt.Errorf("write git marker: %w", err)
-	}
-	return nil
-}
-
-// EnsureGitConfig re-injects on marker mismatch so token rotation
-// propagates while the container lives. One extra cat per call.
-func (s *Service) EnsureGitConfig(ctx context.Context, container string) error {
-	if s.git == nil {
-		return nil
-	}
-	name, email, token := s.git()
-	if token == "" {
-		return nil
-	}
-	if res, err := s.dkr.Exec(ctx, container, []string{"cat", "/root/.git-configured-sha"}, false); err == nil &&
-		strings.TrimSpace(res.Output) == gitSHA(name, email, token) {
-		return nil
-	}
-	return s.injectGitConfig(ctx, container)
+	return s.injectGitSSH(ctx, container)
 }
 
 // ensureProjectImage builds the embedded project definition when the image
@@ -361,13 +334,9 @@ func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error
 		return Status{}, fmt.Errorf("reconcile container %s: %w", id, err)
 	}
 	obs.Info(ctx, obs.ProjectReconcile, "reconciling missing container", map[string]any{"container": cid})
-	// Inject SSH keys so git clones work immediately.
-	if err := s.injectSSHKeys(ctx, cid); err != nil {
+	// Inject the deploy key so git clones work immediately.
+	if err := s.injectGitSSH(ctx, cid); err != nil {
 		obs.Warn(ctx, obs.ProjectSSHKeys, "ssh key injection failed: "+err.Error(),
-			map[string]any{"error": err.Error()})
-	}
-	if err := s.injectGitConfig(ctx, cid); err != nil {
-		obs.Warn(ctx, obs.ProjectSSHKeys, "git config injection failed: "+err.Error(),
 			map[string]any{"error": err.Error()})
 	}
 	return ContainerStatus(ctx, s.dkr, ContainerName(id))

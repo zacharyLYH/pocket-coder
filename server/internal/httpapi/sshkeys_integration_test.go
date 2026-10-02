@@ -1,114 +1,24 @@
 //go:build integration
 
-// Integration tests for SSH key management and the reconciliation + clone
-// method flows against a live engine. Run with:
-// go test -tags=integration -count=1 ./internal/httpapi/
+// Integration tests for what is left of the SSH surface against a live
+// engine: container reconciliation. The per-user key registry and the
+// http clone method are gone — the server deploy key covers every clone.
+// Run with: go test -tags=integration -count=1 ./internal/httpapi/
 package httpapi
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 
 	"pcoder/internal/project"
 )
-
-func TestSSHKeyRegistrationAndClone(t *testing.T) {
-	h, _, _, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
-
-	// initially no keys
-	code, body := doJSON(t, h, cookie, http.MethodGet, "/api/ssh-keys", "")
-	keys, _ := body["keys"].([]any)
-	if code != http.StatusOK || keys == nil || len(keys) != 0 {
-		t.Fatalf("list empty: %d %v", code, body)
-	}
-
-	// add a key
-	code, body = doJSON(t, h, cookie, http.MethodPost, "/api/ssh-keys",
-		`{"publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGITestKey123456789","label":"test-key"}`)
-	if code != http.StatusCreated {
-		t.Fatalf("add key: %d %v", code, body)
-	}
-	fp, _ := body["fingerprint"].(string)
-	if fp == "" {
-		t.Fatalf("no fingerprint returned: %v", body)
-	}
-
-	// list shows the key
-	code, body = doJSON(t, h, cookie, http.MethodGet, "/api/ssh-keys", "")
-	keys, _ = body["keys"].([]any)
-	if code != http.StatusOK || len(keys) != 1 {
-		t.Fatalf("list after add: %d %v", code, body)
-	}
-
-	// delete
-	code, _ = doJSON(t, h, cookie, http.MethodDelete, "/api/ssh-keys/"+fp, "")
-	if code != http.StatusOK {
-		t.Fatalf("delete: %d", code)
-	}
-
-	// back to empty
-	code, body = doJSON(t, h, cookie, http.MethodGet, "/api/ssh-keys", "")
-	keys, _ = body["keys"].([]any)
-	if code != http.StatusOK || len(keys) != 0 {
-		t.Fatalf("status after delete: %d %v", code, body)
-	}
-}
-
-func TestSSHKeyInjectOnCreate(t *testing.T) {
-	h, dkr, _, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
-
-	// register a key
-	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/ssh-keys",
-		`{"publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGITestInject","label":"inject-test"}`)
-	if code != http.StatusCreated {
-		t.Fatalf("add key: %d %v", code, body)
-	}
-	fp := body["fingerprint"].(string)
-	defer doJSON(t, h, cookie, http.MethodDelete, "/api/ssh-keys/"+fp, "")
-
-	// create a fixture project — the key should land in ~/.ssh/authorized_keys
-	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
-	waitForStatus(t, h, cookie, id, "running")
-
-	// verify authorized_keys exists and contains the key
-	var catResult string
-	for i := 0; i < 15; i++ {
-		res, err := dkr.Exec(t.Context(), project.ContainerName(id),
-			[]string{"cat", "/root/.ssh/authorized_keys"}, false)
-		if err == nil && res.ExitCode == 0 {
-			catResult = strings.TrimSpace(res.Output)
-			break
-		}
-	}
-	if !strings.Contains(catResult, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGITestInject") {
-		t.Fatalf("authorized_keys = %q, want the registered key", catResult)
-	}
-}
-
-func TestCloneMethodHTTP(t *testing.T) {
-	h, _, _, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
-
-	// create with explicit http cloneMethod against a local fixture repo
-	url := fixtureRepo(t).URL
-	id, _ := createTestProject(t, h, cookie, url, "", "http")
-
-	// get shows cloneMethod
-	code, body := doJSON(t, h, cookie, http.MethodGet, projectPath(id, ""), "")
-	if code != http.StatusOK || body["cloneMethod"] != "http" {
-		t.Fatalf("get cloneMethod: %d %v", code, body)
-	}
-}
 
 func TestReconcileMissingContainer(t *testing.T) {
 	h, dkr, _, pinOut, _, _ := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
 
 	// create a project
-	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
+	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "")
 	waitForStatus(t, h, cookie, id, "running")
 
 	// manually kill the container (simulate engine restart / docker rm)
@@ -132,30 +42,4 @@ func TestReconcileMissingContainer(t *testing.T) {
 
 	// verify the container is back
 	waitForStatus(t, h, cookie, id, "running")
-}
-
-func TestSSHKeyInvalidFormat400(t *testing.T) {
-	h, _, _, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
-
-	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/ssh-keys",
-		`{"publicKey":"not-a-real-key","label":"bad"}`)
-	if code != http.StatusBadRequest {
-		t.Fatalf("invalid key: %d %v, want 400", code, body)
-	}
-}
-
-func TestSSHKeyDuplicateRejected(t *testing.T) {
-	h, _, _, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
-
-	key := `{"publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGIDuplicate","label":"dup"}`
-	code, _ := doJSON(t, h, cookie, http.MethodPost, "/api/ssh-keys", key)
-	if code != http.StatusCreated {
-		t.Fatalf("first add: %d", code)
-	}
-	code, body := doJSON(t, h, cookie, http.MethodPost, "/api/ssh-keys", key)
-	if code != http.StatusBadRequest {
-		t.Fatalf("duplicate: %d %v, want 400", code, body)
-	}
 }

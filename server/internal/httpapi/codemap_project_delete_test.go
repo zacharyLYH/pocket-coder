@@ -15,12 +15,12 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"pcoder/internal/threads"
 	"pcoder/internal/harness"
 	"pcoder/internal/project"
 	"pcoder/internal/session"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
+	"pcoder/internal/threads"
 	dockermocks "pcoder/mocks/docker"
 )
 

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './test'
 
 import { mockGit, resetGitState, PROJECT } from './git.fixtures'
 import { terminalUrl } from './helpers'

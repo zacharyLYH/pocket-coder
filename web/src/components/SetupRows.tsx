@@ -1,38 +1,31 @@
-import { useState } from 'react'
+// Two independent connection rows. Git shows the server deploy key
+// fingerprint (the page only renders once the key probes clean, so the
+// row is never amber for connectivity); AI opens the model card.
+import { useEffect, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { GitCard } from '@/components/GitCard'
-import { SshKeysCard } from '@/components/SshKeysCard'
 import { AICard } from '@/components/AICard'
-import type { AIConfigStatus, SSHKey } from '@/lib/types'
+import { api } from '@/lib/api'
+import type { AIConfigStatus } from '@/lib/types'
 
-// Three independent connection rows. Each shows its own status so a
-// configured thing never looks missing, and each opens its own dialog
-// so the rows never imply one combined flow. AI status is passed down
-// from Home (single owner) so the row never renders stale.
-export function SetupRows({ sshKeys, gitConfigured, ai, onGit, onKeys, onAi }: {
-  sshKeys: SSHKey[]; gitConfigured: boolean; ai: AIConfigStatus | null; onGit: () => void; onKeys: () => void; onAi: () => void
+export function SetupRows({ ai, onGit, onAi }: {
+  ai: AIConfigStatus | null; onGit: () => void; onAi: () => void
 }) {
-  const [open, setOpen] = useState<'git' | 'ssh' | 'ai' | null>(null)
-  const gitLabel = gitConfigured ? 'set' : 'not set'
-  // SSH keys are optional (HTTPS clone needs none): the row reports the
-  // count but never warns — no amber dot for having zero keys.
-  const sshLabel = sshKeys.length === 0 ? 'optional' : `${sshKeys.length} key${sshKeys.length === 1 ? '' : 's'}`
+  const [open, setOpen] = useState<'git' | 'ai' | null>(null)
+  const [fingerprint, setFingerprint] = useState<string | null>(null)
+  useEffect(() => {
+    api<{ fingerprint: string }>('/api/ssh').then((d) => setFingerprint(d.fingerprint)).catch(() => {})
+  }, [])
+  const gitLabel = fingerprint ?? 'set'
   const aiLabel = ai?.configured ? (ai.model || 'set') : 'not set'
   return (
     <div className="flex flex-col gap-1" data-testid="setup-rows">
-      <SetupRow label="Git" status={gitLabel} done={gitConfigured} testid="setup-git" onOpen={() => setOpen('git')} />
-      <SetupRow label="SSH keys" status={sshLabel} done testid="setup-ssh" onOpen={() => setOpen('ssh')} />
+      <SetupRow label="Git" status={gitLabel} done testid="setup-git" onOpen={() => setOpen('git')} />
       <SetupRow label="AI" status={aiLabel} done={!!ai?.configured} testid="setup-ai" onOpen={() => setOpen('ai')} />
       <Dialog open={open === 'git'} onOpenChange={(o) => { if (!o) setOpen(null) }}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md">
           <DialogHeader><DialogTitle>Git</DialogTitle></DialogHeader>
           <GitCard onChanged={onGit} />
-        </DialogContent>
-      </Dialog>
-      <Dialog open={open === 'ssh'} onOpenChange={(o) => { if (!o) setOpen(null) }}>
-        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md">
-          <DialogHeader><DialogTitle>SSH keys</DialogTitle></DialogHeader>
-          <SshKeysCard keys={sshKeys} onChanged={onKeys} />
         </DialogContent>
       </Dialog>
       <Dialog open={open === 'ai'} onOpenChange={(o) => { if (!o) setOpen(null) }}>

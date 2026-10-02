@@ -42,7 +42,7 @@ func TestCompareCatchesEveryDrift(t *testing.T) {
 		"missing field on record": `{"user":{"email":"me@example.com"},"projects":{"abc":{"name":"x"}}}`,
 		"wrong value":             `{"user":{"email":"me@example.com"},"projects":{"abc":{"name":"y","repo":""}}}`,
 		"wrong type":              `{"user":{"email":"me@example.com"},"projects":[]}`,
-		"extra array element":     `{"user":{"email":"me@example.com"},"sshKeys":[{"fingerprint":"a","publicKey":"k","email":"e"}],"projects":{"abc":{"name":"x","repo":""}}}`,
+		"extra array element":     `{"user":{"email":"me@example.com"},"serverKey":{"fingerprint":"a"},"projects":{"abc":{"name":"x","repo":""}}}`,
 	}
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -148,12 +148,6 @@ func New(d Deps) http.Handler {
 		authed("PUT", "/api/ai/models/{id}", handleUpdateAIModel)
 		authed("DELETE", "/api/ai/models/{id}", handleDeleteAIModel)
 		authed("POST", "/api/ai/models/{id}/test", handleTestAIModel)
-		authed("GET", "/api/git/identities", handleListGitIDs)
-		authed("POST", "/api/git/identities", handleCreateGitID)
-		authed("POST", "/api/git/identities/test", handleTestGitBody)
-		authed("PUT", "/api/git/identities/{id}", handleUpdateGitID)
-		authed("DELETE", "/api/git/identities/{id}", handleDeleteGitID)
-		authed("POST", "/api/git/identities/{id}/test", handleTestGitID)
 	}
 
 	if d.Preview != nil {
@@ -184,15 +178,14 @@ func New(d Deps) http.Handler {
 	}
 
 	if d.SSHKeys != nil {
-		authed("GET", "/api/ssh-keys", handleListSSHKeys)
-		authed("POST", "/api/ssh-keys", handleAddSSHKey)
-		authed("POST", "/api/ssh-keys/test", handleTestSSHKey)
-		authed("PUT", "/api/ssh-keys/{fingerprint}", handleUpdateSSHKey)
-		authed("DELETE", "/api/ssh-keys/{fingerprint}", handleDeleteSSHKey)
+		authed("GET", "/api/ssh", handleServerKey)
+		authed("POST", "/api/ssh/test", handleServerKeyTest)
+		authed("POST", "/api/ssh/regenerate", handleServerKeyRegen)
 	}
 
 	if d.State != nil {
 		authed("GET", "/api/state", handleGetState)
+		authed("DELETE", "/api/state", handleDeleteState)
 	}
 
 	// Butler: one global history (no project scope). Turns are plain
@@ -271,6 +264,8 @@ func writeInternalErr(w http.ResponseWriter, op string, err error) {
 // handleGetState dumps state.json plainly to the caller. The file is the
 // single source of truth; this endpoint exists so large frontend e2e tests
 // can assert desired state without reaching into the container's filesystem.
+// ?download=true forces a Content-Disposition attachment so browsers save
+// the file instead of rendering it (used by the settings wipe flow).
 func handleGetState(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw, err := os.ReadFile(d.State.Path())
@@ -279,8 +274,92 @@ func handleGetState(d Deps) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("download") == "true" {
+			w.Header().Set("Content-Disposition", `attachment; filename="state.json"`)
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(raw)
+	}
+}
+
+// handleDeleteState wipes every project, harness, and thread, resetting
+// state.json to a bare document (user + server key only). The caller
+// must have just downloaded state.json (handleGetState?download=true) —
+// this is the destructive half of the settings reset flow.
+//
+// Each project is deleted via the existing project.Delete with ScopeAll,
+// so containers, volumes, codemaps, and observe logs are all cleaned up
+// using the same per-project pipeline. Non-builtin harnesses are stripped
+// (builtins re-seed on the next boot via EnsureBuiltins).
+func handleDeleteState(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		defer func() {
+			if err != nil {
+				obsFail(r, obs.ProjectDelete, "state wipe failed", err, nil)
+			}
+		}()
+		// 1. Stop live surfaces and delete every project.
+		entries, lerr := d.Projects.List()
+		if lerr != nil {
+			err = lerr
+			writeInternalErr(w, "list projects for wipe", err)
+			return
+		}
+		var firstErr error
+		for _, e := range entries {
+			if d.Preview != nil {
+				_ = d.Preview.Stop(r.Context(), e.ID)
+			}
+			evictCDP(e.ID)
+			if derr := d.Projects.Delete(r.Context(), e.ID, project.ScopeAll); derr != nil {
+				slog.Warn("wipe: project delete failed", "id", e.ID, "err", derr)
+				if firstErr == nil {
+					firstErr = derr
+				}
+				continue
+			}
+			if d.Obs != nil {
+				d.Obs.DeleteProject(e.ID)
+			}
+		}
+		if firstErr != nil {
+			err = firstErr
+			writeInternalErr(w, "wipe projects", err)
+			return
+		}
+		// 2. Strip all harnesses, then re-seed built-ins so the app stays
+		// usable without a restart (builtins are the user's floor: Terminal,
+		// OpenCode, etc. — EnsureBuiltins only adds missing ones).
+		if d.Harnesses != nil {
+			hs, herr := d.Harnesses.List()
+			if herr != nil {
+				err = herr
+				writeInternalErr(w, "list harnesses for wipe", err)
+				return
+			}
+			for _, h := range hs {
+				if rerr := d.Harnesses.Remove(h.ID); rerr != nil {
+					slog.Warn("wipe: harness remove failed", "id", h.ID, "err", rerr)
+				}
+			}
+			if _, serr := d.Harnesses.EnsureBuiltins(); serr != nil {
+				slog.Warn("wipe: reseed builtins failed", "err", serr)
+			}
+		}
+		// 3. Reset state.json: clear projects, keep user + server key.
+		// (Harnesses were already stripped above and re-seeded; the explicit
+		// clear is a safety net for any custom harnesses that raced in.)
+		err = d.State.Mutate(func(doc *state.Document) error {
+			doc.Projects = map[string]state.Project{}
+			return nil
+		})
+		if err != nil {
+			writeInternalErr(w, "reset state", err)
+			return
+		}
+		obs.Info(r.Context(), obs.ProjectDelete, "all data wiped", map[string]any{"projects": len(entries)})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "projectsDeleted": len(entries)})
 	}
 }
 

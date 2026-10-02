@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './test'
 import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp, fetchEvents } from './helpers'
 
 test.describe.configure({ mode: 'serial' })

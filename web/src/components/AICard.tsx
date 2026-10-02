@@ -10,10 +10,6 @@ import type { AIModel } from '@/lib/types'
 // AICard: the shared model list. Rows show an editable label plus test
 // and delete inline; deletes confirm with the blast radius. Keys never
 // render.
-//
-// Save is gated on valid fields, not on tested: the server probes before
-// writing, so one Save costs one provider call. Test is an optional
-// pre-check, not a second toll.
 export function AICard({ onChanged }: { onChanged?: () => void }) {
   const [models, setModels] = useState<AIModel[]>([])
   const [label, setLabel] = useState('')
@@ -41,6 +37,8 @@ export function AICard({ onChanged }: { onChanged?: () => void }) {
   }
 
   const body = () => JSON.stringify({ label: label.trim(), baseURL: baseURL.trim(), apiKey, model: model.trim() })
+  // Save is gated on a prior Test pass: the user must confirm the connection
+  // before the key is persisted, so a misconfigured model never silently lands.
   const valid = baseURL.trim() !== '' && apiKey !== '' && model.trim() !== ''
 
   async function test() {
@@ -166,7 +164,7 @@ export function AICard({ onChanged }: { onChanged?: () => void }) {
         <Button variant="outline" className="min-h-[44px] flex-1" disabled={busy !== null || !valid} onClick={() => void test()} data-testid="ai-test">
           <FlaskConical className="size-4" />{busy === 'test' ? 'Testing...' : 'Test'}
         </Button>
-        <Button className="min-h-[44px] flex-1" disabled={busy !== null || !valid} onClick={() => void save()} data-testid="ai-save">
+        <Button className="min-h-[44px] flex-1" disabled={busy !== null || !valid || !tested} onClick={() => void save()} data-testid="ai-save">
           {busy === 'save' ? 'Saving...' : 'Save'}
         </Button>
       </div>

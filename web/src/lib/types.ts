@@ -13,7 +13,6 @@ export type ButlerTurnResult = { threadId: string; threadTitle: string; turnId: 
 
 // Shared API shapes.
 export type Project = { id: string; harnesses?: string[] }
-export type SSHKey = { fingerprint: string; publicKey: string; label: string }
 export type Harness = { id: string; name: string; command: string; install?: string; installed?: boolean }
 export type ExecResult = { project: string; status: 'ok' | 'skipped' | 'error'; detail?: string }
 export type GitFileStatus = {
@@ -46,7 +45,6 @@ export type GitDiffResponse = {
 
 export type AIConfigStatus = { model: string; configured: boolean }
 export type AIModel = { id: string; label: string; baseURL: string; model: string; hasKey: boolean }
-export type GitIdentity = { id: string; label: string; name: string; email: string; hasToken: boolean }
 export type CodemapRef = { path: string; startLine: number; endLine: number; snippet: string; function?: string }
 export type CodemapSection = { title: string; summary: string; refs: CodemapRef[] }
 export type CodemapTurn = { turnId: string; sha: string; prompt: string; sections: CodemapSection[] | null; steps?: AgentStep[] | null; time?: string; error?: string | null }

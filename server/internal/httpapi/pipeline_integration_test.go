@@ -35,7 +35,7 @@ func TestProjectPipelineLifecycle(t *testing.T) {
 	// The helper registers a scope=all cleanup; intermediate scoped
 	// deletes below are part of the test, the trailing cleanup delete
 	// turns into a 404 which the helper accepts.
-	id, body := createTestProject(t, h, cookie, url, "main", "")
+	id, body := createTestProject(t, h, cookie, url, "main")
 	wantPayload := map[string]any{"id": id, "repo": url, "branch": "main"}
 	if !reflect.DeepEqual(body, wantPayload) {
 		t.Fatalf("create payload = %v, want %v", body, wantPayload)
@@ -110,7 +110,7 @@ func TestCreateValidationLive(t *testing.T) {
 
 	// a created project has the essentials and shows up in the list by id
 	url := fixtureRepo(t).URL
-	id, _ := createTestProject(t, h, cookie, url, "", "")
+	id, _ := createTestProject(t, h, cookie, url, "")
 
 	ctx := context.Background()
 	waitForStatus(t, h, cookie, id, "running")
@@ -140,7 +140,7 @@ func TestProjectBranchPinning(t *testing.T) {
 	cookie := login(t, h, pinOut)
 	url := fixtureRepo(t).URL
 
-	id, _ := createTestProject(t, h, cookie, url, "dev", "")
+	id, _ := createTestProject(t, h, cookie, url, "dev")
 
 	res, err := dkr.Exec(context.Background(), project.ContainerName(id),
 		[]string{"git", "-C", "/workspace/repo", "rev-parse", "--abbrev-ref", "HEAD"}, false)
@@ -175,7 +175,7 @@ func TestCloneFailureLiveKeepsProjectAndLogsError(t *testing.T) {
 	id := entries[0].ID
 	deleteTestProject(t, h, cookie, id)
 	code, body = doJSON(t, h, cookie, http.MethodGet, projectPath(id, ""), "")
-	wantStatus := map[string]any{"id": id, "repo": badURL, "branch": "", "cloneMethod": "http", "status": "running", "shortcuts": nil}
+	wantStatus := map[string]any{"id": id, "repo": badURL, "branch": "", "status": "running", "shortcuts": nil}
 	if code != http.StatusOK || !reflect.DeepEqual(body, wantStatus) {
 		t.Fatalf("post-failure status: got %d %v, want %v", code, body, wantStatus)
 	}
@@ -222,8 +222,8 @@ func TestProjectIsolationAndRestartSurvival(t *testing.T) {
 
 	// one repo is one project: two distinct fixture repos, both tracked
 	// by the helper and surviving any single cleanup racing the next create.
-	idA, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
-	idB, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
+	idA, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "")
+	idB, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "")
 	if idA == idB {
 		t.Fatal("ids collided")
 	}

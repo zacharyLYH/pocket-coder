@@ -5,8 +5,9 @@ import type { Project } from '@/lib/types'
 import { mockFetch } from '@/test/mockFetch'
 
 // Fast unit tests for the project list card. The backend is mocked at the
-// fetch level; these edge cases (failed create keeps values, clone-via hint)
-// are exactly what slow e2e tests are bad at pinning.
+// fetch level; these edge cases (failed create keeps values, blank URL
+// gating) are exactly what slow e2e tests are bad at pinning. One paste
+// field, no method picker: the server normalizes every URL to SSH.
 
 describe('ProjectsCard', () => {
   const PROJECTS: Project[] = [{ id: 'x/alpha' }]
@@ -17,7 +18,6 @@ describe('ProjectsCard', () => {
       loading: false,
       error: null,
       refresh: vi.fn(async () => {}),
-      sshKeyCount: 0,
       navigate: vi.fn(),
       ...over,
     }
@@ -54,48 +54,30 @@ describe('ProjectsCard', () => {
     expect(props.refresh).not.toHaveBeenCalled()
   })
 
-  it('create success clears the form and refreshes; delete confirms first', async () => {
+  it('create success clears the form and refreshes', async () => {
     const fetchMock = mockFetch((url, init) => {
       if (url === '/api/projects' && init?.method === 'POST') {
-        const body = JSON.parse(String(init.body))
+        const body = JSON.parse(String(init.body)) as { repoUrl: string }
+        // the URL goes up as pasted — the server normalizes to SSH
         expect(body.repoUrl).toBe('https://github.com/x/y.git')
-        expect(body.cloneMethod).toBe('ssh')
         return { status: 201, body: { id: 'x/y' } }
       }
-      if (url === '/api/projects/x%2Falpha' && init?.method === 'DELETE') return { status: 200, body: { ok: true } }
       return undefined
     })
     vi.stubGlobal('fetch', fetchMock)
-    const { props } = renderCard({ sshKeyCount: 2 })
+    const { props } = renderCard()
 
     fireEvent.change(screen.getByPlaceholderText(/clone URL/i), { target: { value: 'https://github.com/x/y.git' } })
-    fireEvent.click(screen.getByRole('radio', { name: 'SSH' }))
     fireEvent.click(screen.getByRole('button', { name: 'Clone project' }))
     await waitFor(() => expect(props.refresh).toHaveBeenCalled())
     expect(screen.getByPlaceholderText(/clone URL/i)).toHaveValue('')
-
     expect(screen.getByTestId('project-menu-x/alpha')).toBeInTheDocument()
-    // delete is behind dropdown — tested in e2e; unit just checks trigger exists
-  })
-
-  it('clone-via hint counts registered SSH keys', () => {
-    renderCard({ sshKeyCount: 2 })
-    fireEvent.change(screen.getByPlaceholderText(/clone URL/i), { target: { value: 'git@github.com:x/y.git' } })
-    fireEvent.click(screen.getByRole('radio', { name: 'SSH' }))
-    expect(screen.getByText('2 key(s) registered')).toBeInTheDocument()
   })
 
   it('disables clone while the repo URL is blank', () => {
     renderCard()
     expect(screen.getByRole('button', { name: 'Clone project' })).toBeDisabled()
-    fireEvent.change(screen.getByPlaceholderText(/clone URL/i), { target: { value: 'https://github.com/x/y.git' } })
+    fireEvent.change(screen.getByPlaceholderText(/clone URL/i), { target: { value: 'git@github.com:x/y.git' } })
     expect(screen.getByRole('button', { name: 'Clone project' })).not.toBeDisabled()
-  })
-
-  it('disables create with a hint while git is unconfigured', () => {
-    renderCard({ gitConfigured: false })
-    fireEvent.change(screen.getByPlaceholderText(/clone URL/i), { target: { value: 'https://github.com/x/y.git' } })
-    expect(screen.getByRole('button', { name: 'Clone project' })).toBeDisabled()
-    expect(screen.getByTestId('git-setup-hint')).toBeInTheDocument()
   })
 })

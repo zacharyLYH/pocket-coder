@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './test'
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createPrecreatedProject, execInProject, waitForInspectContaining, statusToken, tokenHeaders } from './preview.helpers'
 

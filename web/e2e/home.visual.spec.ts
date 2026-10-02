@@ -1,11 +1,12 @@
-import { expect, test } from '@playwright/test'
-import { FAKE_HARNESS_NAME, createProjectViaUI, deleteAllProjects, deleteAllSSHKeys, e2eRepo, e2eRepoID, ensureFakeHarness, resetHarnessRegistry, engineUp } from './helpers'
+import { expect, test } from './test'
+import { FAKE_HARNESS_NAME, createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, ensureFakeHarness, resetHarnessRegistry, engineUp } from './helpers'
 
 // Visual + behavioral tests for the home screen against the real backend:
-// login form, project list, SSH keys card, clone method toggle.
+// login form, the ssh gate in front of the projects, the clone form, and
+// the server-key card.
 //
 // The logged-in shots need a clean, known backend state, so each test wipes
-// projects/keys first and cleans up whatever it created — order-proof within
+// projects first and cleans up whatever it created — order-proof within
 // a run (the data dir itself is reset per run by playwright.config.ts).
 
 // The login form tests need the logged-out screen: opt out of the shared
@@ -35,72 +36,82 @@ test.describe('login form phone', () => {
 test.describe('home screen', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
-  test('home screen with a project and SSH keys renders', async ({ page }) => {
+  test('a failing ssh probe gates the projects behind the setup card', async ({ page }) => {
+    // POST /api/ssh/test is the one call Home makes before showing
+    // projects. Fail it and the page hands over the key card plus the
+    // GitHub keys link instead of the project list.
+    await page.route('**/api/ssh/test', (route) =>
+      route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'GitHub rejected the key' }) }))
+    await page.goto('/')
+
+    await expect(page.getByTestId('ssh-gate')).toBeVisible()
+    await expect(page.getByTestId('github-keys-link')).toHaveAttribute('href', 'https://github.com/settings/keys')
+    await expect(page.getByTestId('git-public-key')).toContainText('ssh-')
+    // nothing project-shaped renders behind the gate
+    await expect(page.getByText('No projects yet.')).toHaveCount(0)
+    await expect(page.getByText('Run a command')).toHaveCount(0)
+    // the key text and fingerprint are generated per run — mask them
+    await expect(page).toHaveScreenshot('home-ssh-gate.png', {
+      fullPage: true,
+      mask: [page.getByTestId('git-public-key'), page.getByTestId('git-fingerprint')],
+    })
+  })
+
+  test('home screen with a project renders', async ({ page }) => {
     test.skip(!(await engineUp(page.request)), 'Docker engine unavailable')
     await deleteAllProjects(page.request)
-    await deleteAllSSHKeys(page.request)
     await resetHarnessRegistry(page.request)
     try {
-      // one real project (a fixture-repo clone, id owner/repo) and two keys
       await page.goto('/')
       await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
-      await page.request.post('/api/ssh-keys', {
-        data: { publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIWorkLaptopKey', label: 'work-laptop' },
-      })
-      await page.request.post('/api/ssh-keys', {
-        data: { publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHomeMachineKey', label: 'home' },
-      })
       await page.reload()
 
       await expect(page.getByTestId(`project-card-${e2eRepoID(1)}`)).toBeVisible()
-      // key labels live in the SSH keys dialog; the row reports the count
-      await expect(page.getByTestId('setup-ssh')).toContainText('2 keys')
-      await page.getByTestId('setup-ssh').click()
-      await expect(page.getByText('work-laptop')).toBeVisible()
-      await expect(page.getByText('home')).toBeVisible()
-      await page.keyboard.press('Escape')
-      await expect(page).toHaveScreenshot('home-with-projects-and-keys.png', { fullPage: true })
+      // one Git row for the server deploy key; no per-user key registry
+      await expect(page.getByTestId('setup-git')).toBeVisible()
+      await expect(page.getByTestId('setup-ssh')).toHaveCount(0)
+      await expect(page).toHaveScreenshot('home-with-project.png', { fullPage: true })
     } finally {
       await deleteAllProjects(page.request)
-      await deleteAllSSHKeys(page.request)
     }
   })
 
-  test('home screen with no projects and no SSH keys', async ({ page }) => {
+  test('home screen with no projects', async ({ page }) => {
     await deleteAllProjects(page.request)
-    await deleteAllSSHKeys(page.request)
     await resetHarnessRegistry(page.request)
     await page.goto('/')
 
     await expect(page.getByText('No projects yet.')).toBeVisible()
-    // SSH keys are optional: the row says so instead of warning
-    await expect(page.getByTestId('setup-ssh')).toContainText('optional')
+    // two connection rows: Git (server key fingerprint) and AI
+    await expect(page.getByTestId('setup-git')).toBeVisible()
+    await expect(page.getByTestId('setup-ai')).toBeVisible()
+    await expect(page.getByTestId('setup-ssh')).toHaveCount(0)
     await expect(page).toHaveScreenshot('home-empty.png', { fullPage: true })
   })
 
-  test('clone method toggle is part of the required clone form', async ({ page }) => {
+  test('clone form takes either URL shape with no method picker', async ({ page }) => {
+    await deleteAllProjects(page.request)
     await resetHarnessRegistry(page.request)
     await page.goto('/')
 
-    // the clone URL is required, so the clone-method radios are always shown
-    await expect(page.getByRole('radio', { name: 'HTTPS' })).toBeVisible()
-    await expect(page.getByRole('radio', { name: 'SSH' })).toBeVisible()
-
-    // type a clone URL
     await page.getByPlaceholder(/clone URL/i).fill('https://github.com/x/hello.git')
-    await expect(page.getByRole('radio', { name: 'HTTPS' })).toBeChecked()
-    await expect(page).toHaveScreenshot('home-clone-toggle-visible.png', { fullPage: true })
+    // no HTTPS/SSH radios: one field, the server normalizes every paste
+    await expect(page.getByRole('radio')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Clone project' })).toBeEnabled()
+    await expect(page).toHaveScreenshot('home-clone-form.png', { fullPage: true })
   })
 
-  test('SSH toggle shows key status', async ({ page }) => {
-    await deleteAllSSHKeys(page.request)
-    await resetHarnessRegistry(page.request)
+  test('Git dialog shows the server key with test and regenerate', async ({ page }) => {
     await page.goto('/')
-
-    await page.getByPlaceholder(/clone URL/i).fill('git@github.com:x/hello.git')
-    await page.getByRole('radio', { name: 'SSH' }).click()
-    await expect(page.getByText('No SSH keys')).toBeVisible()
-    await expect(page).toHaveScreenshot('home-ssh-no-keys.png')
+    await page.getByTestId('setup-git').click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByTestId('git-public-key')).toContainText('ssh-')
+    await expect(dialog.getByTestId('git-test')).toBeEnabled()
+    await expect(dialog.getByTestId('git-regen')).toBeEnabled()
+    // the keypair is generated per run — mask it and the fingerprint
+    await expect(dialog).toHaveScreenshot('git-dialog.png', {
+      mask: [dialog.getByTestId('git-public-key'), dialog.getByTestId('git-fingerprint')],
+    })
   })
 
   test('harness suggestions render and install explicitly', async ({ page }) => {
@@ -166,4 +177,3 @@ test.describe('home screen', () => {
     }
   })
 })
-

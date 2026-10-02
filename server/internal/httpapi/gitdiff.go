@@ -79,7 +79,7 @@ func gitRepoDir(d Deps, w http.ResponseWriter, r *http.Request) (container, dir 
 	}
 	// Rotation: EnsureContainer early-returns while the container lives,
 	// so re-inject here on marker mismatch. Warn-only, never blocks git.
-	_ = d.Projects.EnsureGitConfig(r.Context(), container)
+	_ = d.Projects.EnsureGitSSH(r.Context(), container)
 	return container, dir, true
 }
 

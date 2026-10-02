@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test'
 
-import { API_PORT, AUTH_STATE, COMPOSE_PROJECT, DATA_DIR, RUN_DIR, SEED_FILE, SERVER_LOG, WEB_PORT } from './e2e/env'
+import { API_PORT, AUTH_STATE, COMPOSE_PROJECT, DATA_DIR, RUN_DIR, SEED_KIND, SERVER_LOG, WEB_PORT } from './e2e/env'
 
 // One real backend for every test. Each Playwright process boots its own Go
 // server + Vite dev server as webServers (needs the Go toolchain + a running
@@ -13,8 +13,8 @@ import { API_PORT, AUTH_STATE, COMPOSE_PROJECT, DATA_DIR, RUN_DIR, SEED_FILE, SE
 //      projects/keys/events from a previous run can never leak into this
 //      one's screenshots.
 //   2. Per test: specs that create state delete it again in `finally`
-//      (deleteAllProjects / deleteAllSSHKeys in e2e/helpers.ts), so test
-//      order within a run does not matter.
+//      (deleteAllProjects in e2e/helpers.ts), so test order within a run
+//      does not matter.
 //
 // Login happens once per process in the `login` project (auth.setup.ts);
 // every other test reuses the saved session via storageState. Tests that
@@ -28,7 +28,7 @@ import { API_PORT, AUTH_STATE, COMPOSE_PROJECT, DATA_DIR, RUN_DIR, SEED_FILE, SE
 //
 // The stack is self-contained on dedicated ports (8081 backend, 5174 web by
 // default): it must NEVER run against the dev processes on 8080/5173 — the
-// tests wipe projects and keys, which would destroy real data.
+// tests wipe projects, which would destroy real data.
 // reuseExistingServer is false for both servers for the same reason.
 //
   // Leftover projects from a crashed run are NOT auto-removed (a name-based
@@ -78,7 +78,8 @@ export default defineConfig({
     },
     {
       name: 'app',
-      testIgnore: /auth\.setup\.ts/,
+      // *.test.ts files belong to vitest (vite.config.ts), not Playwright.
+      testIgnore: [/auth\.setup\.ts/, /\.test\.ts$/],
       dependencies: ['login'],
     },
   ],
@@ -92,10 +93,12 @@ export default defineConfig({
         // it first; idempotent when it already does
         `docker network create pcoder-net 2>/dev/null || true; ` +
         `rm -rf ${DATA_DIR} ${SERVER_LOG} && mkdir -p ${DATA_DIR} && ` +
-        // E2E_SEED names a fixture copied in as state.json before boot, so a
+        // E2E_SEED names a seeder kind (e2e/stateSeed.ts derives it from
+        // test/state.mock.json) written as state.json before boot, so a
         // run can start from a pre-existing state (bootstrap.spec needs a
-        // project whose Docker state is gone). Default: fresh user, no projects.
-        `cp e2e/${SEED_FILE} ${DATA_DIR}/state.json && ` +
+        // project whose Docker state is gone). Default: fresh user + server
+        // key, no projects.
+        `node e2e/stateSeed.ts ${SEED_KIND} > ${DATA_DIR}/state.json && ` +
         `env PCODER_E2E_API_PORT=${API_PORT} PCODER_E2E_DATA_DIR=$PWD/${DATA_DIR} ` +
         `docker compose -f ../docker-compose.yml -f ../docker-compose.e2e.yml -p ${COMPOSE_PROJECT} up --build server > ${SERVER_LOG} 2>&1'`,
       url: `http://localhost:${API_PORT}/health`,

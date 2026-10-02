@@ -16,7 +16,7 @@ import (
 )
 
 // TestStateSurvivesInterleavedAPITraffic is the state-file drift guard: a
-// long, deliberately confusing sequence of interleaved API calls — keys,
+// long, deliberately confusing sequence of interleaved API calls —
 // harnesses, projects, installs, batch commands, stop/start/restart, every
 // delete scope, rejected inputs, and a failed clone — with Docker fully
 // mocked (the engine cannot change desired state). Afterwards the on-disk
@@ -77,7 +77,9 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 	// catch-all registered first would shadow the specific one)
 	md.EXPECT().Exec(mock.Anything, mock.Anything, mock.MatchedBy(func(cmd []string) bool {
 		for _, a := range cmd {
-			if strings.Contains(a, "github.com/x/fail.git") {
+			// match the repo in any URL shape: the clone arg is the
+			// normalized scp form (git@github.com:x/fail.git) now
+			if strings.Contains(a, "x/fail.git") {
 				return false
 			}
 		}
@@ -86,27 +88,11 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "ok"}, nil).Maybe()
 	// one project's clone fails — the create errors but the record stays
 	md.EXPECT().Exec(mock.Anything, mock.Anything, mock.MatchedBy(func(cmd []string) bool {
-		return len(cmd) >= 3 && cmd[0] == "git" && cmd[1] == "clone" && cmd[len(cmd)-2] == "https://github.com/x/fail.git"
+		return len(cmd) >= 3 && cmd[0] == "git" && cmd[1] == "clone" && cmd[len(cmd)-2] == "git@github.com:x/fail.git"
 	}), mock.Anything).
 		Return(docker.ExecResult{ExitCode: 128, Output: "fatal: repository not found"}, nil).Maybe()
 
-	// ─── 1. ssh keys: add, duplicate-reject, add another ────────────────
-	rec := authedPost(t, h, cookie, "/api/ssh-keys", `{"publicKey":"ssh-ed25519 AAAA-key-one","label":"laptop"}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("add key1: %d %q", rec.Code, rec.Body)
-	}
-	if rec := authedPost(t, h, cookie, "/api/ssh-keys", `{"publicKey":"ssh-ed25519 AAAA-key-one"}`); rec.Code != http.StatusBadRequest {
-		t.Fatalf("duplicate key: %d, want 400", rec.Code)
-	}
-	if rec := authedPost(t, h, cookie, "/api/ssh-keys", `{"publicKey":"ssh-ed25519 AAAA-key-two"}`); rec.Code != http.StatusCreated {
-		t.Fatalf("add key2: %d %q", rec.Code, rec.Body)
-	}
-	statetest.AssertSection(t, st.Path(), "sshKeys", []any{
-		map[string]any{"fingerprint": "sha256-Bcu-3Z2LLPbarMquGC8r4w", "publicKey": "ssh-ed25519 AAAA-key-one", "label": "laptop", "email": "me@example.com"},
-		map[string]any{"fingerprint": "sha256-_r_26MQJIPO1QjdZEfShlg", "publicKey": "ssh-ed25519 AAAA-key-two", "email": "me@example.com"},
-	})
-
-	// ─── 2. harnesses: add two, duplicate-reject ─────────────────────────
+	// ─── 1. harnesses: add two, duplicate-reject ─────────────────────────
 	if rec := authedPost(t, h, cookie, "/api/harnesses", `{"name":"My Agent","command":"my-agent","install":"npm i -g my-agent"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("add my-agent: %d %q", rec.Code, rec.Body)
 	}
@@ -122,7 +108,7 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 		"cfg-agent": map[string]any{"id": "cfg-agent", "name": "Cfg Agent", "command": "cfg-agent", "install": "pip install cfg-agent"},
 	})
 
-	// ─── 3. projects: http, blank, ssh, branch-pinned, failed clone ─────
+	// ─── 2. projects: https rewrites to ssh, branch-pinned, failed clone ───
 	create := func(body string) (int, string) {
 		rec := authedPost(t, h, cookie, "/api/projects", body)
 		var id string
@@ -139,7 +125,7 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 	if codeB != http.StatusCreated || idB != "x/world" {
 		t.Fatalf("create B: %d %q", codeB, idB)
 	}
-	codeC, idC := create(`{"repoUrl":"git@github.com:me/private.git","cloneMethod":"ssh"}`)
+	codeC, idC := create(`{"repoUrl":"git@github.com:me/private.git"}`)
 	if codeC != http.StatusCreated || idC != "me/private" {
 		t.Fatalf("create C: %d %q", codeC, idC)
 	}
@@ -158,19 +144,19 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 	if codeE == http.StatusCreated {
 		t.Fatalf("failed clone returned %d, want an error status", codeE)
 	}
-	idE := projectIDByRepo(t, d, "https://github.com/x/fail.git")
+	idE := projectIDByRepo(t, d, "git@github.com:x/fail.git")
 	if idE != "x/fail" {
 		t.Fatalf("failed clone id = %q, want x/fail", idE)
 	}
 	statetest.AssertSection(t, st.Path(), "projects", map[string]any{
-		idA: map[string]any{"repo": "https://github.com/x/hello.git", "cloneMethod": "http"},
-		idB: map[string]any{"repo": "https://github.com/x/world.git", "cloneMethod": "http"},
-		idC: map[string]any{"repo": "git@github.com:me/private.git", "cloneMethod": "ssh"},
-		idD: map[string]any{"repo": "https://github.com/y/hello.git", "branch": "dev", "cloneMethod": "http"},
-		idE: map[string]any{"repo": "https://github.com/x/fail.git", "cloneMethod": "http"},
+		idA: map[string]any{"repo": "git@github.com:x/hello.git"},
+		idB: map[string]any{"repo": "git@github.com:x/world.git"},
+		idC: map[string]any{"repo": "git@github.com:me/private.git"},
+		idD: map[string]any{"repo": "git@github.com:y/hello.git", "branch": "dev"},
+		idE: map[string]any{"repo": "git@github.com:x/fail.git"},
 	})
 
-	// ─── 4. interleaved operations ───────────────────────────────────────
+	// ─── 3. interleaved operations ───────────────────────────────────────
 	// installs (explicit, per project)
 	if rec := authedPost(t, h, cookie, "/api/harnesses/my-agent/install", `{"projectIds":["`+idA+`","`+idC+`"]}`); rec.Code != http.StatusOK {
 		t.Fatalf("install: %d %q", rec.Code, rec.Body)
@@ -190,10 +176,6 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 	if rec := authedRequest(t, h, cookie, http.MethodPost, "/api/projects/"+url.PathEscape(idB)+"/start"); rec.Code != http.StatusOK {
 		t.Fatalf("start: %d %q", rec.Code, rec.Body)
 	}
-	// key1 is deleted after project C already consumed the key set
-	if rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/ssh-keys/sha256-Bcu-3Z2LLPbarMquGC8r4w"); rec.Code != http.StatusOK {
-		t.Fatalf("delete key1: %d %q", rec.Code, rec.Body)
-	}
 	// the harness that was installed into projects is removed from the
 	// registry — installs are desired state (recorded in the project), the
 	// registry entry is a separate desired state; deleting the harness leaves
@@ -201,18 +183,15 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 	if rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/harnesses/my-agent"); rec.Code != http.StatusOK {
 		t.Fatalf("delete harness: %d %q", rec.Code, rec.Body)
 	}
-	// rejected calls must not mutate: unknown project op, empty exec, bad key
+	// rejected calls must not mutate: unknown project op, empty exec
 	if rec := authedRequest(t, h, cookie, http.MethodPost, "/api/projects/ghost1234/start"); rec.Code != http.StatusNotFound {
 		t.Fatalf("ghost op: %d, want 404", rec.Code)
 	}
 	if rec := authedPost(t, h, cookie, "/api/projects/exec", `{"projectIds":["`+idA+`"]}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("exec without command: %d, want 400", rec.Code)
 	}
-	if rec := authedPost(t, h, cookie, "/api/ssh-keys", `{"publicKey":"nope"}`); rec.Code != http.StatusBadRequest {
-		t.Fatalf("bad key: %d, want 400", rec.Code)
-	}
 
-	// ─── 5. deletes across every scope ───────────────────────────────────
+	// ─── 4. deletes across every scope ───────────────────────────────────
 	// scope=all: record + container + volumes
 	if rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/"+url.PathEscape(idB)+"?scope=all"); rec.Code != http.StatusOK {
 		t.Fatalf("delete B: %d %q", rec.Code, rec.Body)
@@ -236,22 +215,18 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 
 	// ─── final: the file is EXACTLY the sum of every successful call ────
 	statetest.AssertEqual(t, st.Path(), map[string]any{
-		"user":           map[string]any{"email": "me@example.com"},
-		"git_identities": []any{map[string]any{"id": "default", "label": "Default", "name": "Test", "email": "test@example.com", "token": "test-token"}},
+		"user": map[string]any{"email": "me@example.com"},
 		"harnesses": map[string]any{
 			"fake":      wantFakeHarnessEntry,
 			"cfg-agent": map[string]any{"id": "cfg-agent", "name": "Cfg Agent", "command": "cfg-agent", "install": "pip install cfg-agent"},
 		},
-		"sshKeys": []any{
-			map[string]any{"fingerprint": "sha256-_r_26MQJIPO1QjdZEfShlg", "publicKey": "ssh-ed25519 AAAA-key-two", "email": "me@example.com"},
-		},
 		"projects": map[string]any{
-			idA: map[string]any{"repo": "https://github.com/x/hello.git", "cloneMethod": "http", "harnesses": []any{"my-agent"}, "sessions": map[string]any{"fake-1": map[string]any{"harness": "fake"}}},
+			idA: map[string]any{"repo": "git@github.com:x/hello.git", "harnesses": []any{"my-agent"}, "sessions": map[string]any{"fake-1": map[string]any{"harness": "fake"}}},
 			// scope=repo removed the container, the record survives (install record stays even though harness was deleted)
-			idC: map[string]any{"repo": "git@github.com:me/private.git", "cloneMethod": "ssh", "harnesses": []any{"my-agent"}},
+			idC: map[string]any{"repo": "git@github.com:me/private.git", "harnesses": []any{"my-agent"}},
 			// the failed-clone project survives too (retryable project)
-			idE: map[string]any{"repo": "https://github.com/x/fail.git", "cloneMethod": "http"},
-			idF: map[string]any{"repo": "https://github.com/x/final.git", "cloneMethod": "http"},
+			idE: map[string]any{"repo": "git@github.com:x/fail.git"},
+			idF: map[string]any{"repo": "git@github.com:x/final.git"},
 		},
 	})
 }

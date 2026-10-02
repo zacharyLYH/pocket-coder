@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, type Page, test } from '@playwright/test'
+import { expect, type APIRequestContext, type Page, test } from './test'
 import { FAKE_HARNESS_ID, FAKE_HARNESS_NAME, createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp, ensureFakeHarness, projectURL } from './helpers'
 
 // The project-menu injection flow, end to end against the real backend:

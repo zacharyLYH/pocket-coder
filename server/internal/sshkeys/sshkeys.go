@@ -1,32 +1,27 @@
-// Package sshkeys stores registered SSH public keys in the central state
-// file (internal/state). Users paste their public key once; the platform
-// injects it into every project so git SSH clones work.
+// Package sshkeys owns the server's git deploy keypair in the central
+// state file (internal/state). Generated once on first boot via
+// ssh-keygen (ed25519, no passphrase — non-interactive container use
+// requires it); the public half goes to GitHub, the private half is
+// injected into project containers. Regeneration replaces the pair, so
+// the old public half must be removed everywhere it was installed.
 package sshkeys
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"sort"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"pcoder/internal/state"
 )
 
-var (
-	// ErrInvalidKey is returned for a public key that is empty or does not
-	// look like an SSH public key.
-	ErrInvalidKey = errors.New("not a valid SSH public key (expected ssh-ed25519, ssh-rsa, or ecdsa-sha2-* prefix)")
-	// ErrDuplicateKey is returned when the exact key content is already
-	// registered.
-	ErrDuplicateKey = errors.New("key already registered")
-)
+// Key is the stored server deploy keypair.
+type Key = state.ServerSSHKey
 
-// Key is a registered SSH public key.
-type Key = state.SSHKey
-
-// Store manages SSH public keys in the central state file.
+// Store manages the server keypair in the central state file.
 type Store struct {
 	st *state.Store
 }
@@ -36,131 +31,101 @@ func New(st *state.Store) *Store {
 	return &Store{st: st}
 }
 
-// List returns every key for email, sorted by fingerprint.
-func (s *Store) List(email string) ([]Key, error) {
-	out := []Key{}
-	s.st.View(func(doc *state.Document) {
-		for _, k := range doc.SSHKeys {
-			if k.Email == email {
-				out = append(out, k)
-			}
-		}
-	})
-	sort.Slice(out, func(i, j int) bool { return out[i].Fingerprint < out[j].Fingerprint })
-	return out, nil
-}
+// ErrNoKeygen is returned when ssh-keygen is unavailable.
+var ErrNoKeygen = errors.New("ssh-keygen not found — install openssh-client")
 
-// Add registers a public key for email and returns the derived fingerprint.
-// The key content is validated minimally (must look like an SSH public key).
-func (s *Store) Add(email, publicKey, label string) (string, error) {
-	publicKey = strings.TrimSpace(publicKey)
-	if publicKey == "" {
-		return "", fmt.Errorf("%w: empty", ErrInvalidKey)
-	}
-	if !looksLikeSSHPubKey(publicKey) {
-		return "", ErrInvalidKey
-	}
-	fp := fingerprint(publicKey)
-	err := s.st.Mutate(func(doc *state.Document) error {
-		for _, k := range doc.SSHKeys {
-			if k.Fingerprint == fp && k.Email == email {
-				return ErrDuplicateKey
-			}
-		}
-		doc.SSHKeys = append(doc.SSHKeys, Key{
-			Fingerprint: fp,
-			PublicKey:   publicKey,
-			Label:       label,
-			Email:       email,
-		})
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	return fp, nil
-}
-
-// Delete removes a key by fingerprint. Idempotent: deleting a missing key
-// is not an error.
-func (s *Store) Delete(email, fingerprint string) error {
-	return s.st.Mutate(func(doc *state.Document) error {
-		kept := doc.SSHKeys[:0]
-		for _, k := range doc.SSHKeys {
-			if k.Email == email && k.Fingerprint == fingerprint {
-				continue
-			}
-			kept = append(kept, k)
-		}
-		doc.SSHKeys = kept
-		return nil
-	})
-}
-
-// Update changes a key label. Blind by design: handlers 404 unknown
-// fingerprints via Exists first, so this only ever touches a live row.
-func (s *Store) Update(email, fingerprint, label string) error {
-	return s.st.Mutate(func(doc *state.Document) error {
-		for i, k := range doc.SSHKeys {
-			if k.Email == email && k.Fingerprint == fingerprint {
-				doc.SSHKeys[i].Label = label
-			}
-		}
-		return nil
-	})
-}
-
-// Exists reports whether the fingerprint is registered for email, so
-// handlers can 404 honest misses instead of silently succeeding.
-func (s *Store) Exists(email, fingerprint string) bool {
+// Get returns the stored keypair, or false when none exists yet.
+func (s *Store) Get() (Key, bool) {
+	var out Key
 	var ok bool
 	s.st.View(func(doc *state.Document) {
-		for _, k := range doc.SSHKeys {
-			if k.Email == email && k.Fingerprint == fingerprint {
-				ok = true
-			}
+		if doc.ServerKey != nil {
+			out = *doc.ServerKey
+			ok = true
 		}
 	})
-	return ok
+	return out, ok
 }
 
-// Check validates a key without saving, returning its fingerprint.
-func Check(publicKey string) (string, error) {
-	publicKey = strings.TrimSpace(publicKey)
-	if publicKey == "" || !looksLikeSSHPubKey(publicKey) {
-		return "", ErrInvalidKey
+// EnsureKeypair returns the stored keypair, generating and persisting one
+// on first boot. Idempotent by construction: existing keys always win, so
+// setup re-runs and restarts never rotate the key out from under GitHub.
+func (s *Store) EnsureKeypair() (Key, error) {
+	if k, ok := s.Get(); ok {
+		return k, nil
 	}
-	return fingerprint(publicKey), nil
+	return s.Regenerate()
 }
 
-// AllAuthorizedKeys returns every registered key regardless of owner — the
-// injection set for containers (single-user deployment: one key set).
-func (s *Store) AllAuthorizedKeys() ([]byte, error) {
-	var b strings.Builder
+// Regenerate replaces the keypair and returns the new one. Callers must
+// surface the blast radius: the old public half must be removed everywhere
+// it was installed (GitHub, DBs, other forges) or clones and pushes fail.
+func (s *Store) Regenerate() (Key, error) {
+	// The comment rides on the public key so it is recognizable in GitHub's
+	// key list (e.g. "deploy key — me@example.com"). Fall back to "pcoder"
+	// when state has not been seeded with an email yet.
+	var email string
 	s.st.View(func(doc *state.Document) {
-		for _, k := range doc.SSHKeys {
-			b.WriteString(k.PublicKey)
-			b.WriteByte('\n')
-		}
+		email = doc.User.Email
 	})
-	return []byte(b.String()), nil
-}
-
-// looksLikeSSHPubKey does a minimal prefix check to reject garbage.
-func looksLikeSSHPubKey(key string) bool {
-	for _, prefix := range []string{"ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-"} {
-		if strings.HasPrefix(key, prefix) {
-			return true
-		}
+	comment := email
+	if comment == "" {
+		comment = "pcoder"
 	}
-	return false
+	priv, pub, fp, err := generate(comment)
+	if err != nil {
+		return Key{}, err
+	}
+	k := Key{
+		PrivateKey:  priv,
+		PublicKey:   pub,
+		Fingerprint: fp,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := s.st.Mutate(func(doc *state.Document) error {
+		doc.ServerKey = &k
+		return nil
+	}); err != nil {
+		return Key{}, err
+	}
+	return k, nil
 }
 
-// fingerprint derives a short identifier from the key content: sha256-<b64>.
-// Uses a dash instead of colon so it is safe as an identifier.
-func fingerprint(pubKey string) string {
-	h := sha256.Sum256([]byte(strings.TrimSpace(pubKey)))
-	// take first 16 bytes of the hash for a short but collision-resistant fp
-	b64 := base64.RawURLEncoding.EncodeToString(h[:16])
-	return "sha256-" + b64
+// generate shells out to ssh-keygen in a temp dir: ed25519, no passphrase.
+// Temp files are removed before return; only the state file keeps the key.
+func generate(comment string) (priv, pub, fp string, err error) {
+	if _, err := exec.LookPath("ssh-keygen"); err != nil {
+		return "", "", "", ErrNoKeygen
+	}
+	dir, err := os.MkdirTemp("", "pcoder-keygen")
+	if err != nil {
+		return "", "", "", err
+	}
+	defer os.RemoveAll(dir)
+	base := filepath.Join(dir, "id_ed25519")
+	cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-N", "", "-C", comment, "-f", base, "-q")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", "", "", fmt.Errorf("ssh-keygen: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	privRaw, err := os.ReadFile(base)
+	if err != nil {
+		return "", "", "", err
+	}
+	pubRaw, err := os.ReadFile(base + ".pub")
+	if err != nil {
+		return "", "", "", err
+	}
+	fpOut, err := exec.Command("ssh-keygen", "-lf", base+".pub", "-E", "sha256").Output()
+	if err != nil {
+		return "", "", "", fmt.Errorf("ssh-keygen -lf: %w", err)
+	}
+	// "256 SHA256:abc... (ED25519)" — the fingerprint is field two.
+	fp = ""
+	if fields := strings.Fields(string(fpOut)); len(fields) >= 2 {
+		fp = fields[1]
+	}
+	if fp == "" {
+		return "", "", "", errors.New("could not parse key fingerprint")
+	}
+	return string(privRaw), strings.TrimSpace(string(pubRaw)), fp, nil
 }

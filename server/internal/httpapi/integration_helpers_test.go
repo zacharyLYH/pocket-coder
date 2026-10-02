@@ -35,7 +35,6 @@ import (
 	"github.com/gorilla/websocket"
 
 	"pcoder/internal/auth"
-	"pcoder/internal/threads"
 	"pcoder/internal/docker"
 	"pcoder/internal/events"
 	"pcoder/internal/harness"
@@ -44,6 +43,7 @@ import (
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
 	"pcoder/internal/testutil"
+	"pcoder/internal/threads"
 )
 
 // testIDPrefix marks hand-seeded test ids (see newTestID).
@@ -73,14 +73,6 @@ func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docke
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Creation gate: live tests exercise the pipeline, not setup.
-	if err := st.Mutate(func(doc *state.Document) error {
-		doc.GitIDs = []state.GitIdentity{{ID: "default", Label: "Default", Name: "Test", Email: "test@example.com", Token: "test-token"}}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-
 	var pinOut bytes.Buffer
 	authSvc := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut})
 	sshKeyStore := sshkeys.New(st)
@@ -118,8 +110,8 @@ func projectPath(id, suffix string) string {
 // cleanup. The returned id is the create response's "id" field; the
 // returned body is the full create response so callers can assert on
 // the metadata echo. repoURL is required (cloning is the only way to
-// create a project); branch and cloneMethod are optional.
-func createTestProject(t *testing.T, h http.Handler, cookie *http.Cookie, repoURL, branch, cloneMethod string) (string, map[string]any) {
+// create a project); branch is optional.
+func createTestProject(t *testing.T, h http.Handler, cookie *http.Cookie, repoURL, branch string) (string, map[string]any) {
 	t.Helper()
 	if repoURL == "" {
 		t.Fatal("createTestProject: repoURL is required")
@@ -127,9 +119,6 @@ func createTestProject(t *testing.T, h http.Handler, cookie *http.Cookie, repoUR
 	body := fmt.Sprintf(`{"repoUrl":%q`, repoURL)
 	if branch != "" {
 		body += fmt.Sprintf(`,"branch":%q`, branch)
-	}
-	if cloneMethod != "" {
-		body += fmt.Sprintf(`,"cloneMethod":%q`, cloneMethod)
 	}
 	body += `}`
 	code, resp := doJSON(t, h, cookie, http.MethodPost, "/api/projects", body)

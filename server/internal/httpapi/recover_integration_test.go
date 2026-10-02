@@ -6,18 +6,20 @@
 // container, and because a fresh engine has no repo volume, the repo is
 // re-cloned from the URL in state.json. Recovery must not mutate desired
 // state: the on-disk file is asserted byte-equal (as generic maps) before
-// and after. The seed models test/state.mock.json's shape (owner/repo id,
-// no name field) but points at a local fixture repo so the test is
-// hermetic. Run with:
+// and after. The seed INHERITS the canonical test/state.mock.json (the
+// server deploy key every seeded state must own) and overrides only what
+// this test owns: identity, harness, and a local fixture repo. Run with:
 // go test -tags=integration -count=1 -run TestStateMockRecovery ./internal/httpapi/
 package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"pcoder/internal/state/statetest"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -28,18 +30,44 @@ func TestStateMockRecovery(t *testing.T) {
 	g := fixtureRepo(t)
 	url, id := g.URL, g.ID
 
-	// seed a fresh data dir with one project, shaped like the committed
-	// mock (owner/repo key, repo + harness + session, no name field)
-	seed := `{"user":{"email":"me@example.com"},` +
-		`"git_identities":[{"id":"default","label":"Default","name":"Test","email":"test@example.com","token":"test-token"}],` +
-		`"projects":{` +
-		`"` + id + `":{"repo":"` + url + `","branch":"main","cloneMethod":"http",` +
-		`"harnesses":["opencode"],"sessions":{"main":{},"oc1":{"harness":"opencode"}},` +
-		`"shortcuts":[{"id":"qc-dev","alias":"dev","kind":"cmd","command":"npm install && npm start -- --host 0.0.0.0"}]}},` +
-		`"harnesses":{"opencode":{"id":"opencode","name":"OpenCode","command":"opencode","install":"npm i -g opencode-ai"}}}`
+	// seed a fresh data dir with one project: inherit the canonical mock
+	// (server key, opencode harness), override identity + fixture project
+	type canonicalMock struct {
+		ServerKey json.RawMessage            `json:"serverKey"`
+		Harnesses map[string]json.RawMessage `json:"harnesses"`
+	}
+	var mock canonicalMock
+	_, thisFile, _, _ := runtime.Caller(0)
+	mockRaw, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "../../../test/state.mock.json"))
+	if err != nil || json.Unmarshal(mockRaw, &mock) != nil {
+		t.Fatalf("canonical mock: %v", err)
+	}
+	if len(mock.ServerKey) == 0 || len(mock.Harnesses["opencode"]) == 0 {
+		t.Fatal("test/state.mock.json must ship the serverKey and the opencode harness")
+	}
+	seed := struct {
+		User      map[string]string          `json:"user"`
+		ServerKey json.RawMessage            `json:"serverKey"`
+		Projects  map[string]any             `json:"projects"`
+		Harnesses map[string]json.RawMessage `json:"harnesses"`
+	}{
+		User:      map[string]string{"email": "me@example.com"},
+		ServerKey: mock.ServerKey,
+		Projects: map[string]any{id: map[string]any{
+			"repo": url, "branch": "main",
+			"harnesses": []string{"opencode"},
+			"sessions":  map[string]any{"main": struct{}{}, "oc1": map[string]string{"harness": "opencode"}},
+			"shortcuts": []map[string]string{{"id": "qc-dev", "alias": "dev", "kind": "cmd", "command": "npm install && npm start -- --host 0.0.0.0"}},
+		}},
+		Harnesses: map[string]json.RawMessage{"opencode": mock.Harnesses["opencode"]},
+	}
+	seedRaw, err := json.Marshal(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
 	dataDir := t.TempDir()
 	statePath := filepath.Join(dataDir, "state.json")
-	if err := os.WriteFile(statePath, []byte(seed+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(statePath, append(seedRaw, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	wantDoc := statetest.Read(t, statePath)
@@ -90,8 +118,7 @@ func TestStateMockRecovery(t *testing.T) {
 		t.Fatalf("exec results: %v", body)
 	}
 	r0 := results[0].(map[string]any)
-	detail, _ := r0["detail"].(string)
-	if r0["status"] != "ok" || !strings.Contains(detail, "hi") {
+	if detail, _ := r0["detail"].(string); r0["status"] != "ok" || !strings.Contains(detail, "hi") {
 		t.Fatalf("repo not re-cloned: cat hello.txt = %v", r0)
 	}
 

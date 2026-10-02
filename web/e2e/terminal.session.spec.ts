@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './test'
 import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp } from './helpers'
 
 // Tests for the terminal session management UI — session dropdown, new

@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './test'
 
 import { mockSessions } from './mocks'
 import { terminalUrl } from './helpers'

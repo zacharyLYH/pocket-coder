@@ -55,7 +55,7 @@ func TestHarnessConfigLandsInContainer(t *testing.T) {
 	}
 	cookie := login(t, h, pinOut)
 
-	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
+	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "")
 	waitForStatus(t, h, cookie, id, "running")
 
 	// installs are explicit: inject the CLI before launching
@@ -96,7 +96,7 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 
 	cookie := login(t, h, pinOut)
 
-	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
+	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "")
 	waitForStatus(t, h, cookie, id, "running")
 
 	ctx := context.Background()
@@ -212,7 +212,7 @@ func TestRealTUIGate(t *testing.T) {
 	writePlugin(t, st, "Vi", "vi hello.txt", "")
 	cookie := login(t, h, pinOut)
 
-	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "", "")
+	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "")
 	waitForStatus(t, h, cookie, id, "running")
 	ctx := context.Background()
 

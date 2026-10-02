@@ -430,21 +430,22 @@ func butlerReadTools(d Deps) []agent.Tool {
 		},
 		butlerToolConfigStatus: {
 			Name:        butlerToolConfigStatus,
-			Description: "Setup booleans: ai, git, ssh keys, smtp. Booleans only.",
+			Description: "Setup booleans: ai, server deploy key, smtp. Booleans only.",
 			Schema:      noProps,
 			Run: func(_ context.Context, argsJSON string) (string, error) {
 				var ssh, smtp bool
+				if d.SSHKeys != nil {
+					_, ssh = d.SSHKeys.Get()
+				}
 				if d.State != nil {
 					d.State.View(func(doc *state.Document) {
-						ssh = len(doc.SSHKeys) > 0
 						smtp = doc.SMTP != nil
 					})
 				}
 				return butlerJSON(map[string]any{
-					"aiConfigured":  aiConfig(d, aiBody{}).Valid(),
-					"gitConfigured": gitConfigured(d),
-					"sshKeys":       ssh,
-					"smtp":          smtp,
+					"aiConfigured": aiConfig(d, aiBody{}).Valid(),
+					"sshKeys":      ssh,
+					"smtp":         smtp,
 				}), nil
 			},
 		},

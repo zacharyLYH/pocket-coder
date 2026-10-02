@@ -16,7 +16,9 @@ func threadStatus(running, awaiting, failed bool) string {
 	return "ready"
 }
 
-func lastFailed(th threads.Thread) bool { return len(th.Turns) > 0 && th.Turns[len(th.Turns)-1].Error != nil }
+func lastFailed(th threads.Thread) bool {
+	return len(th.Turns) > 0 && th.Turns[len(th.Turns)-1].Error != nil
+}
 
 func pendingApprovals(th threads.Thread) bool {
 	for _, a := range th.Approvals {

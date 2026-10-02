@@ -3,56 +3,74 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { GitCard } from '@/components/GitCard'
 import { mockFetch } from '@/test/mockFetch'
 
-// Mirrors the AICard contract: ungated save notifies the parent, deletes
-// confirm with the blast radius.
+// The card is the server deploy key: display, probe, rotate. The private
+// half never renders; a passed probe notifies the parent, because the
+// home gate unlocks on it.
 describe('GitCard', () => {
-  const ROW = [{ id: 'g1', label: 'work', name: 'N', email: 'n@e.com', hasToken: true }]
+  const KEY = { publicKey: 'ssh-ed25519 AAAAserverkey', fingerprint: 'SHA256:oldfp', createdAt: '2026-01-01T00:00:00Z' }
 
-  function stub(initial: unknown[] = []) {
-    let rows = initial
+  function stub(opts: { testFails?: boolean } = {}) {
+    let key = KEY
     vi.stubGlobal('fetch', mockFetch((url, init) => {
-      if (url === '/api/git/identities' && (init?.method ?? 'GET') === 'GET') {
-        return { status: 200, body: { identities: rows } }
+      if (url === '/api/ssh' && (init?.method ?? 'GET') === 'GET') return { status: 200, body: key }
+      if (url === '/api/ssh/test' && init?.method === 'POST') {
+        if (opts.testFails) return { status: 502, body: { error: 'GitHub rejected the key — add the public half to GitHub first' } }
+        return { status: 200, body: { ok: true, user: 'octocat' } }
       }
-      if (url === '/api/git/identities' && init?.method === 'POST') {
-        rows = ROW
-        return { status: 201, body: { id: 'g1' } }
-      }
-      if (url === '/api/git/identities/g1' && init?.method === 'DELETE') {
-        rows = []
-        return { status: 200, body: { ok: true } }
+      if (url === '/api/ssh/regenerate' && init?.method === 'POST') {
+        key = { publicKey: 'ssh-ed25519 AAAAnewkey', fingerprint: 'SHA256:newfp', createdAt: '2026-01-02T00:00:00Z' }
+        return { status: 200, body: key }
       }
       return undefined
     }))
   }
 
-  it('saves without a prior test and lists the new row', async () => {
+  it('displays the public key and fingerprint', async () => {
+    stub()
+    render(<GitCard />)
+    expect(await screen.findByTestId('git-public-key')).toHaveTextContent('ssh-ed25519 AAAAserverkey')
+    expect(screen.getByTestId('git-fingerprint')).toHaveTextContent('SHA256:oldfp')
+  })
+
+  it('test reports the authenticated user and notifies the parent', async () => {
     stub()
     const onChanged = vi.fn()
     render(<GitCard onChanged={onChanged} />)
-    await screen.findByTestId('git-card')
+    await screen.findByTestId('git-public-key')
 
-    fireEvent.change(screen.getByTestId('git-label'), { target: { value: 'work' } })
-    fireEvent.change(screen.getByTestId('git-name'), { target: { value: 'N' } })
-    fireEvent.change(screen.getByTestId('git-email'), { target: { value: 'n@e.com' } })
-    fireEvent.change(screen.getByTestId('git-token'), { target: { value: 't' } })
-    fireEvent.click(screen.getByTestId('git-save'))
-
+    fireEvent.click(screen.getByTestId('git-test'))
+    expect(await screen.findByTestId('git-tested')).toHaveTextContent('Authenticated as octocat')
     await waitFor(() => expect(onChanged).toHaveBeenCalled())
-    expect(await screen.findByDisplayValue('work')).toBeInTheDocument()
   })
 
-  it('confirms deletes with the blast radius', async () => {
-    stub(ROW)
+  it('test failure surfaces the probe error without notifying', async () => {
+    stub({ testFails: true })
     const onChanged = vi.fn()
     render(<GitCard onChanged={onChanged} />)
-    await screen.findByDisplayValue('work')
+    await screen.findByTestId('git-public-key')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
-    expect(screen.getByDisplayValue('work')).toBeInTheDocument()
-    expect(await screen.findByText(/push, and pull stop/)).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('git-confirm-delete'))
+    fireEvent.click(screen.getByTestId('git-test'))
+    expect(await screen.findByTestId('git-error')).toHaveTextContent('add the public half to GitHub first')
+    expect(onChanged).not.toHaveBeenCalled()
+  })
+
+  it('hides regenerate when showRegenerate is false', () => {
+    stub()
+    render(<GitCard showRegenerate={false} />)
+    expect(screen.queryByTestId('git-regen')).not.toBeInTheDocument()
+  })
+
+  it('regenerate asks for confirmation, then swaps the key and notifies', async () => {
+    stub()
+    const onChanged = vi.fn()
+    render(<GitCard onChanged={onChanged} />)
+    await screen.findByTestId('git-public-key')
+
+    fireEvent.click(screen.getByTestId('git-regen'))
+    expect(await screen.findByText('Regenerate server key?')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('git-confirm-regen'))
 
     await waitFor(() => expect(onChanged).toHaveBeenCalled())
+    expect(await screen.findByTestId('git-fingerprint')).toHaveTextContent('SHA256:newfp')
   })
 })
