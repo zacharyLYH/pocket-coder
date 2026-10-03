@@ -1,63 +1,45 @@
 #!/bin/sh
-# Run the e2e suite as PARALLEL PROCESSES, one per test type. Each process
-# gets its own backend port, frontend port, and test-results subdirectory
-# (E2E_API_PORT / E2E_WEB_PORT / E2E_RUN_ID — see e2e/env.ts), so groups
-# share nothing: separate state.json, separate PIN log, separate auth state.
-#
-# Groups start a few seconds apart so their first project creations don't
-# race each other's one-time project-image build on a cold engine.
-#
-# A trap guarantees that `docker compose down` runs for every group on EXIT,
-# even when the shell is interrupted or a syntax error aborts the script —
-# so Playwright processes that are killed mid-run can't leave pcoder-e2e-<group>
-# server containers behind on the engine.
+# E2E suite: one Playwright process per group, each with its own ports and
+# test-results dir (see e2e/env.ts). Silent while running — watch
+# test-results/progress.md.
 #
 # Usage:
-#   sh e2e-parallel.sh                       # all groups in parallel
-#   sh e2e-parallel.sh stack sessions        # only the named groups
-#   UPDATE_SNAPSHOTS=1 sh e2e-parallel.sh    # regenerate all baseline shots
+#   sh e2e-parallel.sh                    # all groups
+#   sh e2e-parallel.sh stack sessions     # only these groups
+#   UPDATE_SNAPSHOTS=1 sh e2e-parallel.sh # regenerate baselines
 set -u
 cd "$(dirname "$0")"
 
 mkdir -p test-results
 
-# Ensure web deps + the pinned Playwright runner are installed. Without
-# node_modules `npx playwright` fetches the latest standalone `playwright`
-# package, which mismatches @playwright/test and breaks flag parsing.
+# Preflight: missing deps and squatted ports used to surface minutes later
+# as a confusing 0-test "pass". Fail here instead, with the fix attached.
+MISSING=0
+need() {
+  command -v "$1" >/dev/null 2>&1 || { echo "e2e-parallel.sh: missing '$1' — $2" >&2; MISSING=1; }
+}
+need node "install Node LTS from https://nodejs.org"
+need npm "ships with Node — reinstall Node if absent"
+need docker "install https://docs.docker.com/desktop, then start it"
+need git "install from https://git-scm.com/downloads"
+[ "$MISSING" -eq 0 ] || exit 2
+docker info >/dev/null 2>&1 || {
+  echo "e2e-parallel.sh: Docker engine not reachable — start Docker Desktop, then retry" >&2
+  exit 2
+}
+docker compose version >/dev/null 2>&1 || {
+  echo "e2e-parallel.sh: 'docker compose' (v2 plugin) not found — update Docker Desktop" >&2
+  exit 2
+}
+
+# node_modules must be the repo-pinned tree: bare `npx playwright` fetches
+# the latest standalone runner, which mismatches @playwright/test.
 if [ ! -x node_modules/.bin/playwright ]; then
-  npm install
+  echo "e2e-parallel.sh: node_modules missing — running 'npm install'..."
+  npm install || { echo "e2e-parallel.sh: 'npm install' failed" >&2; exit 2; }
 fi
 
-# All E2E test groups.  The name is the E2E_RUN_ID and compose project
-# suffix, the offset maps to distinct api/web ports (8080+offset*10), and
-# the rest is the spec list passed to `npx playwright test`.
-#
-# Four preview groups, rebalanced so the slowest npm-install previews run
-# isolated and the fast static/no-npm ones are spread to balance wall-clock
-# (estimates: npm install + Vite boot ~30-45s, static fixture ~15s,
-# screenshot ~5s):
-#
-#   tools      ~180s  6 tests, 6 React projects    (isolated — slowest)
-#   token      ~130s  4 tests, React + token waits  (isolated)
-#   journey     ~75s  3 preinstalled + 9 screenshots
-#   viewport    ~60s  2 React projects
-#   auth        ~40s  1 React project (cross-project isolation)
-#   htmx        ~40s  1 Vite + 2 screenshots
-#   vue         ~40s  1 Vite + 2 screenshots
-#   reconnect   ~35s  1 React + 1 screenshot
-#   port        ~30s  1 React (non-default-port)
-#   shortcuts   ~15s  3 tests, no npm install
-#   fit         ~15s  1 static + 2 screenshots
-#   vanilla     ~15s  1 static (no Vite/npm)
-# Group estimates:
-#   preview.a  ~180s  tools
-#   preview.b  ~160s  token + fit + vanilla
-#   preview.c  ~175s  journey + auth + viewport
-#   preview.d  ~160s  htmx + vue + reconnect + port + shortcuts
-# The bootstrap group boots from a SEEDED state.json (E2E_SEED=bootstrap,
-# materialized by the seeder factory e2e/stateSeed.ts): state has a
-# project with opencode recorded while Docker is empty, so the server must
-# finish its boot bootstrap (container + harness install) before serving.
+# name|port-offset|specs. Offsets map to api/web/git ports (8080/5170/9070 + offset*10).
 ALL_GROUPS='
 app|1|e2e/app.spec.ts e2e/bugreport.spec.ts e2e/preview.basic.spec.ts e2e/preview.hmr.spec.ts
 stack|2|e2e/terminal.stack.spec.ts
@@ -70,10 +52,40 @@ preview.d|8|e2e/preview.htmx.spec.ts e2e/preview.vue.spec.ts e2e/preview.reconne
 bootstrap|9|e2e/bootstrap.spec.ts
 '
 
-# Groups we started during this run — for the EXIT trap.
+WANTED="${*:-}"
+# Unknown names must error, not silently run zero groups (a vacuous "pass").
+NL="$(printf '\nx')"; NL="${NL%x}"
+for w in $WANTED; do
+  case "$NL$ALL_GROUPS" in
+    *"$NL$w|"*) ;;
+    *) echo "e2e-parallel.sh: unknown group '$w' — valid: app stack sessions visual preview.a preview.b preview.c preview.d bootstrap" >&2; exit 2 ;;
+  esac
+done
+
+# TCP probe via node (portable; lsof and /dev/tcp aren't everywhere).
+port_in_use() {
+  node -e "const s=require('net').connect($1,'127.0.0.1');s.on('connect',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),1500).unref()" 2>/dev/null
+}
+# A squatted port kills the group in seconds with 0 tests — check before
+# launching anything, while the fix is one command.
+while IFS='|' read -r name offset _specs; do
+  [ -z "$name" ] && continue
+  case " $WANTED " in *" $name "*|"  ") ;; *) continue ;; esac
+  for p in $((8080 + offset * 10)) $((5170 + offset * 10)) $((9070 + offset * 10)); do
+    if port_in_use "$p"; then
+      echo "e2e-parallel.sh: port $p (group '$name') is already in use — likely a leftover container from a killed run." >&2
+      echo "  Clean up with: docker rm -f \$(docker ps -aq --filter name=pcoder-)" >&2
+      exit 2
+    fi
+  done
+done <<EOF
+$(printf '%s\n' "$ALL_GROUPS")
+EOF
+
+# Groups started so far — the INT/TERM trap tears their stacks down.
 STARTED_GROUPS=""
 
-# Background PIDs per group ("name:pid"), for the live dashboard.
+# Background PIDs per group (name:pid).
 GROUP_PIDS=""
 RUN_EPOCH=""
 
@@ -89,44 +101,33 @@ run_group() {
   api=$((8080 + offset * 10))
   web=$((5170 + offset * 10))
   git=$((9070 + offset * 10))
-  # bootstrap boots from a seeded state.json (see ALL_GROUPS above)
+  # bootstrap boots from a seeded state.json (E2E_SEED=bootstrap).
   seed=""
   [ "$name" = "bootstrap" ] && seed="E2E_SEED=bootstrap"
-  # Clean up any leftover containers from crashed runs. down matches by
-  # project name; the data-dir/port vars only need to parse, so dummy
-  # values are fine (real values ride with the test process env below).
-  # Without them compose exits 1 on the blank :/data mount and the cleanup
-  # silently does nothing.
+  # Drop leftovers from crashed runs. Dummy vars: down only needs to parse
+  # the compose files here (real values ride with the test process below).
   PCODER_E2E_DATA_DIR="${PCODER_E2E_DATA_DIR:-/tmp/pcoder-e2e-down}" PCODER_E2E_API_PORT="${PCODER_E2E_API_PORT:-8080}" \
   docker compose -f ../docker-compose.yml -f ../docker-compose.e2e.yml -p "$(proj_name "$name")" down 2>/dev/null
   echo "[$name] starting: api:$api web:$web git:$git → test-results/$name.log + test-results/$name/progress.md"
-  # NOTE: reporters must be comma-separated in ONE --reporter flag. Repeated
-  # --reporter flags load both reporters but silently swallow the list
-  # reporter's stdout whenever output is piped (all .log files stay 0 bytes).
+  # One --reporter flag, comma-separated: repeated flags swallow stdout when piped (0-byte logs).
   env E2E_RUN_ID="$name" E2E_API_PORT="$api" E2E_WEB_PORT="$web" E2E_GIT_PORT="$git" $seed \
     npx playwright test --config=playwright.config.ts --reporter=list,./e2e/progress-reporter.ts ${UPDATE_SNAPSHOTS:+--update-snapshots=all} $specs > "test-results/$name.log" 2>&1 &
   GROUP_PIDS="$GROUP_PIDS $name:$!"
   STARTED_GROUPS="$STARTED_GROUPS $name"
 }
 
-# Tear down every group's compose project. Runs on interruption (Ctrl-C,
-# kill) and — via explicit call at the end — on normal exit. EXIT is
-# deliberately NOT trapped during `wait`: bash 3.2 (macOS /bin/sh) has a
-# run_pending_traps bug where `trap ... EXIT` + `wait <pid>` returns
-# immediately with "bad value in trap_list[15]", so the script would check
-# still-empty logs and falsely report "all groups passed" while Playwright
-# was still booting.
+# Down every started stack. Trapped on INT/TERM; called explicitly at the
+# end. Never trap EXIT: bash 3.2 (macOS /bin/sh) returns from `wait` early
+# when an EXIT trap is set, which once caused false "all groups passed".
 cleanup_all() {
   kill "${AGG_PID:-}" 2>/dev/null || true
   for name in $STARTED_GROUPS; do
-    # Dummy vars: see the pre-run cleanup above — down needs them to parse.
     PCODER_E2E_DATA_DIR="${PCODER_E2E_DATA_DIR:-/tmp/pcoder-e2e-down}" PCODER_E2E_API_PORT="${PCODER_E2E_API_PORT:-8080}" \
     docker compose -f ../docker-compose.yml -f ../docker-compose.e2e.yml -p "$(proj_name "$name")" down 2>/dev/null || true
   done
 }
 trap cleanup_all INT TERM
 
-WANTED="${*:-}"
 while IFS='|' read -r name offset specs; do
   [ -z "$name" ] && continue
   case " $WANTED " in
@@ -139,10 +140,8 @@ done <<EOF
 $(printf '%s\n' "$ALL_GROUPS")
 EOF
 
-# ── live progress file ────────────────────────────────────────────────
-# One combined test-results/progress.md, rebuilt every 2s from the groups'
-# per-test checklists. File only — nothing is printed while groups run, so
-# just open test-results/progress.md in an editor and watch it update.
+# ── live progress: test-results/progress.md, rebuilt every 2s. ──────────
+# File only — open it in an editor and watch it update while groups run.
 group_running() {
   for entry in $GROUP_PIDS; do
     if [ "${entry%%:*}" = "$1" ]; then
@@ -181,15 +180,9 @@ aggregate_progress
 while :; do sleep 2; aggregate_progress; done &
 AGG_PID=$!
 
-# Wait for the test groups only (not the aggregator above), tracking
-# per-group exit codes — `wait $pids` as one call masks which group failed
-# and, on bash 3.2, trips the EXIT-trap bug above.
-WAIT_PIDS=""
-for entry in $GROUP_PIDS; do
-  WAIT_PIDS="$WAIT_PIDS ${entry#*:}"
-done
+# Wait per group so the exit code says WHICH group failed. (`wait` on all
+# pids at once masks that — and on bash 3.2 trips the EXIT-trap bug above.)
 group_fail=0
-# shellcheck disable=SC2086
 for entry in $GROUP_PIDS; do
   gname="${entry%%:*}"
   gpid="${entry#*:}"
@@ -212,13 +205,12 @@ for name in app stack sessions visual preview.a preview.b preview.c preview.d bo
   prog="test-results/$name/progress.md"
   tail -n 3 "$log" 2>/dev/null | sed "s/^/[$name] /"
   group_bad=""
-  # An empty/missing log means Playwright never ran (killed before flush,
-  # wrapper raced ahead) — must fail, never silently pass.
+  # Empty log = Playwright never ran; zero tests = boot/setup failed.
+  # Either must fail, never silently pass.
   if [ ! -s "$log" ]; then
     echo "[$name] EMPTY log — Playwright produced no output"
     group_bad=1
   fi
-  # Zero tests discovered means setup/boot failed (see progress.md 0/0).
   if [ -f "$prog" ]; then
     total_n=$(grep -c '^- \[' "$prog" 2>/dev/null || true)
     fail_n=$(grep -c '^- \[!\]' "$prog" 2>/dev/null || true)
@@ -238,12 +230,9 @@ for name in app stack sessions visual preview.a preview.b preview.c preview.d bo
   if [ -n "$group_bad" ]; then
     fail=1
   fi
-  # On failure, dump the relevant error lines straight to stdout so the
-  # user doesn't have to open the log file. Trigger ONLY on Playwright's
-  # own failure markers (✘ lines, "N failed" footer): the log also carries
-  # benign noise like vite "[WebServer] Error: write EPIPE" and test names
-  # containing "failed", which must not fail the run (45 passed + EPIPE
-  # noise == green).
+  # Dump failures inline. Trigger only on Playwright's own markers (✘, "N
+  # failed"): the log also holds benign noise (vite EPIPE, "failed" in test
+  # names) that must not fail a green run.
   if grep -qE "✘[[:space:]]+[0-9]+|[0-9]+ failed" "$log" 2>/dev/null; then
     echo
     echo "─── [$name] failures — see full log in test-results/$name.log ───"
