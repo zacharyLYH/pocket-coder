@@ -46,7 +46,10 @@ test.describe('butler desktop', () => {
 
   test('turn round-trip renders answer', async ({ page }) => {
     await mockProject(page, FAKE_ID)
-    await mockButlerThreads(page)
+    // Server owns the transcript: send posts, then the sheet adopts the
+    // persisted thread via re-open — so the opened thread must carry the
+    // turn (the POST body itself is never rendered).
+    await mockButlerThreads(page, [{ prompt: 'Brief me', answer: 'All three projects are healthy.' }])
     await mockButlerTurn(page, { answer: 'All three projects are healthy.' })
     await page.getByTestId('butler-fab').click()
     await page.getByTestId('butler-prompt').fill('Brief me')

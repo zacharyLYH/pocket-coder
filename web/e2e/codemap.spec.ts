@@ -85,23 +85,6 @@ test.describe('codemap desktop', () => {
     await expect(dialog).toHaveScreenshot('codemap-ai-card-long-alias.png')
   })
 
-  test('AI card model name tooltip shows on click (mobile)', async ({ page }) => {
-    test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
-    await page.route('**/api/ai/models', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ models: [{ id: 'm1', label: 'test', baseURL: 'https://api.openai.com/v1', model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', hasKey: true }] }),
-      })
-    })
-    await page.goto('/app')
-    await page.getByTestId('setup-ai').click()
-    const dialog = page.getByRole('dialog')
-    // On mobile, tap the truncated model name to show the full tooltip.
-    await dialog.locator('span').filter({ hasText: 'nvidia/nemotron' }).first().click()
-    await expect(dialog.getByText('nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free')).toBeVisible()
-  })
-
   test('codemap tab hidden without a key', async ({ page }) => {
     await mockSessions(page)
     await page.goto(terminalUrl(FAKE_ID, 'main'))
@@ -481,6 +464,22 @@ test.describe('codemap desktop', () => {
 
 test.describe('codemap phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
+
+  test('AI card model name tooltip shows on click (mobile)', async ({ page }) => {
+    await page.route('**/api/ai/models', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ models: [{ id: 'm1', label: 'test', baseURL: 'https://api.openai.com/v1', model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', hasKey: true }] }),
+      })
+    })
+    await page.goto('/app')
+    await page.getByTestId('setup-ai').click()
+    const dialog = page.getByRole('dialog')
+    // On mobile, tap the truncated model name to show the full tooltip.
+    await dialog.locator('span').filter({ hasText: 'nvidia/nemotron' }).first().click()
+    await expect(dialog.getByText('nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free')).toBeVisible()
+  })
 
   test('codemap prompt renders on phone', async ({ page }) => {
     await mockProject(page, FAKE_ID)
