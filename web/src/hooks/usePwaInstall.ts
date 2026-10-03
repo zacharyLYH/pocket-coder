@@ -19,6 +19,10 @@ function runningStandalone(): boolean {
   return (navigator as { standalone?: boolean }).standalone === true
 }
 
+export function isPwaStandalone(): boolean {
+  return runningStandalone()
+}
+
 export function usePwaInstall() {
   const [deferred, setDeferred] = useState<PwaInstallEvent | null>(null)
   const [installed, setInstalled] = useState(() => runningStandalone())

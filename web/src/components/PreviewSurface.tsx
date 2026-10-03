@@ -13,6 +13,11 @@ import { Card, CardContent } from '@/components/ui/card'
 // reopening reattaches to the same browser instantly. Stopping the sidecar
 // is the Close button's job in the Preview tab.
 //
+// On mobile PWAs (standalone mode), window.open('_blank') opens in the same
+// window, so App.tsx navigates here inline. Users dismiss via the browser's
+// native back (swipe-from-edge on iOS, hardware back on Android). The pt-
+// [env(safe-area-inset-top)] keeps the noVNC toolbar clear of the status bar.
+//
 // The noVNC view uses resize=scale (see lib/preview) so the framebuffer
 // fills the iframe, then converges to ~1:1 once this page fits the sidecar
 // Chromium window to the iframe: after load and on every (debounced) resize
@@ -132,7 +137,12 @@ export function PreviewSurface({ projectId }: { projectId: string }) {
   }
 
   return (
-    <main className="h-dvh w-full">
+    <main
+      className="relative h-dvh w-full"
+      style={{
+        paddingTop: 'env(safe-area-inset-top)',
+      }}
+    >
       {token && (
         <iframe
           ref={frameRef}

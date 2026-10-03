@@ -7,6 +7,7 @@ import { LandingPage } from '@/components/LandingPage'
 import { Home } from '@/components/Home'
 import { PreviewSurface } from '@/components/PreviewSurface'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
+import { isPwaStandalone } from '@/hooks/usePwaInstall'
 import { parsePreviewPath, parseTerminalPath } from '@/lib/paths'
 
 type AuthState = 'loading' | 'out' | 'in'
@@ -117,7 +118,18 @@ export default function App() {
           projectId={terminal.projectId}
           initialSession={terminal.session}
           onBack={() => navigate('/app')}
-          onOpenPreview={() => window.open(`/preview/${encodeURIComponent(terminal.projectId)}`, '_blank')}
+            onOpenPreview={() => {
+              const url = `/preview/${encodeURIComponent(terminal.projectId)}`
+              if (isPwaStandalone()) {
+                // In a standalone PWA (mobile home-screen app), window.open
+                // with _blank stays inside the PWA — the terminal is lost.
+                // Navigate inline and let the user dismiss via native back
+                // gesture (swipe-from-edge on iOS, hardware back on Android).
+                navigate(url)
+              } else {
+                window.open(url, '_blank')
+              }
+            }}
         />
       </>
     )
