@@ -23,6 +23,13 @@ describe('nginx prod contract', () => {
     expect(ws).toContain('proxy_send_timeout')
   })
 
+  it('forwards WebSocket upgrades through /api for the noVNC preview surface', () => {
+    const api = blockAt('location /api')
+    expect(api).toContain('proxy_http_version 1.1')
+    expect(api).toContain('proxy_set_header Upgrade')
+    expect(api).toContain('proxy_set_header Connection')
+  })
+
   it('compresses responses and caches hashed assets immutably', () => {
     expect(conf).toContain('gzip on')
     const assets = blockAt('location /assets/')
