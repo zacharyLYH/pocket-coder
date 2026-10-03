@@ -16,8 +16,7 @@ import { keydownToLabel, shortcutText, toServerRow, validateDraft, type Shortcut
 export function ShortcutsModal({ projectId, open, onOpenChange, onSaved, onRun }: {
   projectId: string; open: boolean; onOpenChange: (o: boolean) => void; onSaved?: () => void; onRun?: (s: Shortcut) => void
 }) {
-  const { shortcuts, reload } = useShortcuts(open ? projectId : null)
-  const [loaded, setLoaded] = useState(false)
+  const { shortcuts, reload, loaded } = useShortcuts(open ? projectId : null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -26,9 +25,8 @@ export function ShortcutsModal({ projectId, open, onOpenChange, onSaved, onRun }
 
   useEffect(() => {
     if (!open) return
-    setError(null); setQuery(''); setForm(null); setLoaded(false)
-    void reload().then(() => setLoaded(true))
-  }, [open, projectId, reload])
+    setError(null); setQuery(''); setForm(null)
+  }, [open])
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase()

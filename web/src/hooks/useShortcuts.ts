@@ -6,6 +6,7 @@ import type { Shortcut } from '@/lib/shortcuts'
 // explicit reload, shared by the tab-strip modal and the home editor.
 export function useShortcuts(projectId: string | null) {
   const [shortcuts, setShortcuts] = useState<Shortcut[]>([])
+  const [loaded, setLoaded] = useState(false)
   const reload = useCallback(async () => {
     if (!projectId) return
     try {
@@ -13,8 +14,10 @@ export function useShortcuts(projectId: string | null) {
       setShortcuts(d.shortcuts ?? [])
     } catch {
       // keep stale on transient failure
+    } finally {
+      setLoaded(true)
     }
   }, [projectId])
   useEffect(() => { reload() }, [reload])
-  return { shortcuts, reload }
+  return { shortcuts, reload, loaded }
 }
