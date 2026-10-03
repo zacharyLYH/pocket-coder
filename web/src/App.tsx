@@ -141,7 +141,7 @@ export default function App() {
 
 function PullToRefreshIndicator() {
   return (
-    <div className="fixed top-0 left-0 right-0 z-[50] flex items-center justify-center gap-2 bg-background/95 py-2 backdrop-blur-sm">
+    <div className="fixed top-0 left-0 right-0 z-[50] flex items-center justify-center gap-2 bg-background/95 py-2 backdrop-blur-sm pt-[max(0.5rem,env(safe-area-inset-top))]">
       <RefreshCw className="size-4 animate-spin text-primary" />
       <span className="text-xs text-muted-foreground">Release to refresh</span>
     </div>

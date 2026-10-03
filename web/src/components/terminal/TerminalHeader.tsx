@@ -38,12 +38,13 @@ import type { ConnStatus } from '@/components/terminal/TerminalPane'
 // which is not visible while transported into a fixed view.
 const FIXED_LABELS: Record<string, string> = { codemap: 'Codemap', diff: 'Git', preview: 'Preview', nerdy: 'Nerdy Stuff' }
 
-export function TerminalHeader({ projectId, current, status, view, fontSize, onBack, onRestart, onRename, onKill, onZoomIn, onZoomOut, onZoomReset }: {
+export function TerminalHeader({ projectId, current, status, view, fontSize, defaultFontSize, onBack, onRestart, onRename, onKill, onZoomIn, onZoomOut, onZoomReset }: {
   projectId: string
   current: string
   status: ConnStatus
   view: 'terminal' | 'diff' | 'preview' | 'nerdy' | 'codemap'
   fontSize: number
+  defaultFontSize: number
   onBack: () => void
   onRestart: () => void
   onRename: (newName: string) => Promise<void> | void
@@ -133,7 +134,7 @@ export function TerminalHeader({ projectId, current, status, view, fontSize, onB
                   <DropdownMenuItem onSelect={onZoomOut} disabled={fontSize <= 10} data-testid="term-zoom-out">
                     <ZoomOut className="size-4" /> Zoom out
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={onZoomReset} disabled={fontSize === 14} data-testid="term-zoom-reset">
+                  <DropdownMenuItem onSelect={onZoomReset} disabled={fontSize === defaultFontSize} data-testid="term-zoom-reset">
                     Reset
                   </DropdownMenuItem>
                 </DropdownMenuSubContent>

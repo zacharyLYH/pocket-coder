@@ -26,7 +26,9 @@ export function usePullToRefresh(onRefresh?: () => void) {
   const [active, setActive] = useState(false)
   const startY = useRef(0)
   const delta = useRef(0)
-  const threshold = 72
+  // Deliberately stiff: a refresh is a full reload, so the drag must
+  // travel well past a casual scroll.
+  const threshold = 110
 
   useEffect(() => {
     if (!('ontouchstart' in window)) return

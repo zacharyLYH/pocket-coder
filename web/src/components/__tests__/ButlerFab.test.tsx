@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 
 import { render, screen, fireEvent } from '@testing-library/react'
-import { ButlerFab, snapToCorner, FAB_SIZE, SNAP_MARGIN } from '@/components/ButlerFab'
+import { ButlerFab, snapToCorner, FAB_SIZE, SNAP_MARGIN, TOP_CLEARANCE } from '@/components/ButlerFab'
 
 // jsdom has no layout: fix a phone-ish viewport so snapping is deterministic.
 function phoneViewport() {
@@ -27,10 +27,12 @@ describe('snapToCorner', () => {
     expect(snapToCorner(20, 330, 844, 390)).toEqual({ bottom: SNAP_MARGIN, right: 390 - FAB_SIZE - SNAP_MARGIN })
   })
 
-  it('snaps top-right coords to top-right corner', () => {
-    // Top = large bottom offset; right edge = SMALL right offset.
-    expect(snapToCorner(756, 16, 844, 390)).toEqual({ bottom: 844 - FAB_SIZE - SNAP_MARGIN, right: SNAP_MARGIN })
-    expect(snapToCorner(780, 20, 844, 390)).toEqual({ bottom: 844 - FAB_SIZE - SNAP_MARGIN, right: SNAP_MARGIN })
+  it('snaps top-right coords to top-right corner below the notch', () => {
+    // Top = large bottom offset; right edge = SMALL right offset. The top
+    // snap stops TOP_CLEARANCE below the viewport top, clear of the
+    // notification-shade swipe zone.
+    expect(snapToCorner(756, 16, 844, 390)).toEqual({ bottom: 844 - FAB_SIZE - TOP_CLEARANCE, right: SNAP_MARGIN })
+    expect(snapToCorner(780, 20, 844, 390)).toEqual({ bottom: 844 - FAB_SIZE - TOP_CLEARANCE, right: SNAP_MARGIN })
   })
 })
 
@@ -60,7 +62,7 @@ describe('ButlerFab drag', () => {
     const setSpy = vi.spyOn(Storage.prototype, 'setItem')
     drag(fab, { x: 40, y: 780 }, { x: 350, y: 40 })
     fireEvent.pointerUp(fab, { pointerId: 1, clientX: 350, clientY: 40 })
-    expect(fab.style.bottom).toBe(`${844 - FAB_SIZE - SNAP_MARGIN}px`)
+    expect(fab.style.bottom).toBe(`${844 - FAB_SIZE - TOP_CLEARANCE}px`)
     expect(fab.style.right).toBe(`${SNAP_MARGIN}px`)
     expect(getSpy.mock.calls.some((c) => c[0] === 'butlerFabPos')).toBe(false)
     expect(setSpy.mock.calls.some((c) => c[0] === 'butlerFabPos')).toBe(false)

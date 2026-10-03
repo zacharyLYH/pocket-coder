@@ -17,6 +17,12 @@ import { ShortcutsModal } from '@/components/shortcuts/ShortcutsModal'
 import { parseKeyCombo, type Shortcut } from '@/lib/shortcuts'
 import { ButlerFab } from '@/components/ButlerFab'
 
+// The device default terminal text size: phones start zoomed out.
+function defaultFontSize(): number {
+  if (window.matchMedia?.('(pointer: coarse)').matches) return 10
+  return 14
+}
+
 // The terminal screen: header (status, session picker, actions) above the
 // live terminal pane. Owns which session is attached and the shared status/
 // error state; the pane owns xterm and the websocket.
@@ -37,6 +43,8 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [shortcutError, setShortcutError] = useState<string | null>(null)
   // Terminal zoom: persisted per device, 10–20px. Smaller fits more.
+  // Phones start zoomed out (10px is 70% of the 14px desktop default) so
+  // dense output fits without pinching. A saved choice always wins.
   const [fontSize, setFontSize] = useState(() => {
     try {
       const saved = Number(localStorage.getItem('pcoder-term-fontsize'))
@@ -44,7 +52,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
     } catch {
       // storage unavailable — fall through to default
     }
-    return 14
+    return defaultFontSize()
   })
   function saveFontSize(next: number) {
     try {
@@ -61,8 +69,9 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
     })
   }
   function zoomReset() {
-    saveFontSize(14)
-    setFontSize(14)
+    const def = defaultFontSize()
+    saveFontSize(def)
+    setFontSize(def)
   }
   const hostRef = useRef<HTMLDivElement>(null)
   // The Codemap tab only exists once a model key is configured. Hidden
@@ -201,6 +210,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           status={status}
           view={tab}
           fontSize={fontSize}
+          defaultFontSize={defaultFontSize()}
           onBack={onBack}
           onRestart={restart}
           onRename={rename}
