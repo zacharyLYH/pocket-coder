@@ -9,12 +9,12 @@ import { GITHUB_KEYS_URL } from '@/lib/site'
 
 type ServerKey = { publicKey: string; fingerprint: string; createdAt: string }
 
-// GitCard: the server deploy key for cloning. Step-by-step: copy the key,
-// add it to GitHub, then test. The private half never renders.
-// showRegenerate hides the rotate button for the initial setup gate; the
-// Git dialog keeps it for re-keying after a GitHub-side change.
-export function GitCard({ onChanged, showRegenerate = true }: {
+// GitCard: copy the server key to GitHub, then test. The private half
+// never renders. onTestSuccess unlocks the parent on a passed probe;
+// onChanged re-probes it after a regenerate.
+export function GitCard({ onChanged, onTestSuccess, showRegenerate = true }: {
   onChanged?: () => void
+  onTestSuccess?: () => void
   showRegenerate?: boolean
 }) {
   const [key, setKey] = useState<ServerKey | null>(null)
@@ -23,12 +23,23 @@ export function GitCard({ onChanged, showRegenerate = true }: {
   const [busy, setBusy] = useState<'test' | 'regen' | null>(null)
   const [copied, setCopied] = useState(false)
   const [confirmRegen, setConfirmRegen] = useState(false)
+  const [loading, setLoading] = useState(true)
 
-  async function load() {
-    try {
-      const d = await api<ServerKey>('/api/ssh')
-      setKey(d)
-    } catch { /* retry on next open */ }
+  // The server mints the key at boot but listens late, so retry the first
+  // load instead of sticking on "loading…" until a manual refresh.
+  async function load(): Promise<void> {
+    setLoading(true)
+    for (let i = 0; i < 6; i++) {
+      try {
+        setKey(await api<ServerKey>('/api/ssh'))
+        setError(null)
+        break
+      } catch (err) {
+        if (i === 5) setError(`Could not load the server key (${errMsg(err)}). The server may still be starting.`)
+        else await new Promise((r) => setTimeout(r, 1000 * (i + 1)))
+      }
+    }
+    setLoading(false)
   }
   useEffect(() => { void load() }, [])
 
@@ -37,11 +48,10 @@ export function GitCard({ onChanged, showRegenerate = true }: {
     setError(null)
     setTestedUser(null)
     try {
+      // POST: the probe dials GitHub and logs, so it must not be cached.
       const d = await api<{ ok: boolean; user: string }>('/api/ssh/test', { method: 'POST', signal: probeSignal() })
       setTestedUser(d.user || 'ok')
-      // A passed probe can unlock a waiting view (the home gate), so let
-      // the parent re-check on success only.
-      onChanged?.()
+      onTestSuccess?.()
     } catch (err) {
       setError(probeErr(err))
     } finally {
@@ -90,18 +100,18 @@ export function GitCard({ onChanged, showRegenerate = true }: {
           data-testid="git-public-key"
           className="max-h-24 overflow-auto rounded-md bg-muted p-2 font-mono text-xs break-all"
         >
-          {key?.publicKey ?? 'loading…'}
+          {key?.publicKey ?? (loading ? 'loading…' : 'failed to load')}
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="self-start min-h-[44px]"
-          disabled={!key}
-          onClick={() => void copy()}
-          data-testid="git-copy"
-        >
-          <Copy className="size-4" />{copied ? 'Copied' : 'Copy'}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" className="self-start min-h-[44px]" disabled={!key} onClick={() => void copy()} data-testid="git-copy">
+            <Copy className="size-4" />{copied ? 'Copied' : 'Copy'}
+          </Button>
+          {!key && !loading && (
+            <Button variant="outline" size="sm" className="self-start min-h-[44px]" onClick={() => { setError(null); void load() }} data-testid="git-retry">
+              <RefreshCw className="size-4" />Retry
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -121,16 +131,12 @@ export function GitCard({ onChanged, showRegenerate = true }: {
 
       <div className="flex flex-col gap-2">
         <p className="text-xs font-medium">3. Test the connection</p>
-        <Button
-          variant="outline"
-          size="sm"
-          className="min-h-[44px] w-full"
-          disabled={busy !== null}
-          onClick={() => void test()}
-          data-testid="git-test"
-        >
+        <Button variant="outline" size="sm" className="min-h-[44px] w-full" disabled={busy !== null || !key} onClick={() => void test()} data-testid="git-test">
           <FlaskConical className="size-4" />{busy === 'test' ? 'Testing…' : 'Test connection'}
         </Button>
+        {!showRegenerate && !testedUser && (
+          <p className="text-xs text-muted-foreground">A passing test takes you to your projects.</p>
+        )}
       </div>
 
       {testedUser && (

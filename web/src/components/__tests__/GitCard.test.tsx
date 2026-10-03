@@ -32,26 +32,28 @@ describe('GitCard', () => {
     expect(screen.getByTestId('git-fingerprint')).toHaveTextContent('SHA256:oldfp')
   })
 
-  it('test reports the authenticated user and notifies the parent', async () => {
+  it('test unlocks the parent with no re-probe', async () => {
     stub()
+    const onTestSuccess = vi.fn()
     const onChanged = vi.fn()
-    render(<GitCard onChanged={onChanged} />)
+    render(<GitCard onChanged={onChanged} onTestSuccess={onTestSuccess} />)
     await screen.findByTestId('git-public-key')
 
     fireEvent.click(screen.getByTestId('git-test'))
     expect(await screen.findByTestId('git-tested')).toHaveTextContent('Authenticated as octocat')
-    await waitFor(() => expect(onChanged).toHaveBeenCalled())
+    await waitFor(() => expect(onTestSuccess).toHaveBeenCalled())
+    expect(onChanged).not.toHaveBeenCalled()
   })
 
   it('test failure surfaces the probe error without notifying', async () => {
     stub({ testFails: true })
-    const onChanged = vi.fn()
-    render(<GitCard onChanged={onChanged} />)
+    const onTestSuccess = vi.fn()
+    render(<GitCard onTestSuccess={onTestSuccess} />)
     await screen.findByTestId('git-public-key')
 
     fireEvent.click(screen.getByTestId('git-test'))
     expect(await screen.findByTestId('git-error')).toHaveTextContent('add the public half to GitHub first')
-    expect(onChanged).not.toHaveBeenCalled()
+    expect(onTestSuccess).not.toHaveBeenCalled()
   })
 
   it('hides regenerate when showRegenerate is false', () => {

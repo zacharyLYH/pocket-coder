@@ -79,4 +79,24 @@ describe('Home run card', () => {
     expect(screen.queryByText('Run a command')).not.toBeInTheDocument()
     expect(screen.queryByText('No projects yet.')).not.toBeInTheDocument()
   })
+
+  it('unlocks on test success with no second probe', async () => {
+    let probes = 0
+    const fetchMock = mockFetch((url, init) => {
+      if (url === '/api/ssh/test' && init?.method === 'POST') {
+        probes += 1
+        if (probes === 1) return { status: 502, body: { error: 'GitHub rejected the key' } }
+        return { status: 200, body: { ok: true, user: 'octocat' } }
+      }
+      if (url === '/api/ssh') return { status: 200, body: { publicKey: 'ssh-ed25519 AAAAserver', fingerprint: 'SHA256:fp', createdAt: 't' } }
+      return undefined
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<Home email="me@example.com" onLogout={vi.fn()} navigate={vi.fn()} />)
+
+    expect(await screen.findByTestId('ssh-gate')).toBeInTheDocument()
+    fireEvent.click(await screen.findByTestId('git-test'))
+    await screen.findByText('Run a command')
+    expect(probes).toBe(2)
+  })
 })

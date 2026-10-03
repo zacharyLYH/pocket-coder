@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Info } from 'lucide-react'
 import { BusyOverlay } from '@/components/BusyOverlay'
 import { ProjectsCard } from '@/components/ProjectsCard'
@@ -11,7 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { api, errMsg, probeSignal } from '@/lib/api'
+import { api, ApiError, errMsg, probeSignal } from '@/lib/api'
 import type { ExecResult, Project } from '@/lib/types'
 import { useAiConfig } from '@/hooks/useAiConfig'
 import { ButlerFab } from '@/components/ButlerFab'
@@ -27,18 +27,22 @@ export function Home({ email, onLogout, navigate }: {
 }) {
   const { projects, loading, error, refresh } = useProjects()
   const [busy, setBusy] = useState(false)
-  // Only the first probe starts at 'checking': rechecks (after Test or a
-  // regenerate) keep the current view until the answer lands, so the page
-  // swaps only when the verdict actually changes.
+  // The gate unlocks straight from a passed Test; checkSsh only runs on
+  // mount and after a regenerate.
   const [ssh, setSsh] = useState<'checking' | 'ok' | 'fail'>('checking')
   const { status: aiStatus, refresh: refreshAi } = useAiConfig()
-  const checkSsh = () => {
+  const logoutRef = useRef(onLogout)
+  logoutRef.current = onLogout
+  const checkSsh = useCallback(() => {
     api<{ ok: boolean }>('/api/ssh/test', { method: 'POST', signal: probeSignal() })
       .then(() => setSsh('ok'))
-      .catch(() => setSsh('fail'))
-  }
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 401) logoutRef.current()
+        else setSsh('fail')
+      })
+  }, [])
   const loadAi = () => { void refreshAi() }
-  useEffect(() => { checkSsh() }, [])
+  useEffect(() => { checkSsh() }, [checkSsh])
   useEffect(() => { void refreshAi() }, [refreshAi])
   const needsAttention = !aiStatus?.configured
   async function logout() {
@@ -81,7 +85,7 @@ export function Home({ email, onLogout, navigate }: {
               </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-3 px-4">
-              <GitCard onChanged={checkSsh} showRegenerate={false} />
+              <GitCard onTestSuccess={() => setSsh('ok')} showRegenerate={false} />
             </CardContent>
           </Card>
         )}
