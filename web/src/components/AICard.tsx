@@ -129,6 +129,7 @@ export function AICard({ onChanged }: { onChanged?: () => void }) {
 
   const condemned = models.find((m) => m.id === deleteId)
   const condemnedName = condemned ? condemned.label || condemned.model : ''
+  const [tooltipOpenId, setTooltipOpenId] = useState<string | null>(null)
 
   return (
     <div data-testid="ai-card" className="flex flex-col gap-2 overflow-hidden">
@@ -137,23 +138,27 @@ export function AICard({ onChanged }: { onChanged?: () => void }) {
         {saved && <span> saved</span>}
       </p>
       {models.length === 0 && <p className="text-sm text-muted-foreground">No models yet. Codemaps stay disabled until one is saved.</p>}
-      <TooltipProvider>
+        <TooltipProvider delayDuration={0}>
         {models.map((m) => (
         <div className="flex min-h-[44px] w-full items-center justify-between gap-2 overflow-hidden text-sm">
           <Input
             type="text"
-            defaultValue={m.label}
+           defaultValue={m.label}
             placeholder="Label"
             aria-label={`Label for ${m.model}`}
             className="min-h-[44px] w-20 shrink-0 font-mono text-xs sm:w-28"
             onBlur={(e) => { void saveLabel(m, e.target.value) }}
           />
-          <Tooltip>
+          <Tooltip open={tooltipOpenId === m.id} onOpenChange={(o) => setTooltipOpenId(o ? m.id : null)}>
             <TooltipTrigger asChild>
-              <span className="min-w-0 flex-1 cursor-help truncate text-xs text-muted-foreground" title={`${m.model}`}>{m.model}{testedId === m.id && ' tested'}</span>
+              <span
+                className="min-w-0 flex-1 cursor-help truncate text-xs text-muted-foreground"
+                title={`${m.model}`}
+                onClick={() => setTooltipOpenId(tooltipOpenId === m.id ? null : m.id)}
+              >{m.model}{testedId === m.id && ' tested'}</span>
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-xs">
-              <p className="font-mono text-xs">{m.model}</p>
+              <p className="font-mono text-xs break-all">{m.model}</p>
             </TooltipContent>
           </Tooltip>
           <span className="flex shrink-0 gap-1">

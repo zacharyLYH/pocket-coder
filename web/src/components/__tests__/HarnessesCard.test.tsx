@@ -127,14 +127,14 @@ describe('HarnessesCard', () => {
 
     // server rejection stays in the dialog
     fireEvent.change(within(dialog).getByPlaceholderText('Name (e.g. My Agent)'), { target: { value: 'dup' } })
-    fireEvent.change(within(dialog).getByPlaceholderText('Command (e.g. my-agent)'), { target: { value: 'dup' } })
+    fireEvent.change(within(dialog).getByPlaceholderText('Startup command (e.g. my-agent)'), { target: { value: 'dup' } })
     fireEvent.click(dialogSubmit())
     await waitFor(() => expect(screen.getByText('duplicate harness name')).toBeInTheDocument())
     expect(dialog).toBeInTheDocument() // dialog still open
 
     // a valid add closes the dialog and the new suggestion appears
     fireEvent.change(within(dialog).getByPlaceholderText('Name (e.g. My Agent)'), { target: { value: 'Mine' } })
-    fireEvent.change(within(dialog).getByPlaceholderText('Command (e.g. my-agent)'), { target: { value: 'mine' } })
+    fireEvent.change(within(dialog).getByPlaceholderText('Startup command (e.g. my-agent)'), { target: { value: 'mine' } })
     fireEvent.click(dialogSubmit())
     expect(await screen.findByText('Mine')).toBeInTheDocument()
   })

@@ -343,7 +343,7 @@ function AddHarnessDialog({ open, onOpenChange, onAdded }: {
             />
             <Input
               type="text"
-              placeholder="Command (e.g. my-agent)"
+              placeholder="Startup command (e.g. my-agent)"
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               required

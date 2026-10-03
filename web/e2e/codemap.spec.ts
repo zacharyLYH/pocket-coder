@@ -45,7 +45,7 @@ test.describe('codemap desktop', () => {
     await expect(page).toHaveScreenshot('codemap-ai-card.png', { fullPage: true })
   })
 
-  test('AI card with configured model does not overflow', async ({ page }) => {
+   test('AI card with configured model does not overflow', async ({ page }) => {
     await page.route('**/api/ai/models', async (route) => {
       await route.fulfill({
         status: 200,
@@ -64,6 +64,42 @@ test.describe('codemap desktop', () => {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
     expect(overflow).toBeLessThanOrEqual(1)
     await expect(page).toHaveScreenshot('codemap-ai-card-with-model.png', { fullPage: true })
+  })
+
+  test('AI card with long alias truncates without overflow', async ({ page }) => {
+    await page.route('**/api/ai/models', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ models: [{ id: 'm1', label: 'My Favorite Coding Assistant for Deep Reasoning and Analysis', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o', hasKey: true }] }),
+      })
+    })
+    await page.goto('/')
+    await page.getByTestId('setup-ai').click()
+    const dialog = page.getByRole('dialog')
+    // Model name is short (gpt-4o) but alias is long — alias input truncates.
+    await expect(dialog.getByText('gpt-4o')).toBeVisible()
+    // No horizontal scroll = the long alias is contained.
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(overflow).toBeLessThanOrEqual(1)
+    await expect(dialog).toHaveScreenshot('codemap-ai-card-long-alias.png')
+  })
+
+  test('AI card model name tooltip shows on click (mobile)', async ({ page }) => {
+    test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
+    await page.route('**/api/ai/models', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ models: [{ id: 'm1', label: 'test', baseURL: 'https://api.openai.com/v1', model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', hasKey: true }] }),
+      })
+    })
+    await page.goto('/')
+    await page.getByTestId('setup-ai').click()
+    const dialog = page.getByRole('dialog')
+    // On mobile, tap the truncated model name to show the full tooltip.
+    await dialog.locator('span').filter({ hasText: 'nvidia/nemotron' }).first().click()
+    await expect(dialog.getByText('nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free')).toBeVisible()
   })
 
   test('codemap tab hidden without a key', async ({ page }) => {

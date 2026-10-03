@@ -1,3 +1,4 @@
+import { RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { TerminalView } from '@/components/terminal/TerminalView'
@@ -5,6 +6,7 @@ import { LoginForm } from '@/components/LoginForm'
 import { LandingPage } from '@/components/LandingPage'
 import { Home } from '@/components/Home'
 import { PreviewSurface } from '@/components/PreviewSurface'
+import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { parsePreviewPath, parseTerminalPath } from '@/lib/paths'
 
 type AuthState = 'loading' | 'out' | 'in'
@@ -35,6 +37,7 @@ export default function App() {
   const [state, setState] = useState<AuthState>('loading')
   const [email, setEmail] = useState('')
   const [path, navigate, replace] = usePath()
+  const pulling = usePullToRefresh()
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -79,26 +82,58 @@ export default function App() {
   // renders, so a shared terminal link lands where it points.
   if (state === 'out') {
     if (path === '/') {
-      return <LandingPage onLogin={() => navigate('/login')} />
+      return (
+        <>
+          {pulling && <PullToRefreshIndicator />}
+          <LandingPage onLogin={() => navigate('/login')} />
+        </>
+      )
     }
-    return login
+    return (
+      <>
+        {pulling && <PullToRefreshIndicator />}
+        {login}
+      </>
+    )
   }
 
   // Logged in: /app is home; terminal and preview keep their URLs.
   const terminal = parseTerminalPath(path)
   if (terminal) {
     return (
-      <TerminalView
-        projectId={terminal.projectId}
-        initialSession={terminal.session}
-        onBack={() => navigate('/app')}
-        onOpenPreview={() => window.open(`/preview/${encodeURIComponent(terminal.projectId)}`, '_blank')}
-      />
+      <>
+        {pulling && <PullToRefreshIndicator />}
+        <TerminalView
+          projectId={terminal.projectId}
+          initialSession={terminal.session}
+          onBack={() => navigate('/app')}
+          onOpenPreview={() => window.open(`/preview/${encodeURIComponent(terminal.projectId)}`, '_blank')}
+        />
+      </>
     )
   }
   const previewId = parsePreviewPath(path)
   if (previewId !== null) {
-    return <PreviewSurface projectId={previewId} />
+    return (
+      <>
+        {pulling && <PullToRefreshIndicator />}
+        <PreviewSurface projectId={previewId} />
+      </>
+    )
   }
-  return home
+  return (
+    <>
+      {pulling && <PullToRefreshIndicator />}
+      {home}
+    </>
+  )
+}
+
+function PullToRefreshIndicator() {
+  return (
+    <div className="fixed top-0 left-0 right-0 z-[50] flex items-center justify-center gap-2 bg-background/95 py-2 backdrop-blur-sm">
+      <RefreshCw className="size-4 animate-spin text-primary" />
+      <span className="text-xs text-muted-foreground">Release to refresh</span>
+    </div>
+  )
 }
