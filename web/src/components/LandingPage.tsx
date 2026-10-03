@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { Star } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -23,6 +24,7 @@ export function LandingPage({ onLogin }: { onLogin: () => void }) {
           <img src="/icons/icon-192.png" alt="Pocket Coder" className="size-8 rounded-md" />
           <span className="text-[17px] font-semibold tracking-tight">Pocket Coder</span>
           <span className="flex-1" />
+          <StarButton />
           <Button size="sm" onClick={onLogin}>
             Log in
           </Button>
@@ -91,6 +93,29 @@ export function LandingPage({ onLogin }: { onLogin: () => void }) {
         </footer>
       </main>
     </div>
+  )
+}
+
+// StarButton links to the repo and shows the live count. The count comes
+// from the public GitHub API, no key needed. If the fetch fails the link
+// still works, it just reads "Star".
+function StarButton() {
+  const [stars, setStars] = useState<number | null>(null)
+  useEffect(() => {
+    fetch(`https://api.github.com/repos/${GITHUB_URL.split('github.com/')[1]}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { stargazers_count?: number } | null) => {
+        if (typeof d?.stargazers_count === 'number') setStars(d.stargazers_count)
+      })
+      .catch(() => {})
+  }, [])
+  return (
+    <Button variant="outline" size="sm" asChild>
+      <a href={GITHUB_URL} target="_blank" rel="noreferrer" aria-label="Star Pocket Coder on GitHub">
+        <Star className="size-4" />
+        {stars === null ? 'Star' : stars.toLocaleString()}
+      </a>
+    </Button>
   )
 }
 

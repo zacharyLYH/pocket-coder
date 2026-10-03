@@ -12,6 +12,7 @@ import (
 
 	"pcoder/internal/docker"
 	"pcoder/internal/project"
+	"pcoder/internal/state"
 	"pcoder/internal/state/statetest"
 )
 
@@ -58,12 +59,12 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 		t.Fatalf("created = %+v (want id=x/hello repo=%s branch=\"\"), err=%v", created, want, err)
 	}
 
-	// the source of truth on disk is exactly this project — repo only
-	// (branch empty → omitted), nothing else in the document
+	// the source of truth on disk is exactly this project — repo plus the
+	// default shortcuts (branch empty → omitted), nothing else in the document
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": ""},
 		"projects": map[string]any{
-			created.ID: map[string]any{"repo": "git@github.com:x/hello.git"},
+			created.ID: map[string]any{"repo": "git@github.com:x/hello.git", "shortcuts": state.DefaultShortcuts()},
 		},
 	})
 

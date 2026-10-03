@@ -108,7 +108,7 @@ func TestCreateDerivesIDFromRepo(t *testing.T) {
 	if id != "x/hello" {
 		t.Fatalf("id = %q, want x/hello", id)
 	}
-	want := Project{Repo: "git@github.com:x/hello.git", Branch: ""}
+	want := Project{Repo: "git@github.com:x/hello.git", Branch: "", Shortcuts: state.DefaultShortcuts()}
 	if !reflect.DeepEqual(p, want) {
 		t.Fatalf("project = %+v, want %+v", p, want)
 	}
@@ -182,7 +182,7 @@ func TestCreateClonesInsideContainer(t *testing.T) {
 			t.Fatalf("create: %v", err)
 		}
 		wantBranch := tc.branch
-		want := Project{Repo: "git@github.com:x/hello.git", Branch: wantBranch}
+		want := Project{Repo: "git@github.com:x/hello.git", Branch: wantBranch, Shortcuts: state.DefaultShortcuts()}
 		if !reflect.DeepEqual(p, want) {
 			t.Fatalf("project = %+v, want %+v", p, want)
 		}

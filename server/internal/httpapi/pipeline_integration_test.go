@@ -175,9 +175,12 @@ func TestCloneFailureLiveKeepsProjectAndLogsError(t *testing.T) {
 	id := entries[0].ID
 	deleteTestProject(t, h, cookie, id)
 	code, body = doJSON(t, h, cookie, http.MethodGet, projectPath(id, ""), "")
-	wantStatus := map[string]any{"id": id, "repo": badURL, "branch": "", "status": "running", "shortcuts": nil}
-	if code != http.StatusOK || !reflect.DeepEqual(body, wantStatus) {
-		t.Fatalf("post-failure status: got %d %v, want %v", code, body, wantStatus)
+	if code != http.StatusOK || body["id"] != id || body["repo"] != badURL || body["branch"] != "" || body["status"] != "running" {
+		t.Fatalf("post-failure status: got %d %v, want id=%s repo=%s running", code, body, id, badURL)
+	}
+	shortcuts, _ := body["shortcuts"].([]any)
+	if len(shortcuts) == 0 {
+		t.Fatalf("new project should carry default shortcuts, got %v", body["shortcuts"])
 	}
 	code, body = doJSON(t, h, cookie, http.MethodGet, projectPath(id, "/observe?type=project.clone&level=error"), "")
 	if code != http.StatusOK {

@@ -149,11 +149,11 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 		t.Fatalf("failed clone id = %q, want x/fail", idE)
 	}
 	statetest.AssertSection(t, st.Path(), "projects", map[string]any{
-		idA: map[string]any{"repo": "git@github.com:x/hello.git"},
-		idB: map[string]any{"repo": "git@github.com:x/world.git"},
-		idC: map[string]any{"repo": "git@github.com:me/private.git"},
-		idD: map[string]any{"repo": "git@github.com:y/hello.git", "branch": "dev"},
-		idE: map[string]any{"repo": "git@github.com:x/fail.git"},
+		idA: map[string]any{"repo": "git@github.com:x/hello.git", "shortcuts": state.DefaultShortcuts()},
+		idB: map[string]any{"repo": "git@github.com:x/world.git", "shortcuts": state.DefaultShortcuts()},
+		idC: map[string]any{"repo": "git@github.com:me/private.git", "shortcuts": state.DefaultShortcuts()},
+		idD: map[string]any{"repo": "git@github.com:y/hello.git", "branch": "dev", "shortcuts": state.DefaultShortcuts()},
+		idE: map[string]any{"repo": "git@github.com:x/fail.git", "shortcuts": state.DefaultShortcuts()},
 	})
 
 	// ─── 3. interleaved operations ───────────────────────────────────────
@@ -221,12 +221,12 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 			"cfg-agent": map[string]any{"id": "cfg-agent", "name": "Cfg Agent", "command": "cfg-agent", "install": "pip install cfg-agent"},
 		},
 		"projects": map[string]any{
-			idA: map[string]any{"repo": "git@github.com:x/hello.git", "harnesses": []any{"my-agent"}, "sessions": map[string]any{"fake-1": map[string]any{"harness": "fake"}}},
+			idA: map[string]any{"repo": "git@github.com:x/hello.git", "harnesses": []any{"my-agent"}, "sessions": map[string]any{"fake-1": map[string]any{"harness": "fake"}}, "shortcuts": state.DefaultShortcuts()},
 			// scope=repo removed the container, the record survives (install record stays even though harness was deleted)
-			idC: map[string]any{"repo": "git@github.com:me/private.git", "harnesses": []any{"my-agent"}},
+			idC: map[string]any{"repo": "git@github.com:me/private.git", "harnesses": []any{"my-agent"}, "shortcuts": state.DefaultShortcuts()},
 			// the failed-clone project survives too (retryable project)
-			idE: map[string]any{"repo": "git@github.com:x/fail.git"},
-			idF: map[string]any{"repo": "git@github.com:x/final.git"},
+			idE: map[string]any{"repo": "git@github.com:x/fail.git", "shortcuts": state.DefaultShortcuts()},
+			idF: map[string]any{"repo": "git@github.com:x/final.git", "shortcuts": state.DefaultShortcuts()},
 		},
 	})
 }

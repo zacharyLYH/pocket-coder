@@ -93,8 +93,9 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 	}
 
 	// everything so far is already persisted — and the file is EXACTLY the
-	// sum of what the API did: user, identity, harnesses, server key, project.
-	// The private half is asserted present (never asserted by value).
+	// sum of what the API did: user, identity, harnesses, server key, project
+	// (with its default shortcuts). The private half is asserted present
+	// (never asserted by value).
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": "me@example.com"},
 		"harnesses": map[string]any{
@@ -108,7 +109,7 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 			"createdAt":   kp.CreatedAt,
 		},
 		"projects": map[string]any{
-			proj.ID: map[string]any{"repo": "git@github.com:x/hello.git"},
+			proj.ID: map[string]any{"repo": "git@github.com:x/hello.git", "shortcuts": state.DefaultShortcuts()},
 		},
 	})
 
