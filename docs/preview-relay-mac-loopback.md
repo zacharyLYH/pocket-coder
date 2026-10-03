@@ -1,5 +1,36 @@
 # Preview relay unreachable from a containerized server on Docker Desktop
 
+## Follow-up: relay by name fails Chromium's Host check — use the relay bridge IP
+
+**Symptom.** After the by-name fix below, previews still hung: `WaitForCDP`
+polled until the 120s timeout despite a healthy relay.
+
+**Evidence (live relay, mid-retry).** DNS resolves the relay name to
+172.18.0.6 from inside the server; socat listens on 0.0.0.0:9223 and the
+sidecar proxy returns 200 with valid version JSON. But from the server,
+the same URL by relay IP returns 200 while by container name returns
+HTTP 500, consistently — and a fake-IP Host header (`Host: 9.9.9.9:9223`)
+also returns 200 while `Host: <name>:9223` fails.
+
+**Cause.** socat forwards TCP untouched, so Chromium's DevTools server sees
+our Host header verbatim and rejects non-IP hosts (DNS-rebinding
+protection). Any container-name endpoint is unworkable against it.
+
+**Fix.** `startRelay` (`server/internal/preview/docker_runtime.go`) builds
+the endpoint from the relay's bridge IP read out of `Inspect` right after
+`Run` — no freshness concern — and fails fast with `preview relay has no
+bridge IP` when it is empty. So the endpoint is now
+`http://<relay-bridge-IP>:9223` (and `:6080` for noVNC). The loopback
+publications and their readiness check stay: still useful for host-side
+debugging. Unit coverage: `TestDockerFactoryRelayOnDesktop` answers only
+on the relay IP, plus `TestDockerFactoryRelayWithoutBridgeIPFails` for the
+empty-IP path.
+
+**How to verify.** `go test ./internal/preview/ -run
+TestDockerFactoryRelayOnDesktop -count=1 -v` (the log's `start relay` line
+should show a `cdp` IP URL), then the full package, then regenerate a
+preview group on a Mac (`UPDATE_SNAPSHOTS=1 sh e2e-parallel.sh preview.d`).
+
 ## Gory detail (paste this at an AI when asking about preview failures)
 
 **Symptom.** On a Mac, any flow that opens a preview fails: the preview/app/stack

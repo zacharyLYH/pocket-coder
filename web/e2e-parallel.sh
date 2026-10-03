@@ -46,9 +46,10 @@ stack|2|e2e/terminal.stack.spec.ts
 sessions|3|e2e/terminal.session.spec.ts e2e/terminal.mobile.spec.ts e2e/nerdy.mobile.spec.ts e2e/nerdy.desktop.spec.ts e2e/harness.inject.spec.ts e2e/harness.orchestration.spec.ts e2e/harness.relaunch.spec.ts
 visual|4|e2e/home.visual.spec.ts e2e/settings.spec.ts e2e/codemap.spec.ts e2e/butler.spec.ts e2e/butler.live.spec.ts e2e/butler.confirm.spec.ts e2e/pulltorefresh.mobile.spec.ts
 preview.a|5|e2e/preview.tools.spec.ts
-preview.b|6|e2e/preview.token.spec.ts e2e/preview.fit.spec.ts e2e/preview.vanilla.spec.ts
+preview.b|6|e2e/preview.token.spec.ts
 preview.c|7|e2e/preview.journey.spec.ts e2e/preview.auth.spec.ts e2e/preview.viewport.spec.ts
 preview.d|8|e2e/preview.htmx.spec.ts e2e/preview.vue.spec.ts e2e/preview.reconnect.spec.ts e2e/preview.port.spec.ts e2e/shortcuts.spec.ts
+preview.e|10|e2e/preview.fit.spec.ts e2e/preview.vanilla.spec.ts
 bootstrap|9|e2e/bootstrap.spec.ts
 '
 
@@ -58,7 +59,7 @@ NL="$(printf '\nx')"; NL="${NL%x}"
 for w in $WANTED; do
   case "$NL$ALL_GROUPS" in
     *"$NL$w|"*) ;;
-    *) echo "e2e-parallel.sh: unknown group '$w' — valid: app stack sessions visual preview.a preview.b preview.c preview.d bootstrap" >&2; exit 2 ;;
+    *) echo "e2e-parallel.sh: unknown group '$w' — valid: app stack sessions visual preview.a preview.b preview.c preview.d preview.e bootstrap" >&2; exit 2 ;;
   esac
 done
 
@@ -157,7 +158,7 @@ aggregate_progress() {
   NL="$(printf '\nx')"; NL="${NL%x}"
   elapsed=$(($(date +%s) - RUN_EPOCH))
   out=""
-  for name in app stack sessions visual preview.a preview.b preview.c preview.d bootstrap; do
+  for name in app stack sessions visual preview.a preview.b preview.c preview.d preview.e bootstrap; do
     case " $WANTED " in *" $name "*|"  ") ;; *) continue ;; esac
     prog="test-results/$name/progress.md"
     if group_running "$name"; then state="running"; else state="done"; fi
@@ -199,7 +200,7 @@ aggregate_progress
 echo
 echo "live checklist: test-results/progress.md"
 fail=$group_fail
-for name in app stack sessions visual preview.a preview.b preview.c preview.d bootstrap; do
+for name in app stack sessions visual preview.a preview.b preview.c preview.d preview.e bootstrap; do
   case " $WANTED " in *" $name "*|"  ") ;; *) continue ;; esac
   log="test-results/$name.log"
   prog="test-results/$name/progress.md"

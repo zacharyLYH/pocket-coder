@@ -45,9 +45,10 @@ func TestWaitForCDPHonorsCancellation(t *testing.T) {
 
 const (
 	sidecarIP      = "10.0.0.8"
+	relayIP        = "10.0.0.9"
 	directEndpoint = "http://" + sidecarIP + ":9223"
-	relayCDP       = "http://" + relayNamePrefix + "p2:9223"
-	relayDisplay   = "http://" + relayNamePrefix + "p2:6080"
+	relayCDP       = "http://" + relayIP + ":9223"
+	relayDisplay   = "http://" + relayIP + ":6080"
 )
 
 type runtimeDockerFake struct {
@@ -55,6 +56,7 @@ type runtimeDockerFake struct {
 	removed     []string
 	inspect     docker.Container // returned for the sidecar
 	relayPub    map[int]int      // returned for the relay (nil → no publications)
+	relayIP     string           // returned for the relay ("" → no bridge IP)
 	runErr      error            // first Run fails with this (then nil)
 	inspectSeen int
 }
@@ -75,7 +77,7 @@ func (f *runtimeDockerFake) Run(_ context.Context, spec docker.Spec) (string, er
 func (f *runtimeDockerFake) Inspect(_ context.Context, id string) (docker.Container, error) {
 	f.inspectSeen++
 	if id == "relay-cid" {
-		return docker.Container{Running: true, Status: "running", Published: f.relayPub}, nil
+		return docker.Container{Running: true, Status: "running", NetworkIP: f.relayIP, Published: f.relayPub}, nil
 	}
 	return f.inspect, nil
 }
@@ -135,10 +137,11 @@ func TestDockerFactoryRelayOnDesktop(t *testing.T) {
 	fake := &runtimeDockerFake{
 		inspect:  docker.Container{Running: true, Status: "running", NetworkIP: sidecarIP},
 		relayPub: map[int]int{9223: 49153, 6080: 49154},
+		relayIP:  relayIP,
 	}
 	// The sidecar IP is unroutable from the host (Docker Desktop); only the
-	// relay answers, by container name on the shared network.
-	client := cdpClient(t, relayNamePrefix+"p2:9223")
+	// relay answers, by bridge IP (Chromium rejects non-IP Host headers).
+	client := cdpClient(t, relayIP+":9223")
 	factory := &DockerFactory{Docker: fake, HTTPClient: client, PollEvery: time.Millisecond}
 	w, err := factory.Start(context.Background(), Config{ProjectID: "p2", ContainerID: "pcoder-p2"})
 	if err != nil {
@@ -161,7 +164,7 @@ func TestDockerFactoryRelayOnDesktop(t *testing.T) {
 		t.Fatalf("relay cmd = %q", relay.Cmd[0])
 	}
 	if got := w.Endpoint(); got.CDP != relayCDP || got.Display != relayDisplay {
-		t.Fatalf("endpoint = %#v, want relay container name", got)
+		t.Fatalf("endpoint = %#v, want relay bridge IP", got)
 	}
 	// Closing the worker must tear down BOTH containers.
 	_ = w.Close(context.Background())
@@ -181,6 +184,17 @@ func TestDockerFactoryRelayWithoutPublicationsFails(t *testing.T) {
 	}
 }
 
+func TestDockerFactoryRelayWithoutBridgeIPFails(t *testing.T) {
+	fake := &runtimeDockerFake{inspect: docker.Container{Running: true, Status: "running", NetworkIP: sidecarIP},
+		relayPub: map[int]int{9223: 49153, 6080: 49154} /* relayIP unset */}
+	factory := &DockerFactory{Docker: fake, HTTPClient: cdpClient(t), PollEvery: time.Millisecond}
+	if _, err := factory.Start(context.Background(), Config{ProjectID: "p7", ContainerID: "pcoder-p7"}); err == nil {
+		t.Fatal("expected error for missing relay bridge IP")
+	}
+	if len(fake.removed) != 2 {
+		t.Fatalf("removed = %v, want sidecar + failed relay cleaned up", fake.removed)
+	}
+}
 func TestDockerFactoryExitedSidecarFails(t *testing.T) {
 	fake := &runtimeDockerFake{inspect: docker.Container{Running: false, Status: "exited"}}
 	factory := &DockerFactory{Docker: fake, HTTPClient: cdpClient(t)}
@@ -194,7 +208,7 @@ func TestDockerFactoryExitedSidecarFails(t *testing.T) {
 
 func TestDockerFactoryCDPTimeoutFailsAndCleansUp(t *testing.T) {
 	fake := &runtimeDockerFake{inspect: docker.Container{Running: true, Status: "running", NetworkIP: sidecarIP},
-		relayPub: map[int]int{9223: 49153, 6080: 49154}}
+		relayPub: map[int]int{9223: 49153, 6080: 49154}, relayIP: relayIP}
 	// The relay answers Inspect but CDP never answers through it: the wait
 	// must time out (bounded) and clean up sidecar + relay.
 	factory := &DockerFactory{Docker: fake, HTTPClient: cdpClient(t), PollEvery: time.Millisecond, CDPWait: 20 * time.Millisecond}

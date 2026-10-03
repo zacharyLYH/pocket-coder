@@ -159,6 +159,13 @@ func handlePreviewClose(d Deps) http.HandlerFunc {
 // handlePreviewSurface forwards noVNC assets and its websocket through the
 // authenticated PCODER origin. The worker endpoint is private and never placed
 // in a Location header or JSON response.
+//
+// The token gate accepts the capability from the query or, when the query is
+// absent, from the per-project cookie the entry document sets (see
+// docs/preview-surface-token-gate.md): noVNC's entry document loads with
+// ?token=, but its relative module imports ("./core/rfb.js") resolve against
+// the document URL and drop the query, so without the cookie every asset
+// 404s, noVNC never constructs its canvas, and the surface renders blank.
 func handlePreviewSurface(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -168,7 +175,22 @@ func handlePreviewSurface(d Deps) http.HandlerFunc {
 				obsFail(r, obs.PreviewSurface, "preview surface failed", err, nil)
 			}
 		}()
-		if !d.Preview.CheckToken(id, r.URL.Query().Get("token")) {
+		prefix := "/api/projects/" + id + "/preview/"
+		path := strings.TrimPrefix(r.URL.Path, prefix)
+		if path == "" {
+			path = "vnc.html"
+		}
+		// An explicit ?token= is authoritative: a wrong or rotated one 404s
+		// even when a live cookie is present, so the cookie can only ever
+		// carry a capability that already passed this gate once.
+		sup := r.URL.Query().Get("token")
+		explicit := sup != ""
+		if !explicit {
+			if c, cerr := r.Cookie(previewSurfaceCookieName(id)); cerr == nil {
+				sup = c.Value
+			}
+		}
+		if !d.Preview.CheckToken(id, sup) {
 			writeErr(w, http.StatusNotFound, "not found")
 			return
 		}
@@ -188,20 +210,26 @@ func handlePreviewSurface(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "parse preview surface endpoint", perr)
 			return
 		}
-		prefix := "/api/projects/" + r.PathValue("id") + "/preview/"
-		path := strings.TrimPrefix(r.URL.Path, prefix)
-		if path == "" {
-			path = "vnc.html"
-		}
 		if hasDotDotSegment(path) {
 			writeErr(w, http.StatusBadRequest, "invalid preview path")
 			return
 		}
 		// One event per page open: the noVNC entry document loads once per
 		// visit, while its assets and the websockify stream share this
-		// handler and would spam the log.
+		// handler and would spam the log. The entry document is also where
+		// the capability changes hands to the cookie the relative module
+		// imports will be sent back with.
 		if path == "vnc.html" || path == "vnc_lite.html" {
 			obs.Info(r.Context(), obs.PreviewOpen, "Preview opened", nil)
+			if explicit {
+				http.SetCookie(w, &http.Cookie{
+					Name:     previewSurfaceCookieName(id),
+					Value:    sup,
+					Path:     surfaceCookiePath,
+					HttpOnly: true,
+					SameSite: http.SameSiteLaxMode,
+				})
+			}
 		}
 		proxy := newPreviewProxy(target, path)
 		proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
@@ -212,6 +240,20 @@ func handlePreviewSurface(d Deps) http.HandlerFunc {
 		}
 		proxy.ServeHTTP(w, r)
 	}
+}
+
+// surfaceCookiePath is the shared cookie scope for the surface capability.
+// It cannot be narrowed to the project's surface prefix: the browser requests
+// carry the id percent-encoded ("e2e%2Ffoo") while the id here is decoded, so
+// a per-project path would never match an id containing a slash.
+const surfaceCookiePath = "/api/projects"
+
+// previewSurfaceCookieName scopes the capability cookie to one project, so
+// two previews open in the same browser never overwrite each other. The id is
+// query-escaped because a cookie name only accepts RFC 6265 token characters
+// and project ids contain separators such as "/".
+func previewSurfaceCookieName(id string) string {
+	return "pcoder_preview_" + url.QueryEscape(id)
 }
 
 func newPreviewProxy(target *url.URL, path string) *httputil.ReverseProxy {

@@ -107,6 +107,67 @@ func TestPreviewSurfaceRequiresToken(t *testing.T) {
 	}
 }
 
+// The entry document loads with ?token=, but noVNC's relative module imports
+// (./core/rfb.js, …) drop the query when they resolve against the document
+// URL. Without a cookie hand-off every asset 404s and the canvas never
+// renders (docs/preview-surface-token-gate.md), so: tokenless assets stay
+// gated, the entry document hands the capability over as a cookie, and that
+// cookie then admits the assets it was minted for.
+func TestPreviewSurfaceCookieCarriesAssetImports(t *testing.T) {
+	script := &scriptedCDP{navigateResult: `{}`}
+	script.eval = func(string) string { return evalValue(`{"state":"complete","href":"http://127.0.0.1:3000/"}`) }
+	h, cookie, tok := tokenDeps(t, script, "ptok-cookie")
+	base := "/api/projects/ptok-cookie/preview/"
+
+	// Nothing to carry the capability yet: the gate still 404s.
+	if rec := authedGetToken(t, h, cookie, http.MethodGet, base+"core/rfb.js", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("tokenless asset = %d body=%s", rec.Code, rec.Body)
+	}
+
+	// The entry document, opened with a valid ?token=, answers 200 and hands
+	// the same capability to a cookie the asset requests can inherit.
+	entry := httptest.NewRequest(http.MethodGet, base+"vnc_lite.html?token="+tok, nil)
+	entry.AddCookie(cookie)
+	erec := httptest.NewRecorder()
+	h.ServeHTTP(erec, entry)
+	if erec.Code != http.StatusOK {
+		t.Fatalf("entry = %d body=%s", erec.Code, erec.Body)
+	}
+	var capability *http.Cookie
+	for _, c := range erec.Result().Cookies() {
+		if c.Name == previewSurfaceCookieName("ptok-cookie") {
+			capability = c
+		}
+	}
+	if capability == nil || capability.Value != tok {
+		t.Fatalf("capability cookie = %+v, want value %q", capability, tok)
+	}
+	if !capability.HttpOnly || capability.Path != surfaceCookiePath {
+		t.Fatalf("capability cookie attrs = httpOnly=%v path=%q, want httpOnly over %q", capability.HttpOnly, capability.Path, surfaceCookiePath)
+	}
+
+	// A relative module import: same request, no query token, cookie only.
+	asset := httptest.NewRequest(http.MethodGet, base+"core/rfb.js", nil)
+	asset.AddCookie(cookie)
+	asset.AddCookie(capability)
+	arec := httptest.NewRecorder()
+	h.ServeHTTP(arec, asset)
+	if arec.Code != http.StatusOK {
+		t.Fatalf("cookie-carried asset = %d body=%s", arec.Code, arec.Body)
+	}
+
+	// An explicit token still wins over a live cookie: a wrong or rotated one
+	// must 404 rather than be papered over by the cookie fallback.
+	stale := httptest.NewRequest(http.MethodGet, base+"core/rfb.js?token=wrong", nil)
+	stale.AddCookie(cookie)
+	stale.AddCookie(capability)
+	srec := httptest.NewRecorder()
+	h.ServeHTTP(srec, stale)
+	if srec.Code != http.StatusNotFound {
+		t.Fatalf("wrong query token + live cookie = %d body=%s", srec.Code, srec.Body)
+	}
+}
+
 func TestPreviewHeartbeatTouchesAndRejects(t *testing.T) {
 	script := &scriptedCDP{navigateResult: `{}`}
 	script.eval = func(string) string { return evalValue(`{"state":"complete","href":"http://127.0.0.1:3000/"}`) }

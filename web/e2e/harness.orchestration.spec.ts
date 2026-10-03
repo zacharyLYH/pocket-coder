@@ -150,6 +150,7 @@ test.describe('harness installs are desired state', () => {
       const bSessions1 = await request.get(`/api/projects/${projectURL(idBeta)}/sessions`)
       const bBody1 = (await bSessions1.json()) as { sessions: { name: string }[] }
       expect(bBody1.sessions.map((s) => s.name)).not.toContain('shared-name')
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
       await gateShot(page, 'gate3-shell-session')
 
       await page.getByTestId('tab-new').click()
@@ -195,6 +196,7 @@ test.describe('harness installs are desired state', () => {
       await expect(page.getByTestId('tab-session-renamed')).toBeVisible()
       await expect(page.getByTestId('tab-session-my-fake')).toBeVisible()
       await expect(page.getByTestId('tab-session-shared-name')).toBeVisible()
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
       await gateShot(page, 'gate4-renamed')
       await page.getByTestId('tab-session-renamed').click()
       await expect(page.getByTestId('tab-session-renamed')).toHaveAttribute('aria-selected', 'true')

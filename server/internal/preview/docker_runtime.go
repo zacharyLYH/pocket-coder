@@ -241,9 +241,10 @@ func directCDPReady(ctx context.Context, client *http.Client, endpoint string, p
 }
 
 // startRelay starts the Docker Desktop fallback: a container on pcoder-net
-// that socat-forwards the sidecar's CDP and noVNC. The server reaches it by
-// container name on the shared network (user-defined networks resolve names);
-// the loopback publications stay for host-side debugging.
+// that socat-forwards the sidecar's CDP and noVNC. The endpoint uses the
+// relay's bridge IP, not its container name: socat passes TCP through
+// untouched, so Chromium sees our Host header verbatim and rejects
+// non-IP hosts (DevTools DNS-rebinding protection).
 func (f *DockerFactory) startRelay(ctx context.Context, projectID, sidecarIP string) (string, Endpoint, error) {
 	image := f.Image
 	if image == "" {
@@ -278,9 +279,13 @@ func (f *DockerFactory) startRelay(ctx context.Context, projectID, sidecarIP str
 		_ = f.Docker.Remove(ctx, id, true)
 		return "", Endpoint{}, fmt.Errorf("preview relay has no loopback publications (cdp %d, display %d)", cdpHost, dispHost)
 	}
+	if c.NetworkIP == "" {
+		_ = f.Docker.Remove(ctx, id, true)
+		return "", Endpoint{}, fmt.Errorf("preview relay has no bridge IP")
+	}
 	return id, Endpoint{
-		CDP:     "http://" + spec.Name + ":" + strconv.Itoa(cdpPort),
-		Display: "http://" + spec.Name + ":" + strconv.Itoa(novncPort),
+		CDP:     "http://" + net.JoinHostPort(c.NetworkIP, strconv.Itoa(cdpPort)),
+		Display: "http://" + net.JoinHostPort(c.NetworkIP, strconv.Itoa(novncPort)),
 	}, nil
 }
 
