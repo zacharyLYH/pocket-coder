@@ -38,7 +38,7 @@ const (
 	// boots behind two socat hops.
 	cdpWaitTimeout = 120 * time.Second
 
-	// relayNamePrefix identifies the loopback relay container (see Start).
+	// relayNamePrefix identifies the preview relay container (see Start).
 	relayNamePrefix = "pcoder-preview-relay-"
 )
 
@@ -241,9 +241,9 @@ func directCDPReady(ctx context.Context, client *http.Client, endpoint string, p
 }
 
 // startRelay starts the Docker Desktop fallback: a container on pcoder-net
-// that socat-forwards the sidecar's CDP and noVNC to its bridge IP, with
-// the ports published on host loopback (engine-assigned). Reuses the
-// browser image: it already ships socat.
+// that socat-forwards the sidecar's CDP and noVNC. The server reaches it by
+// container name on the shared network (user-defined networks resolve names);
+// the loopback publications stay for host-side debugging.
 func (f *DockerFactory) startRelay(ctx context.Context, projectID, sidecarIP string) (string, Endpoint, error) {
 	image := f.Image
 	if image == "" {
@@ -256,7 +256,7 @@ func (f *DockerFactory) startRelay(ctx context.Context, projectID, sidecarIP str
 		Entrypoint:      []string{"sh", "-c"},
 		PublishLoopback: []int{cdpPort, novncPort},
 		Cmd: []string{fmt.Sprintf(
-			"socat TCP-LISTEN:%d,fork,reuseaddr TCP:%s:%d & socat TCP-LISTEN:%d,fork,reuseaddr TCP:%s:%d; wait",
+			"socat TCP-LISTEN:%d,fork,bind=0.0.0.0,reuseaddr TCP:%s:%d & socat TCP-LISTEN:%d,fork,bind=0.0.0.0,reuseaddr TCP:%s:%d; wait",
 			cdpPort, sidecarIP, cdpPort, novncPort, sidecarIP, novncPort,
 		)},
 	}
@@ -279,8 +279,8 @@ func (f *DockerFactory) startRelay(ctx context.Context, projectID, sidecarIP str
 		return "", Endpoint{}, fmt.Errorf("preview relay has no loopback publications (cdp %d, display %d)", cdpHost, dispHost)
 	}
 	return id, Endpoint{
-		CDP:     "http://127.0.0.1:" + strconv.Itoa(cdpHost),
-		Display: "http://127.0.0.1:" + strconv.Itoa(dispHost),
+		CDP:     "http://" + spec.Name + ":" + strconv.Itoa(cdpPort),
+		Display: "http://" + spec.Name + ":" + strconv.Itoa(novncPort),
 	}, nil
 }
 

@@ -46,8 +46,8 @@ func TestWaitForCDPHonorsCancellation(t *testing.T) {
 const (
 	sidecarIP      = "10.0.0.8"
 	directEndpoint = "http://" + sidecarIP + ":9223"
-	relayCDP       = "http://127.0.0.1:49153"
-	relayDisplay   = "http://127.0.0.1:49154"
+	relayCDP       = "http://" + relayNamePrefix + "p2:9223"
+	relayDisplay   = "http://" + relayNamePrefix + "p2:6080"
 )
 
 type runtimeDockerFake struct {
@@ -137,8 +137,8 @@ func TestDockerFactoryRelayOnDesktop(t *testing.T) {
 		relayPub: map[int]int{9223: 49153, 6080: 49154},
 	}
 	// The sidecar IP is unroutable from the host (Docker Desktop); only the
-	// relay's loopback publication answers.
-	client := cdpClient(t, "127.0.0.1:49153")
+	// relay answers, by container name on the shared network.
+	client := cdpClient(t, relayNamePrefix+"p2:9223")
 	factory := &DockerFactory{Docker: fake, HTTPClient: client, PollEvery: time.Millisecond}
 	w, err := factory.Start(context.Background(), Config{ProjectID: "p2", ContainerID: "pcoder-p2"})
 	if err != nil {
@@ -161,7 +161,7 @@ func TestDockerFactoryRelayOnDesktop(t *testing.T) {
 		t.Fatalf("relay cmd = %q", relay.Cmd[0])
 	}
 	if got := w.Endpoint(); got.CDP != relayCDP || got.Display != relayDisplay {
-		t.Fatalf("endpoint = %#v, want loopback relay ports", got)
+		t.Fatalf("endpoint = %#v, want relay container name", got)
 	}
 	// Closing the worker must tear down BOTH containers.
 	_ = w.Close(context.Background())
