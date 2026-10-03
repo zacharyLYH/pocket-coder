@@ -36,7 +36,7 @@ test.describe('codemap desktop', () => {
   test.use({ viewport: { width: 1280, height: 720 }, timezoneId: 'UTC' })
 
   test('AI card renders on home', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/app')
     await page.getByTestId('setup-ai').click()
     const dialog = page.getByRole('dialog')
     await expect(dialog.getByTestId('ai-card')).toBeVisible()
@@ -53,7 +53,7 @@ test.describe('codemap desktop', () => {
         body: JSON.stringify({ models: [{ id: 'm1', label: 'test', baseURL: 'https://api.openai.com/v1', model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', hasKey: true }] }),
       })
     })
-    await page.goto('/')
+    await page.goto('/app')
     await page.getByTestId('setup-ai').click()
     const dialog = page.getByRole('dialog')
     // The model row should render inside the dialog.
@@ -74,7 +74,7 @@ test.describe('codemap desktop', () => {
         body: JSON.stringify({ models: [{ id: 'm1', label: 'My Favorite Coding Assistant for Deep Reasoning and Analysis', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o', hasKey: true }] }),
       })
     })
-    await page.goto('/')
+    await page.goto('/app')
     await page.getByTestId('setup-ai').click()
     const dialog = page.getByRole('dialog')
     // Model name is short (gpt-4o) but alias is long — alias input truncates.
@@ -94,7 +94,7 @@ test.describe('codemap desktop', () => {
         body: JSON.stringify({ models: [{ id: 'm1', label: 'test', baseURL: 'https://api.openai.com/v1', model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', hasKey: true }] }),
       })
     })
-    await page.goto('/')
+    await page.goto('/app')
     await page.getByTestId('setup-ai').click()
     const dialog = page.getByRole('dialog')
     // On mobile, tap the truncated model name to show the full tooltip.

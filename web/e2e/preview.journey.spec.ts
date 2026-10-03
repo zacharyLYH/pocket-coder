@@ -14,7 +14,7 @@ test.describe('preview user journey', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createPrecreatedProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       await expect(page.getByTestId(`project-card-${projectID}`)).toBeVisible({ timeout: 10_000 })
       await page.getByTestId(`project-card-${projectID}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
@@ -79,7 +79,7 @@ test.describe('preview user journey', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createPrecreatedProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       await page.getByTestId(`project-card-${projectID}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
       await page.getByTestId('tab-shortcuts').click()
@@ -129,7 +129,7 @@ test.describe('preview user journey', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createPrecreatedProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       await page.getByTestId(`project-card-${projectID}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
       await page.getByTestId('tab-shortcuts').click()

@@ -23,7 +23,7 @@ test.describe('preview chromium viewports', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
 
@@ -82,7 +82,7 @@ test.describe('preview chromium viewports', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
 

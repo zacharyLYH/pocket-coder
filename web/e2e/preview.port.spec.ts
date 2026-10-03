@@ -23,7 +23,7 @@ test.describe('preview non-default port', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createRunningViteProjectOnPort(request, 4001, reactFiles)
-      await page.goto('/')
+      await page.goto('/app')
       // Reuse the home → terminal → preview flow, parameterized by port.
       // The helper clicks the :4001 port button + the Open button and
       // returns the popup that hosts PreviewSurface.

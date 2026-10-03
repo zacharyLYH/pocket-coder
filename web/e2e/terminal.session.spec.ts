@@ -6,7 +6,7 @@ import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp } f
 // sessions, real harness registry, real WebSocket.
 
 async function createProjectAndOpenTerminal(page: Page) {
-  await page.goto('/')
+  await page.goto('/app')
   const id = await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
   await page.getByRole('button', { name: 'Terminal' }).click()
   await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
@@ -66,7 +66,7 @@ test.describe('session switcher', () => {
     const id = await createProjectAndOpenTerminal(page)
 
     // install opencode into the project from the project menu → Harnesses dialog
-    await page.goto('/')
+    await page.goto('/app')
     await page.getByTestId(`project-menu-${id}`).click()
     await page.getByRole('menuitem', { name: /Harnesses/ }).click()
     const hdialog = page.getByRole('dialog')

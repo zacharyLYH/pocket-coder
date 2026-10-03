@@ -41,7 +41,7 @@ test.describe('pull-to-refresh (mobile)', () => {
 
   test('drag-down at top of scroll triggers page reload', async ({ page }) => {
     await mockConfigured(page)
-    await page.goto('/')
+      await page.goto('/app')
     await page.evaluate(() => window.scrollTo(0, 0))
     expect(await page.evaluate(() => window.scrollY)).toBe(0)
     await expect(page.getByTestId('butler-fab')).toBeVisible()
@@ -57,7 +57,7 @@ test.describe('pull-to-refresh (mobile)', () => {
 
   test('drag-down when scrolled does not reload', async ({ page }) => {
     await mockConfigured(page)
-    await page.goto('/')
+      await page.goto('/app')
 
     // Make the page scrollable so scrollY can be non-zero.
     await page.evaluate(() => {
@@ -83,7 +83,7 @@ test.describe('pull-to-refresh (mobile)', () => {
 
   test('drag-down starting on the FAB never reloads (FAB at top)', async ({ page }) => {
     await mockConfigured(page)
-    await page.goto('/')
+      await page.goto('/app')
     await page.evaluate(() => window.scrollTo(0, 0))
     expect(await page.evaluate(() => window.scrollY)).toBe(0)
 

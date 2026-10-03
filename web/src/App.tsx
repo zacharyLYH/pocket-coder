@@ -49,12 +49,12 @@ export default function App() {
       .catch(() => setState('out'))
   }, [])
 
-  // Bounce logged-in users off / and /login to the canonical /app URL
-  // (unknown paths normalize there too). An effect, so render stays pure
-  // and the router state never disagrees with the address bar.
+  // Bounce logged-in users off /login to the canonical /app URL
+  // (unknown paths normalize there too). / never bounces: it is the
+  // landing page with the getting-started guide, logged in or not.
   useEffect(() => {
     if (state !== 'in') return
-    if (path === '/app' || parseTerminalPath(path) !== null || parsePreviewPath(path) !== null) return
+    if (path === '/app' || path === '/' || parseTerminalPath(path) !== null || parsePreviewPath(path) !== null) return
     replace('/app')
   }, [state, path, replace])
 
@@ -69,6 +69,7 @@ export default function App() {
   const onLoggedIn = (e: string) => {
     setEmail(e)
     setState('in')
+    navigate('/app')
   }
   const onLogout = () => {
     setState('out')
@@ -97,7 +98,16 @@ export default function App() {
     )
   }
 
-  // Logged in: /app is home; terminal and preview keep their URLs.
+  // Logged in: / is still the landing page (with an Open app button);
+  // /app is home; terminal and preview keep their URLs.
+  if (path === '/') {
+    return (
+      <>
+        {pulling && <PullToRefreshIndicator />}
+        <LandingPage onLogin={() => navigate('/app')} loggedIn />
+      </>
+    )
+  }
   const terminal = parseTerminalPath(path)
   if (terminal) {
     return (

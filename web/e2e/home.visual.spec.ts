@@ -42,7 +42,7 @@ test.describe('home screen', () => {
     // GitHub keys link instead of the project list.
     await page.route('**/api/ssh/test', (route) =>
       route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'GitHub rejected the key' }) }))
-    await page.goto('/')
+    await page.goto('/app')
 
     await expect(page.getByTestId('ssh-gate')).toBeVisible()
     await expect(page.getByTestId('github-keys-link')).toHaveAttribute('href', 'https://github.com/settings/keys')
@@ -62,7 +62,7 @@ test.describe('home screen', () => {
     await deleteAllProjects(page.request)
     await resetHarnessRegistry(page.request)
     try {
-      await page.goto('/')
+      await page.goto('/app')
       await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
       await page.reload()
 
@@ -79,7 +79,7 @@ test.describe('home screen', () => {
   test('home screen with no projects', async ({ page }) => {
     await deleteAllProjects(page.request)
     await resetHarnessRegistry(page.request)
-    await page.goto('/')
+    await page.goto('/app')
 
     await expect(page.getByText('No projects yet.')).toBeVisible()
     // two connection rows: Git (server key fingerprint) and AI
@@ -92,7 +92,7 @@ test.describe('home screen', () => {
   test('clone form takes either URL shape with no method picker', async ({ page }) => {
     await deleteAllProjects(page.request)
     await resetHarnessRegistry(page.request)
-    await page.goto('/')
+    await page.goto('/app')
 
     await page.getByPlaceholder(/clone URL/i).fill('https://github.com/x/hello.git')
     // no HTTPS/SSH radios: one field, the server normalizes every paste
@@ -102,7 +102,7 @@ test.describe('home screen', () => {
   })
 
   test('Git dialog shows the server key with test and regenerate', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/app')
     await page.getByTestId('setup-git').click()
     const dialog = page.getByRole('dialog')
     await expect(dialog.getByTestId('git-public-key')).toContainText('ssh-')
@@ -120,7 +120,7 @@ test.describe('home screen', () => {
     await resetHarnessRegistry(page.request)
     await ensureFakeHarness(page.request)
     try {
-      await page.goto('/')
+      await page.goto('/app')
       const id = await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
 
       // install from the project menu → Harnesses dialog
@@ -156,7 +156,7 @@ test.describe('home screen', () => {
         await new Promise((r) => setTimeout(r, 2000))
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ results: [{ project: 'p1', status: 'ok' }] }) })
       })
-      await page.goto('/')
+      await page.goto('/app')
       const id = await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
       await page.getByTestId(`project-menu-${id}`).click()
       await page.getByRole('menuitem', { name: /Harnesses/ }).click()

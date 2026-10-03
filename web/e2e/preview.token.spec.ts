@@ -23,7 +23,7 @@ test.describe('preview token rotation', () => {
     try {
       const projectID = await createReactProject(request)
       const page = await browser.newPage()
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const t1 = await surfaceToken(previewPage)
       expect(await statusToken(request, projectID)).toBe(t1)
@@ -92,7 +92,7 @@ test.describe('preview token rotation', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
       expect((await toolGet(request, projectID, 'inspect', token)).ok()).toBeTruthy()

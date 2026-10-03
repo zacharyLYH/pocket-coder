@@ -12,7 +12,7 @@ test.describe('shortcuts', () => {
     await deleteAllProjects(request)
     try {
       const id = await createProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       await expect(page.getByTestId(`project-card-${id}`)).toBeVisible({ timeout: 10_000 })
       const menu = page.getByTestId(`project-menu-${id}`)
       await expect(menu).toBeVisible()
@@ -48,7 +48,7 @@ test.describe('shortcuts', () => {
     try {
       const id = await createProject(request)
       await request.patch(`/api/projects/${projectURL(id)}`, { data: { shortcuts: [{ id: 's-hello', alias: 'hello', kind: 'cmd', command: 'echo hello-quick' }] } })
-      await page.goto('/')
+      await page.goto('/app')
       await expect(page.getByTestId(`project-card-${id}`)).toBeVisible({ timeout: 10_000 })
       await page.getByTestId(`project-card-${id}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
@@ -78,7 +78,7 @@ test.describe('shortcuts', () => {
         { id: 's-a', alias: 'a', kind: 'cmd', command: 'echo a' },
         { id: 's-b', alias: 'b', kind: 'cmd', command: 'echo b' },
       ] } })
-      await page.goto('/')
+      await page.goto('/app')
       await page.getByTestId(`project-menu-${id}`).click()
       await page.getByRole('menuitem', { name: 'Shortcuts' }).click()
       const dialog = page.getByRole('dialog')

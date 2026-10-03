@@ -13,7 +13,7 @@ test.describe.configure({ mode: 'serial' })
 // users — the UI path IS the test path now.
 
 test('create a project in the UI, open its terminal, type', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/app')
 
   if (!(await engineUp(page.request))) {
     test.skip(true, 'Docker engine unavailable — full-stack terminal test skipped')
@@ -70,7 +70,7 @@ test('create a project in the UI, open its terminal, type', async ({ page }) => 
 // the expected UI.
 test('real OpenCode session renders through the backend terminal bridge', async ({ page }, testInfo) => {
   test.setTimeout(600_000)
-  await page.goto('/')
+  await page.goto('/app')
 
   if (!(await engineUp(page.request))) {
     test.skip(true, 'Docker engine unavailable — full-stack terminal test skipped')

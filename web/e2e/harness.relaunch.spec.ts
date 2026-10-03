@@ -82,7 +82,7 @@ test.describe('harness relaunch', () => {
       await page.waitForTimeout(2000)
 
       // Go home, then re-enter the terminal (navigate away and back)
-      await page.goto('/')
+      await page.goto('/app')
       await page.goto(terminalUrl(id, sessionName.name))
       // The ensure path runs LaunchNamed (validateCLI + tmux create),
       // which can take ~20s. Be generous.

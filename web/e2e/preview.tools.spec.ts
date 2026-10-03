@@ -15,7 +15,7 @@ test.describe('preview AI tools', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
 
@@ -43,7 +43,7 @@ test.describe('preview AI tools', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
       await previewPage.close()
@@ -68,7 +68,7 @@ test.describe('preview AI tools', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
       await previewPage.close()
@@ -106,7 +106,7 @@ test.describe('preview AI tools', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
       await previewPage.close()
@@ -140,7 +140,7 @@ test.describe('preview AI tools', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
       await previewPage.close()
@@ -164,7 +164,7 @@ test.describe('preview AI tools', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
 

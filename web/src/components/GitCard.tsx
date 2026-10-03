@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { api, errMsg, probeErr, probeSignal } from '@/lib/api'
 import { copyToClipboard } from '@/lib/clipboard'
+import { GITHUB_KEYS_URL } from '@/lib/site'
 
 type ServerKey = { publicKey: string; fingerprint: string; createdAt: string }
 
@@ -107,7 +108,7 @@ export function GitCard({ onChanged, showRegenerate = true }: {
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs font-medium">2. Add to GitHub</p>
           <a
-            href="https://github.com/settings/keys"
+            href={GITHUB_KEYS_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-sm text-blue-600 underline underline-offset-4"

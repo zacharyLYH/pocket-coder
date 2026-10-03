@@ -14,7 +14,7 @@ test.describe('preview Vue.js', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createVueProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
 

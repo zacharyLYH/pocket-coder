@@ -45,7 +45,7 @@ test.describe('harness injection orchestration', () => {
     await deleteAllProjects(page.request)
     await ensureFakeHarness(page.request)
     try {
-      await page.goto('/')
+      await page.goto('/app')
       await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
       await expect(page.getByTestId(`project-card-${e2eRepoID(1)}`)).toHaveCount(1)
       await createProjectViaUI(page, page.request, e2eRepo(2), e2eRepoID(2))
@@ -85,7 +85,7 @@ test.describe('harness injection orchestration', () => {
       // --- the home Run card injects too: run E2E Fake's own
       // install command as a plain command into the second project ---
       await page.keyboard.press('Escape')
-      await page.goto('/')
+      await page.goto('/app')
       const harnesses = await (await page.request.get('/api/harnesses')).json()
       const fake = harnesses.harnesses.find((h: { id: string }) => h.id === FAKE_HARNESS_ID)
       await page.getByPlaceholder(/npm i -g opencode-ai@latest/).fill(fake.install)

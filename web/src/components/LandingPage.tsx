@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { LandingTooling } from '@/components/LandingTooling'
 import {
   BIO_URL,
+  GITHUB_KEYS_URL,
   GITHUB_URL,
   GMAIL_GUIDE_URL,
   LINKEDIN_URL,
@@ -15,8 +16,12 @@ import {
 } from '@/lib/site'
 
 // Landing page at /. One motivation, one action, install docs for
-// self-hosters, socials buried in the footer.
-export function LandingPage({ onLogin }: { onLogin: () => void }) {
+// self-hosters, the after-login guide, socials buried in the footer.
+// Logged in, the calls to action open /app instead of /login.
+export function LandingPage({ onLogin, loggedIn }: { onLogin: () => void; loggedIn?: boolean }) {
+  const [domain, setDomain] = useState('')
+  const host = cleanHost(domain)
+  const loginUrl = host === '' ? 'http://your-box:8080/login' : `http://${host}:8080/login`
   return (
     <div className="min-h-dvh bg-background text-foreground">
       <header className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur-xl">
@@ -26,7 +31,7 @@ export function LandingPage({ onLogin }: { onLogin: () => void }) {
           <span className="flex-1" />
           <StarButton />
           <Button size="sm" onClick={onLogin}>
-            Log in
+            {loggedIn ? 'Open app' : 'Log in'}
           </Button>
         </div>
       </header>
@@ -43,16 +48,35 @@ export function LandingPage({ onLogin }: { onLogin: () => void }) {
 
         <LandingTooling />
 
+        <section className="flex flex-col gap-4">
+          <h2 className="text-2xl font-semibold tracking-tight">Prerequisites</h2>
+          <Card>
+            <CardContent className="text-sm text-muted-foreground">
+              <ul className="flex list-disc flex-col gap-1 pl-5">
+                <li>A domain you control</li>
+                <li>A Linux box with at least 4 GB RAM and port 8080 open</li>
+                <li>A Gmail address for the login PIN</li>
+              </ul>
+            </CardContent>
+          </Card>
+        </section>
+
         <section id="get-started" className="flex scroll-mt-20 flex-col gap-4">
           <h2 className="text-2xl font-semibold tracking-tight">Get started</h2>
-          <p className="text-muted-foreground">
-            A Linux box with 2 GB RAM and an open port 8080. The setup script
-            does the rest.
-          </p>
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">1. Get a Gmail app password</CardTitle>
+              <CardTitle className="text-base">1. Provision a domain and a box</CardTitle>
+              <CardDescription>
+                A domain plus any Linux box with at least 4 GB RAM and port
+                8080 open.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">2. Get a Gmail app password</CardTitle>
               <CardDescription>
                 Pocket Coder emails you a login PIN, so it needs SMTP first.
               </CardDescription>
@@ -68,19 +92,74 @@ export function LandingPage({ onLogin }: { onLogin: () => void }) {
 
           <SetupBuilder />
 
+          <StepDomain domain={domain} host={host} onDomain={setDomain} />
+
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">3. Log in</CardTitle>
+              <CardTitle className="text-base">5. Log in</CardTitle>
               <CardDescription>
-                Open http://your-box:8080/login, enter your email, and type the PIN
-                that arrives by inbox.
+                {host === '' ? (
+                  <>Open http://your-box:8080/login, enter your email, and type the PIN that arrives by inbox.</>
+                ) : (
+                  <>Open <a href={loginUrl} target="_blank" rel="noreferrer" className="underline text-blue-500">{loginUrl}</a>, enter your email, and type the PIN that arrives by inbox.</>
+                )}
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <Button variant="outline" onClick={onLogin}>
-                Go to login
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">6. Connect GitHub</CardTitle>
+              <CardDescription>
+                Copy the server key, add it on GitHub, then test the
+                connection. This is what the app shows you.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <blockquote className="border-l-2 border-primary pl-3 text-sm font-medium">
+                This step cannot be skipped. Cloning only works after the
+                deploy key is on GitHub.
+              </blockquote>
+              <img
+                src="/onboarding/ssh-card.png"
+                alt="Connect GitHub first card: copy the key, add it on GitHub, test the connection"
+                className="w-full rounded-md border border-border"
+                loading="lazy"
+              />
+              <Button variant="outline" asChild className="self-start">
+                <a href={GITHUB_KEYS_URL} target="_blank" rel="noreferrer">
+                  Open GitHub SSH and GPG keys
+                </a>
               </Button>
             </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">7. Clone a repo</CardTitle>
+              <CardDescription>
+                Paste any clone URL, HTTPS or SSH, and press Clone project.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <img
+                src="/onboarding/clone-card.png"
+                alt="Projects card: paste a clone URL and press Clone project"
+                className="w-full rounded-md border border-border"
+                loading="lazy"
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">8. Use a desktop for setup</CardTitle>
+              <CardDescription>
+                Copying keys and navigating GitHub settings is easier with a
+                desktop clipboard and screen. Once set up, use the app freely
+                from mobile.
+              </CardDescription>
+            </CardHeader>
           </Card>
         </section>
 
@@ -131,10 +210,9 @@ function SetupBuilder() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">2. Run the installer</CardTitle>
+        <CardTitle className="text-base">3. Generate the command, then copy it</CardTitle>
         <CardDescription>
-          As root on your box. Type below and the command fills itself in.
-          Re-run it anytime to update.
+          Type below and the installer command fills itself in.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -163,17 +241,59 @@ function SetupBuilder() {
           </div>
         </div>
         <CopyBlock text={command} disabled={email.trim() === '' || smtpPassword === ''} />
-        <div className="text-sm text-muted-foreground">
-          <p className="font-medium text-foreground">After install, this is all you run:</p>
-          <ul className="mt-1 flex list-disc flex-col gap-1 pl-5">
-            <li>
-              Update: <Code>cd /opt/pocket-coder/src {'&&'} docker compose up -d --build</Code>
-            </li>
-            <li>
-              Health check: <Code>curl http://localhost:8080/health</Code>
-            </li>
-          </ul>
+        <p className="text-sm text-muted-foreground">
+          Tip: from the box itself, <Code>curl http://localhost:8080/health</Code> should
+          answer <Code>{"{\"status\":\"ok\"}"}</Code>.
+        </p>
+      </CardContent>
+    </Card>
+  )
+}
+
+// cleanHost trims a pasted domain down to its host: no protocol, no path.
+function cleanHost(raw: string): string {
+  return raw.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '')
+}
+
+// StepDomain asks for the domain the user linked, so the open link below
+// points at their app. Nothing leaves the browser.
+function StepDomain({ domain, host, onDomain }: { domain: string; host: string; onDomain: (d: string) => void }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">4. Paste it on your box and link your domain</CardTitle>
+        <CardDescription>
+          Paste the command on the box as root and wait for the live
+          banner. Then point your domain at the box so it reaches the
+          running app on port 8080.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="landing-domain">Your domain</Label>
+          <Input
+            id="landing-domain"
+            type="text"
+            autoComplete="off"
+            placeholder="coder.example.com"
+            value={domain}
+            onChange={(e) => onDomain(e.target.value)}
+          />
         </div>
+        {host !== '' && (
+          <Button variant="outline" asChild className="self-start">
+            <a href={`http://${host}:8080`} target="_blank" rel="noreferrer">
+              Open your app
+            </a>
+          </Button>
+        )}
+        <p className="text-sm text-muted-foreground">
+          {host === '' ? (
+            <>Check it from your machine too: <Code>curl http://your-domain:8080/health</Code> should answer <Code>{"{\"status\":\"ok\"}"}</Code>.</>
+          ) : (
+            <>Check it from your machine: <a href={`http://${host}:8080/health`} target="_blank" rel="noreferrer" className="underline text-blue-500">http://{host}:8080/health</a> should answer <Code>{"{\"status\":\"ok\"}"}</Code>.</>
+          )}
+        </p>
       </CardContent>
     </Card>
   )

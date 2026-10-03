@@ -42,7 +42,7 @@ test.describe('harness installs are desired state', () => {
     expect(addRes.status()).toBe(201)
 
     try {
-      await page.goto('/')
+      await page.goto('/app')
       await expect(page.getByText('No projects yet.')).toBeVisible()
       const idAlpha = await createProjectViaUI(page, request, e2eRepo(1), e2eRepoID(1))
       const idBeta = await createProjectViaUI(page, request, e2eRepo(2), e2eRepoID(2))

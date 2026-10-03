@@ -3,6 +3,7 @@
 export const LINKEDIN_URL = 'https://my.linkedin.com/in/leeyihong03'
 export const BIO_URL = 'https://bio.bytesbylyh.dev'
 export const GITHUB_URL = 'https://github.com/zacharyLYH/pocket-coder'
+export const GITHUB_KEYS_URL = 'https://github.com/settings/keys'
 export const GMAIL_GUIDE_URL =
   'https://help.meetalfred.com/en/articles/8160682-set-up-smtp-for-gmail-app-password-guide'
 export const SETUP_SCRIPT_URL =

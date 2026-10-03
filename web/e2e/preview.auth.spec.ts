@@ -38,7 +38,7 @@ test.describe('preview auth and isolation', () => {
       // cross-project state present; its preview is covered by the Go tests.
       await createReactProject(request, 2)
 
-      await page.goto('/')
+      await page.goto('/app')
       const _previewPage2 = await openPreviewFromTerminal(page, idA)
       const token = await statusToken(request, idA)
       await _previewPage2.close()

@@ -17,7 +17,7 @@ test.describe('preview HMR', () => {
     try {
       // ── Step 1: Create a real full-stack project ──
       const projectID = await createReactProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       await expect(page.getByTestId(`project-card-${projectID}`)).toBeVisible({ timeout: 30_000 })
 
       // ── Step 2: Open preview via terminal → Preview tab → Open (new tab) ──
@@ -154,7 +154,7 @@ test.describe('preview HMR', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage2 = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
 

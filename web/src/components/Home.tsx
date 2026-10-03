@@ -142,7 +142,19 @@ function RunEverywhereCard({ projects, busy, onBusy }: { projects: Project[]; bu
   return (
     <Card className="gap-3 py-4">
       <CardHeader className="px-4">
-        <CardTitle className="text-[17px] tracking-tight">Run a command</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-[17px] tracking-tight">
+          Run a command
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Info className="size-4 text-muted-foreground" />
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                Runs the same command in every checked project. For mass updates of shared libraries, installing software everywhere at once, and fleet-wide checks.
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </CardTitle>
         <CardDescription>Runs now, synchronously, in every checked project.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-2 px-4">

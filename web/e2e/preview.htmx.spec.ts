@@ -17,7 +17,7 @@ test.describe('preview htmx', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createHtmxProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
       await expect(previewPage).toHaveScreenshot('preview-htmx-initial.png', { fullPage: true })

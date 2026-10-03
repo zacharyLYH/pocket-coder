@@ -18,7 +18,7 @@ test.describe('preview basic', () => {
       const projectID = await createReactProject(request)
 
       // ── Step 2: Verify project appears on home screen ──
-      await page.goto('/')
+      await page.goto('/app')
       await expect(page.getByTestId(`project-card-${projectID}`)).toBeVisible({ timeout: 30_000 })
 
       // ── Step 3: Open preview via terminal → Preview tab → Open (new tab) ──

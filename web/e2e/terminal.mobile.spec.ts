@@ -7,7 +7,7 @@ import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp } f
 // shell and a real opencode TUI through the existing WS bridge.
 
 async function openShellTerminal(page: Page) {
-  await page.goto('/')
+  await page.goto('/app')
   await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
   await page.getByRole('button', { name: 'Terminal' }).click()
   await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
@@ -52,7 +52,7 @@ test.describe('mobile typing (opencode TUI)', () => {
 
   test('tap focuses and typed text reaches the opencode prompt', async ({ page }) => {
     test.setTimeout(600_000)
-    await page.goto('/')
+    await page.goto('/app')
     const id = await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
 
     await page.getByTestId(`project-menu-${id}`).click()

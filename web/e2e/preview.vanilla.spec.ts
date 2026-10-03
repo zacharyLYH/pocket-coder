@@ -14,7 +14,7 @@ test.describe('preview vanilla HTML', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createVanillaProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
 

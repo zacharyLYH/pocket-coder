@@ -19,7 +19,7 @@ test.describe('preview window fit', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createResponsiveProject(request)
-      await page.goto('/')
+      await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const token = await statusToken(request, projectID)
 

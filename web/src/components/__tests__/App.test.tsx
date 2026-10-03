@@ -3,9 +3,10 @@ import { render, screen, waitFor } from '@testing-library/react'
 import App from '@/App'
 import { mockFetch } from '@/test/mockFetch'
 
-// Router pins: / is landing, /login is login, /app is the app. Logged-in
-// users never sit on / or /login — the URL must say /app, not just render
-// Home (back-button and refresh depend on the address bar being truthful).
+// Router pins: / is always the landing page (never bounces, logged in or
+// not), /login is login, /app is the app. Logged-in users never sit on
+// /login — the URL must say /app, not just render Home (back-button and
+// refresh depend on the address bar being truthful).
 describe('App routes', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/')
@@ -18,11 +19,11 @@ describe('App routes', () => {
     }))
   })
 
-  it('bounces a logged-in / to /app and shows home', async () => {
+  it('stays on / when logged in and offers the app', async () => {
     window.history.replaceState({}, '', '/')
     render(<App />)
-    await waitFor(() => expect(window.location.pathname).toBe('/app'))
-    expect(await screen.findByText('Run a command')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open app' })).toBeInTheDocument())
+    expect(window.location.pathname).toBe('/')
   })
 
   it('bounces a logged-in /login to /app', async () => {
@@ -33,7 +34,7 @@ describe('App routes', () => {
   })
 
   it('never touches history on re-render (redirects are effects, not render side effects)', async () => {
-    window.history.replaceState({}, '', '/')
+    window.history.replaceState({}, '', '/login')
     const spy = vi.spyOn(window.history, 'replaceState')
     const { rerender } = render(<App />)
     await waitFor(() => expect(window.location.pathname).toBe('/app'))

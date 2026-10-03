@@ -146,7 +146,7 @@ function waitForPin(afterOffset: number): string {
 // auto-opened disclosure and closes it.
 async function ensureCloneForm(page: Page): Promise<void> {
   if ((await page.getByPlaceholder(/clone URL/i).count()) === 0) {
-    await page.goto('/')
+    await page.goto('/app')
   }
   const input = page.getByPlaceholder(/clone URL/i)
   const summary = page.locator('summary', { hasText: 'Clone a repo' })
