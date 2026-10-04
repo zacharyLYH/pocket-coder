@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
-import { copyToClipboard } from '@/lib/clipboard'
 import { EMPTY_FILTERS, useObserve, type ObserveFilters } from '@/hooks/useObserve'
 
 const LEVELS = ['all', 'info', 'warn', 'error']
@@ -53,15 +52,18 @@ function Meter({ used, total, testid, label }: { used: number; total: number; te
 // Nerdy Stuff: per-project observability replacing the Logs tab. One panel
 // visible at a time (segmented control); md:+ adds a facet rail. Overview
 // is the system metrics; Runtime is the unified tail with Follow ON (plus
-// an audit toggle for the milestone subset); Build pins lifecycle lines
-// while not ready.
+// a Highlights toggle that hides routine polls and keeps only moments that
+// changed something); Build pins lifecycle lines while not ready.
+//
+// Everything here describes the project's container (the sandbox your code
+// runs in: CPU, memory, session and preview events) — not your
+// application's own logs or output.
 export function NerdyStuffTab({ projectId }: { projectId: string }) {
   const [panel, setPanel] = useState<Panel>('runtime')
   const [filters, setFilters] = useState<ObserveFilters>(EMPTY_FILTERS)
   const [q, setQ] = useState('')
   const [follow, setFollow] = useState(true)
   const [expanded, setExpanded] = useState<number | null>(null)
-  const [copied, setCopied] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   // Milestone sets come from the backend (/api/observe/meta) so the UI can
@@ -70,7 +72,7 @@ export function NerdyStuffTab({ projectId }: { projectId: string }) {
   useEffect(() => {
     api<ObserveMeta>('/api/observe/meta').then(setMeta).catch(() => {})
   }, [])
-  const audit = filters.type !== ''
+  const highlights = filters.type !== ''
 
   // Search is debounced 200ms into the facet query.
   useEffect(() => {
@@ -87,14 +89,14 @@ export function NerdyStuffTab({ projectId }: { projectId: string }) {
     setShowFilters(false)
   }
 
-  function toggleAudit() {
+  function toggleHighlights() {
     if (!meta) return
     pickFilters((f) => ({ ...f, type: f.type === '' ? meta.auditTypes.join(',') : '' }))
   }
 
   // Non-default filter count, shown on the mobile Filters toggle.
   const activeFilters = (filters.level !== 'all' ? 1 : 0) + (filters.source !== 'all' ? 1 : 0) +
-    (audit ? 1 : 0) + (q !== '' ? 1 : 0)
+    (highlights ? 1 : 0) + (q !== '' ? 1 : 0) + (filters.trace !== '' ? 1 : 0)
 
   function panelLabel(p: Panel): string {
     return p[0].toUpperCase() + p.slice(1) + (p === 'errors' && groups.length > 0 ? ` (${groups.length})` : '')
@@ -117,12 +119,6 @@ export function NerdyStuffTab({ projectId }: { projectId: string }) {
     if (!el) return
     const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 48
     if (!pinned && follow) setFollow(false)
-  }
-
-  async function copyTrace(trace: string) {
-    await copyToClipboard(trace)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1200)
   }
 
   function gotoTrace(trace: string) {
@@ -156,7 +152,7 @@ export function NerdyStuffTab({ projectId }: { projectId: string }) {
             </DropdownMenu>
           </div>
         </div>
-        <CardDescription className="hidden md:block">Per-project observability — live metrics, logs, builds, errors.</CardDescription>
+        <CardDescription className="hidden md:block">Container health and logs for this project's sandbox — not your app's own output.</CardDescription>
         <div className="hidden flex-wrap gap-1 md:flex" role="tablist" aria-label="Nerdy panels">
           {PANELS.map((p) => (
             <Button key={p} variant={panel === p ? 'default' : 'outline'} size="sm" role="tab" aria-selected={panel === p}
@@ -265,14 +261,24 @@ export function NerdyStuffTab({ projectId }: { projectId: string }) {
                 {meta && meta.auditTypes.length > 0 && (
                   <>
                     <span className="w-2" />
-                    <Button variant={audit ? 'default' : 'outline'} size="sm"
-                      data-testid="nerdy-audit" onClick={toggleAudit}
-                      title="Milestones only: created, launched, attached…">audit</Button>
+                    <Button variant={highlights ? 'default' : 'outline'} size="sm"
+                      data-testid="nerdy-highlights" onClick={toggleHighlights}
+                      title="Moments that changed something — launches, pushes, preview starts. Heartbeats and routine polls hidden.">Highlights</Button>
+                  </>
+                )}
+                {filters.trace !== '' && (
+                  <>
+                    <span className="w-2" />
+                    <Button variant="default" size="sm" data-testid="nerdy-trace-chip"
+                      title={`Showing only request ${filters.trace} — click to clear`}
+                      onClick={() => pickFilters((f) => ({ ...f, trace: '' }))}>
+                      Request {filters.trace.slice(0, 8)}… ×
+                    </Button>
                   </>
                 )}
               </div>
               <div className="flex gap-2">
-                <Input placeholder="Search msg, type, attrs…" value={q} onChange={(e) => setQ(e.target.value)}
+                <Input placeholder="Search msg, type, attrs, trace…" value={q} onChange={(e) => setQ(e.target.value)}
                   data-testid="nerdy-search" list="nerdy-types" className="h-8 text-xs" />
                 <datalist id="nerdy-types">
                   {seenTypes.map((t) => <option key={t} value={t} />)}
@@ -286,8 +292,8 @@ export function NerdyStuffTab({ projectId }: { projectId: string }) {
                 <p className="text-xs text-muted-foreground" data-testid="nerdy-empty">
                   {panel === 'build'
                     ? 'No build history yet — lifecycle lines appear on create, start/stop, and recovery'
-                    : audit
-                      ? 'No milestones yet — create a session or start a preview'
+                    : highlights
+                      ? 'No highlights yet — session launches, pushes and preview starts will appear here'
                       : 'Nothing nerdy yet — create a project or start a preview'}
                 </p>
               ) : (
@@ -308,14 +314,8 @@ export function NerdyStuffTab({ projectId }: { projectId: string }) {
                       {expanded === l.seq && (
                         <div className="ml-4 rounded bg-zinc-900 p-2" data-testid={`nerdy-expand-${l.seq}`}>
                           <p>type: {l.type} · source: {l.source}</p>
-                          <p className="flex items-center gap-2">trace: {l.trace}
-                            <Button variant="ghost" size="sm" data-testid="nerdy-copy-trace"
-                              onClick={(e) => { e.stopPropagation(); copyTrace(l.trace) }}>
-                              {copied ? 'Copied' : 'Copy'}
-                            </Button>
-                          </p>
+                          <p>trace: <span className="select-all">{l.trace}</span></p>
                           {l.attrs && <pre className="whitespace-pre-wrap break-all">{JSON.stringify(l.attrs, null, 2)}</pre>}
-                          {!audit && <Button variant="ghost" size="sm" onClick={() => { if (!audit) toggleAudit() }}>Milestones only</Button>}
                         </div>
                       )}
                     </div>

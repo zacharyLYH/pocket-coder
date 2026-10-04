@@ -88,23 +88,24 @@ const (
 	ButlerThreadDeleted = "butler.thread_deleted"
 
 	// Preview worker + tools.
-	PreviewStart      = "preview.start"
-	PreviewClose      = "preview.close"
-	PreviewOpen       = "preview.open"
-	PreviewStatus     = "preview.status"
-	PreviewHeartbeat  = "preview.heartbeat"
-	PreviewSurface    = "preview.surface"
-	PreviewPorts      = "preview.ports"
-	PreviewScreenshot = "preview.screenshot"
-	PreviewInspect    = "preview.inspect"
-	PreviewConsole    = "preview.console"
-	PreviewNetwork    = "preview.network"
-	PreviewNavigate   = "preview.navigate"
-	PreviewClick      = "preview.click"
-	PreviewType       = "preview.type"
-	PreviewReload     = "preview.reload"
-	PreviewScroll     = "preview.scroll"
-	PreviewViewport   = "preview.viewport"
+	PreviewStart        = "preview.start"
+	PreviewClose        = "preview.close"
+	PreviewOpen         = "preview.open"
+	PreviewStatus       = "preview.status"
+	PreviewHeartbeat    = "preview.heartbeat"
+	PreviewTokenRotated = "preview.token_rotated"
+	PreviewSurface      = "preview.surface"
+	PreviewPorts        = "preview.ports"
+	PreviewScreenshot   = "preview.screenshot"
+	PreviewInspect      = "preview.inspect"
+	PreviewConsole      = "preview.console"
+	PreviewNetwork      = "preview.network"
+	PreviewNavigate     = "preview.navigate"
+	PreviewClick        = "preview.click"
+	PreviewType         = "preview.type"
+	PreviewReload       = "preview.reload"
+	PreviewScroll       = "preview.scroll"
+	PreviewViewport     = "preview.viewport"
 
 	// Observe reads.
 	ObserveRead = "observe.read"
@@ -150,6 +151,7 @@ var AuditTypes = []string{
 	PreviewStart,
 	PreviewClose,
 	PreviewOpen,
+	PreviewTokenRotated,
 	PreviewNavigate,
 	GitStage,
 	GitStageHunk,

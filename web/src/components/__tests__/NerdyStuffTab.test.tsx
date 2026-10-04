@@ -36,10 +36,6 @@ function stubFetch(calls: string[], observeImpl?: (url: string) => unknown) {
 describe('NerdyStuffTab', () => {
   beforeEach(() => {
     vi.unstubAllGlobals()
-    Object.defineProperty(window.navigator, 'clipboard', {
-      value: { writeText: vi.fn(async () => {}) },
-      configurable: true,
-    })
   })
 
   it('tails the observe log', async () => {
@@ -72,15 +68,14 @@ describe('NerdyStuffTab', () => {
     await waitFor(() => expect(calls.some((c) => c.includes('level=error'))).toBe(true))
   })
 
-  it('expand shows JSON and copies trace', async () => {
+  it('expand shows JSON type and trace', async () => {
     const calls: string[] = []
     stubFetch(calls)
     render(<NerdyStuffTab projectId="abc" />)
     await waitFor(() => expect(screen.getByTestId('nerdy-row-toggle-2')).toBeVisible())
     await act(async () => { fireEvent.click(screen.getByTestId('nerdy-row-toggle-2')) })
     expect(screen.getByTestId('nerdy-expand-2')).toHaveTextContent('clone.failed')
-    await act(async () => { fireEvent.click(screen.getByTestId('nerdy-copy-trace')) })
-    expect(window.navigator.clipboard.writeText).toHaveBeenCalledWith('bbbbbbbbbbbbbbbb')
+    expect(screen.getByTestId('nerdy-expand-2')).toHaveTextContent('bbbbbbbbbbbbbbbb')
   })
 
   it('load older pages with the before cursor', async () => {
@@ -123,12 +118,13 @@ describe('NerdyStuffTab', () => {
     expect(screen.queryByTestId('nerdy-panel-sessions')).toBeNull()
   })
 
-  it('audit toggle filters to milestone types', async () => {
+  it('highlights toggle keeps only moments that changed something', async () => {
     const calls: string[] = []
     stubFetch(calls)
     render(<NerdyStuffTab projectId="abc" />)
-    await waitFor(() => expect(screen.getByTestId('nerdy-audit')).toBeVisible())
-    await act(async () => { fireEvent.click(screen.getByTestId('nerdy-audit')) })
+    await waitFor(() => expect(screen.getByTestId('nerdy-highlights')).toBeVisible())
+    expect(screen.getByTestId('nerdy-highlights')).toHaveTextContent('Highlights')
+    await act(async () => { fireEvent.click(screen.getByTestId('nerdy-highlights')) })
     await waitFor(() => expect(calls.some((c) => c.includes('type=project.create'))).toBe(true))
     await waitFor(() => expect(calls.some((c) => decodeURIComponent(c).includes(',terminal.attach,'))).toBe(true))
   })
@@ -167,5 +163,32 @@ describe('NerdyStuffTab', () => {
     expect(screen.getByTestId('nerdy-follow')).toHaveTextContent('Follow')
     await act(async () => { fireEvent.click(screen.getByTestId('nerdy-follow')) })
     expect(screen.getByTestId('nerdy-follow')).toHaveTextContent('Following')
+  })
+
+  it('error group jumps to its trace and the chip clears it', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(String(url))
+      const u = String(url)
+      if (u.includes('/observe/errors')) return new Response(JSON.stringify({ groups: [{
+        key: 'k', type: 'clone.failed', count: 2, firstSeen: new Date().toISOString(),
+        lastSeen: new Date().toISOString(), sampleTrace: 'bbbbbbbbbbbbbbbb', sampleMsg: 'clone failed',
+      }] }), { status: 200 })
+      if (u.includes('/observe/stats')) return new Response(JSON.stringify(STATS), { status: 200 })
+      if (u.includes('/observe/meta')) return new Response(JSON.stringify({
+        auditTypes: ['project.create'], buildTypes: ['project.create'],
+      }), { status: 200 })
+      return new Response(JSON.stringify({ logs: LOGS, firstSeq: 1, lastSeq: 2 }), { status: 200 })
+    }))
+    render(<NerdyStuffTab projectId="abc" />)
+    await act(async () => { fireEvent.click(screen.getByTestId('nerdy-panel-errors')) })
+    await waitFor(() => expect(screen.getByTestId('nerdy-error-clone.failed')).toBeVisible())
+    await act(async () => { fireEvent.click(screen.getByTestId('nerdy-error-clone.failed')) })
+    await waitFor(() => expect(calls.some((c) => c.includes('trace=bbbbbbbbbbbbbbbb'))).toBe(true))
+    // The active trace is visible, counts as a filter, and clears on click.
+    await waitFor(() => expect(screen.getByTestId('nerdy-trace-chip')).toBeVisible())
+    expect(screen.getByTestId('nerdy-filters-toggle')).toHaveTextContent('Filters (1)')
+    await act(async () => { fireEvent.click(screen.getByTestId('nerdy-trace-chip')) })
+    await waitFor(() => expect(screen.queryByTestId('nerdy-trace-chip')).toBeNull())
   })
 })

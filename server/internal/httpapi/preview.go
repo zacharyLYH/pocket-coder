@@ -32,10 +32,16 @@ func handlePreviewStatus(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "get preview", gerr)
 			return
 		}
-		tok, ok := d.Preview.TokenOrMint(id)
+		tok, minted, ok := d.Preview.TokenOrMint(id)
 		if !ok {
-			writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "stopped"})
+			writeJSON(w, http.StatusOK, map[string]string{"project": id, "status": "stopped"})
 			return
+		}
+		if minted {
+			// The previous access key was swept after total silence and this
+			// poll minted its successor: say so in the tail, or the next
+			// 404 on a stale key looks inexplicable.
+			obs.Info(r.Context(), obs.PreviewTokenRotated, "Preview access key rotated after idle timeout", nil)
 		}
 		// "ready" means the browser actually answers: ping CDP, report
 		// degraded if dead.
@@ -116,7 +122,10 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 			return
 		}
 		obs.Info(r.Context(), obs.PreviewStart, "Preview started on :"+strconv.Itoa(body.Port), map[string]any{"port": body.Port})
-		tok, _ := d.Preview.TokenOrMint(r.PathValue("id"))
+		tok, minted, _ := d.Preview.TokenOrMint(r.PathValue("id"))
+		if minted {
+			obs.Info(r.Context(), obs.PreviewTokenRotated, "Preview access key rotated after idle timeout", nil)
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "port": body.Port, "status": "ready", "token": tok})
 	}
 }

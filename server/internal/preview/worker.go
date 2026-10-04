@@ -205,17 +205,18 @@ func (m *Manager) Close(ctx context.Context) error {
 }
 
 // TokenOrMint returns the live token, minting one if the worker exists but
-// has no token (post-sweep rotation). False when no worker is running.
-func (m *Manager) TokenOrMint(projectID string) (string, bool) {
+// has no token (post-sweep rotation). minted reports a fresh mint so the
+// caller can log the rotation; ok is false when no worker is running.
+func (m *Manager) TokenOrMint(projectID string) (tok string, minted bool, ok bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.workers[projectID]; !ok {
-		return "", false
+		return "", false, false
 	}
 	if tok, ok := m.tokens[projectID]; ok {
-		return tok, true
+		return tok, false, true
 	}
-	tok := newToken()
+	tok = newToken()
 	if m.tokens == nil {
 		m.tokens = make(map[string]string)
 	}
@@ -227,7 +228,7 @@ func (m *Manager) TokenOrMint(projectID string) (string, bool) {
 	// Fresh mint while a worker is live means the previous token was
 	// swept after total silence: this is the rotation successor.
 	slog.Info("preview token minted", "project", projectID, "reason", "rotation")
-	return tok, true
+	return tok, true, true
 }
 
 // CheckToken reports whether sup is the live token for projectID.

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"pcoder/internal/obs"
 	"pcoder/internal/preview"
 )
 
@@ -84,5 +85,39 @@ func TestPreviewStatusDegradedWhenCDPDead(t *testing.T) {
 	h, cookie := startTestDeps(t, script, "pstatus2")
 	if got := statusOf(t, h, cookie, "pstatus2"); got != "degraded" {
 		t.Fatalf("status = %q, want degraded", got)
+	}
+}
+
+// A swept-then-reminted preview access key must leave a line in the tail:
+// without it the next 404 on the stale key looks inexplicable, and the
+// rotation is invisible to the Milestones filter.
+func TestPreviewStatusEmitsRotationEvent(t *testing.T) {
+	d, pinOut := newTestDeps(t)
+	m := preview.NewManager(previewTestFactory{ep: privatePreviewEndpoint})
+	if _, err := m.Ensure(context.Background(), preview.Config{ProjectID: "p1", ContainerID: "pcoder-p1"}); err != nil {
+		t.Fatal(err)
+	}
+	d.Preview = m
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	// Fresh worker: status hands out the start-minted key, no rotation.
+	if got := statusOf(t, h, cookie, "p1"); got != "degraded" {
+		t.Fatalf("status = %q, want degraded", got)
+	}
+	if logs, _, _ := d.Obs.Read("p1", 0, 0, 0, "", "", obs.PreviewTokenRotated, "", ""); len(logs) != 0 {
+		t.Fatalf("rotation lines before any sweep = %d, want 0", len(logs))
+	}
+	// Silence sweeps the key; the next poll mints its successor.
+	m.Sweep(time.Now().Add(time.Hour), time.Minute)
+	if got := statusOf(t, h, cookie, "p1"); got != "degraded" {
+		t.Fatalf("status = %q, want degraded", got)
+	}
+	logs, _, _ := d.Obs.Read("p1", 0, 0, 0, "", "", obs.PreviewTokenRotated, "", "")
+	if len(logs) != 1 {
+		t.Fatalf("rotation lines = %d, want 1", len(logs))
+	}
+	if !strings.Contains(logs[0].Msg, "rotated") {
+		t.Fatalf("rotation msg = %q, want it to say rotated", logs[0].Msg)
 	}
 }

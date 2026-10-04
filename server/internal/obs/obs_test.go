@@ -208,3 +208,22 @@ func TestTraceMiddleware(t *testing.T) {
 		t.Fatalf("passthrough = %q", got)
 	}
 }
+
+// A trace ID copied from an expanded row and pasted into search must match
+// its lines: q covers msg, type, attrs, and trace (the exact-match trace=
+// param remains for the error-group jump).
+func TestSearchMatchesTraceID(t *testing.T) {
+	s := testStore(t, nil)
+	base := WithProject(context.Background(), "o/r")
+	Info(WithTrace(base, "aaaaaaaaaaaaaaaa"), "a", "first line", nil)
+	Info(WithTrace(base, "bbbbbbbbbbbbbbbb"), "b", "second line", nil)
+	got, _, _ := s.Read("o/r", 0, 0, 200, "", "", "", "", "bbbbbbbbbbbbbbbb")
+	if len(got) != 1 || got[0].Msg != "second line" {
+		t.Fatalf("trace search -> %+v, want only the second line", got)
+	}
+	// Partial IDs work too (substring match, like the rest of q).
+	part, _, _ := s.Read("o/r", 0, 0, 200, "", "", "", "", "bbbb")
+	if len(part) != 1 || part[0].Msg != "second line" {
+		t.Fatalf("partial trace search -> %+v", part)
+	}
+}

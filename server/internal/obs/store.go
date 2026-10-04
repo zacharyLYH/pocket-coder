@@ -391,7 +391,10 @@ func match(e Entry, level, source, typ, trace, q string) bool {
 		return false
 	}
 	if q != "" {
-		hay := strings.ToLower(e.Msg + " " + e.Type)
+		// Trace is in the haystack too: a copied trace ID pasted into
+		// search must match its lines (the exact-match trace= param
+		// remains for the error-group jump).
+		hay := strings.ToLower(e.Msg + " " + e.Type + " " + e.Trace)
 		if a, _ := json.Marshal(e.Attrs); len(a) > 0 {
 			hay += " " + strings.ToLower(string(a))
 		}

@@ -7,15 +7,14 @@ import { mockNerdy, terminalUrl, PROJECT } from './nerdy.fixtures'
 test.describe('nerdy stuff (desktop)', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
-  test.beforeEach(async ({ page, context }) => {
-    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  test.beforeEach(async ({ page }) => {
     await mockNerdy(page)
     await page.goto(terminalUrl(PROJECT, 'main'))
     await page.getByTestId('tab-nerdy').click()
     await expect(page.getByTestId('nerdy-list')).toBeVisible({ timeout: 10_000 })
   })
 
-  test('tail → facet rail → expand → copy trace → load older → follow', async ({ page }) => {
+  test('tail → facet rail → expand → load older → follow', async ({ page }) => {
     await expect(page.getByTestId('nerdy-list')).toContainText('health check passed')
 
     // facet rail checkbox narrows to errors (deselect-to-zero allowed)
@@ -23,11 +22,10 @@ test.describe('nerdy stuff (desktop)', () => {
     await page.getByTestId('nerdy-facet-level-error').click()
     await expect(page.getByTestId('nerdy-list')).toContainText('clone failed')
 
-    // expand → copy trace
+    // expand → visible trace id (dev lookup, no action)
     await page.getByTestId('nerdy-row-toggle-9').click()
     await expect(page.getByTestId('nerdy-expand-9')).toContainText('project.clone')
-    await page.getByTestId('nerdy-copy-trace').click()
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('4444444444444444')
+    await expect(page.getByTestId('nerdy-expand-9')).toContainText('4444444444444444')
 
     // search filters free-text
     await page.getByTestId('nerdy-facet-level-error').click()

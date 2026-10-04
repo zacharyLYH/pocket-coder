@@ -3,19 +3,18 @@ import { expect, test } from './test'
 import { mockNerdy, terminalUrl, PROJECT } from './nerdy.fixtures'
 
 // Mobile Nerdy Stuff (390x844): route-mocked, no engine. Tail → chip filter
-// → expand → copy trace → Load older → Follow pause/resume → screenshot.
+// → expand → Load older → Follow pause/resume → screenshot.
 test.describe('nerdy stuff (mobile)', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
 
-  test.beforeEach(async ({ page, context }) => {
-    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  test.beforeEach(async ({ page }) => {
     await mockNerdy(page)
     await page.goto(terminalUrl(PROJECT, 'main'))
     await page.getByTestId('tab-nerdy').click()
     await expect(page.getByTestId('nerdy-list')).toBeVisible({ timeout: 10_000 })
   })
 
-  test('tail → chip filter → expand → copy trace → load older → follow', async ({ page }) => {
+  test('tail → chip filter → expand → load older → follow', async ({ page }) => {
     // tail shows the mocked lines
     await expect(page.getByTestId('nerdy-list')).toContainText('health check passed')
 
@@ -28,11 +27,10 @@ test.describe('nerdy stuff (mobile)', () => {
     await expect(page.getByTestId('nerdy-list')).toContainText('clone failed')
     await expect(page.getByTestId('nerdy-list')).not.toContainText('health check passed')
 
-    // expand a row → JSON + copy trace
+    // expand a row → JSON + visible trace id (dev lookup, no action)
     await page.getByTestId('nerdy-row-toggle-8').click()
     await expect(page.getByTestId('nerdy-expand-8')).toContainText('project.clone')
-    await page.getByTestId('nerdy-copy-trace').click()
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('3333333333333333')
+    await expect(page.getByTestId('nerdy-expand-8')).toContainText('3333333333333333')
 
     // clear filter → Load older pages the before cursor
     await page.getByTestId('nerdy-filters-toggle').click()
