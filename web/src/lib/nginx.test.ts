@@ -35,4 +35,14 @@ describe('nginx prod contract', () => {
     const assets = blockAt('location /assets/')
     expect(assets).toContain('immutable')
   })
+
+  it('forwards Cloudflare proto/IP so Go sets Secure cookies and sees real IPs', () => {
+    for (const loc of ['location = /health', 'location /api', 'location /ws']) {
+      const block = blockAt(loc)
+      expect(block).toContain('proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto')
+      expect(block).toContain('proxy_set_header X-Forwarded-For')
+      expect(block).toContain('proxy_set_header X-Real-IP')
+    }
+    expect(conf).toContain('real_ip_header CF-Connecting-IP')
+  })
 })

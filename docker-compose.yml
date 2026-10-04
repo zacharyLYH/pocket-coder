@@ -1,5 +1,11 @@
-# Production stack: nginx serves the built UI on 8080 and proxies
-# /api + /ws + /health to the Go server, which has no host port.
+# Production stack: nginx serves the built UI and proxies /api + /ws +
+# /health to the Go server, which has no host port.
+# The UI is bound to 127.0.0.1 ONLY: Cloudflare Tunnel (host cloudflared
+# pointing at localhost:8080) is the sole front door, so nothing on the
+# internet can skip Cloudflare and hit nginx directly (which would also
+# let it spoof CF-Connecting-IP). Local `curl localhost:8080/health`
+# (setup.sh) and the host cloudflared keep working; dev is untouched
+# (docker-compose.dev.yml still publishes 8080 + 5173 for Vite).
 # Credentials live in server/.env (written by deploy/setup.sh — same file
 # local dev uses); every key is optional to compose (required: false) so
 # a missing file surfaces as the server's own "PCODER_LOGIN_EMAIL must
@@ -31,7 +37,7 @@ services:
       context: ./web
       dockerfile: Dockerfile
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       - server
     networks:
