@@ -38,11 +38,24 @@ describe('NerdyStuffTab', () => {
     vi.unstubAllGlobals()
   })
 
+  it('lands on overview first', async () => {
+    const calls: string[] = []
+    stubFetch(calls)
+    render(<NerdyStuffTab projectId="abc" />)
+    await waitFor(() => expect(screen.getByTestId('nerdy-overview')).toBeVisible())
+    expect(screen.queryByTestId('nerdy-list')).toBeNull()
+  })
+
+  async function gotoRuntime() {
+    await act(async () => { fireEvent.click(screen.getByTestId('nerdy-panel-runtime')) })
+    await waitFor(() => expect(screen.getByTestId('nerdy-list')).toBeVisible())
+  }
+
   it('tails the observe log', async () => {
     const calls: string[] = []
     stubFetch(calls)
     render(<NerdyStuffTab projectId="abc" />)
-    await waitFor(() => expect(screen.getByTestId('nerdy-list')).toBeVisible())
+    await gotoRuntime()
     expect(screen.getByTestId('nerdy-list')).toHaveTextContent('project created')
     expect(screen.getByTestId('nerdy-row-2')).toHaveTextContent('clone failed')
   })
@@ -51,6 +64,7 @@ describe('NerdyStuffTab', () => {
     const calls: string[] = []
     stubFetch(calls, () => ({ logs: [], firstSeq: 0, lastSeq: 0 }))
     render(<NerdyStuffTab projectId="abc" />)
+    await act(async () => { fireEvent.click(screen.getByTestId('nerdy-panel-runtime')) })
     await waitFor(() => expect(screen.getByTestId('nerdy-empty')).toBeVisible())
     expect(screen.getByTestId('nerdy-empty')).toHaveTextContent('Nothing nerdy yet')
   })
@@ -63,7 +77,7 @@ describe('NerdyStuffTab', () => {
       return { logs, firstSeq: 1, lastSeq: 2 }
     })
     render(<NerdyStuffTab projectId="abc" />)
-    await waitFor(() => expect(screen.getByTestId('nerdy-list')).toBeVisible())
+    await gotoRuntime()
     await act(async () => { fireEvent.click(screen.getByTestId('nerdy-level-error')) })
     await waitFor(() => expect(calls.some((c) => c.includes('level=error'))).toBe(true))
   })
@@ -72,7 +86,7 @@ describe('NerdyStuffTab', () => {
     const calls: string[] = []
     stubFetch(calls)
     render(<NerdyStuffTab projectId="abc" />)
-    await waitFor(() => expect(screen.getByTestId('nerdy-row-toggle-2')).toBeVisible())
+    await gotoRuntime()
     await act(async () => { fireEvent.click(screen.getByTestId('nerdy-row-toggle-2')) })
     expect(screen.getByTestId('nerdy-expand-2')).toHaveTextContent('clone.failed')
     expect(screen.getByTestId('nerdy-expand-2')).toHaveTextContent('bbbbbbbbbbbbbbbb')
@@ -97,6 +111,7 @@ describe('NerdyStuffTab', () => {
       return new Response(JSON.stringify({ logs: LOGS, firstSeq: 5, lastSeq: 6 }), { status: 200 })
     }))
     render(<NerdyStuffTab projectId="abc" />)
+    await gotoRuntime()
     await waitFor(() => expect(screen.getByTestId('nerdy-load-older')).toBeVisible())
     await act(async () => { fireEvent.click(screen.getByTestId('nerdy-load-older')) })
     await waitFor(() => expect(calls.some((c) => c.includes('before=5'))).toBe(true))
@@ -122,7 +137,7 @@ describe('NerdyStuffTab', () => {
     const calls: string[] = []
     stubFetch(calls)
     render(<NerdyStuffTab projectId="abc" />)
-    await waitFor(() => expect(screen.getByTestId('nerdy-highlights')).toBeVisible())
+    await gotoRuntime()
     expect(screen.getByTestId('nerdy-highlights')).toHaveTextContent('Highlights')
     await act(async () => { fireEvent.click(screen.getByTestId('nerdy-highlights')) })
     await waitFor(() => expect(calls.some((c) => c.includes('type=project.create'))).toBe(true))
@@ -157,6 +172,7 @@ describe('NerdyStuffTab', () => {
     const calls: string[] = []
     stubFetch(calls)
     render(<NerdyStuffTab projectId="abc" />)
+    await gotoRuntime()
     await waitFor(() => expect(screen.getByTestId('nerdy-follow')).toBeVisible())
     expect(screen.getByTestId('nerdy-follow')).toHaveTextContent('Following')
     await act(async () => { fireEvent.click(screen.getByTestId('nerdy-follow')) })

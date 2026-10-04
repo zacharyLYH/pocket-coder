@@ -11,6 +11,8 @@ test.describe('nerdy stuff (desktop)', () => {
     await mockNerdy(page)
     await page.goto(terminalUrl(PROJECT, 'main'))
     await page.getByTestId('tab-nerdy').click()
+    // Nerdy Stuff lands on Overview; switch to Runtime for the tail.
+    await page.getByTestId('nerdy-panel-runtime').click()
     await expect(page.getByTestId('nerdy-list')).toBeVisible({ timeout: 10_000 })
   })
 

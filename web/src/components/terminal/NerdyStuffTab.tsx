@@ -59,7 +59,7 @@ function Meter({ used, total, testid, label }: { used: number; total: number; te
 // runs in: CPU, memory, session and preview events) — not your
 // application's own logs or output.
 export function NerdyStuffTab({ projectId }: { projectId: string }) {
-  const [panel, setPanel] = useState<Panel>('runtime')
+  const [panel, setPanel] = useState<Panel>('overview')
   const [filters, setFilters] = useState<ObserveFilters>(EMPTY_FILTERS)
   const [q, setQ] = useState('')
   const [follow, setFollow] = useState(true)
