@@ -284,3 +284,49 @@ func statPerms(t *testing.T, path string) (os.FileMode, error) {
 	}
 	return info.Mode().Perm(), nil
 }
+
+// ClearCookie must mirror SetCookie's Secure logic: a non-Secure Set-Cookie
+// cannot delete a Secure cookie, so without this logout on HTTPS leaves the
+// session alive in the browser.
+func TestClearCookieMirrorsSecureFlag(t *testing.T) {
+	svc, _ := newService(t)
+	cases := []struct {
+		name      string
+		tls       bool
+		forwarded string
+		want      bool
+	}{
+		{"plain http dev", false, "", false},
+		{"direct tls", true, "", true},
+		{"behind https proxy", false, "https", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tc.tls {
+				req.TLS = &tls.ConnectionState{}
+			}
+			if tc.forwarded != "" {
+				req.Header.Set("X-Forwarded-Proto", tc.forwarded)
+			}
+			rec := httptest.NewRecorder()
+			svc.ClearCookie(rec, req)
+
+			var got *http.Cookie
+			for _, c := range rec.Result().Cookies() {
+				if c.Name == CookieName {
+					got = c
+				}
+			}
+			if got == nil {
+				t.Fatal("no session cookie set")
+			}
+			if got.Secure != tc.want {
+				t.Fatalf("Secure = %v, want %v", got.Secure, tc.want)
+			}
+			if got.MaxAge >= 0 || got.Value != "" {
+				t.Fatalf("clearing cookie = value %q maxAge %d, want empty + negative", got.Value, got.MaxAge)
+			}
+		})
+	}
+}

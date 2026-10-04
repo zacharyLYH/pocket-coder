@@ -241,9 +241,13 @@ func (s *Service) SetCookie(w http.ResponseWriter, r *http.Request, token string
 	http.SetCookie(w, c)
 }
 
-// ClearCookie expires the session cookie.
+// ClearCookie expires the session cookie. Secure must mirror SetCookie: a
+// non-Secure Set-Cookie cannot overwrite/delete a Secure cookie, so
+// without this logout on HTTPS leaves the session alive in the browser.
 func (s *Service) ClearCookie(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, sessionCookie("", -1))
+	c := sessionCookie("", -1)
+	c.Secure = r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	http.SetCookie(w, c)
 }
 
 func writeUnauthorized(w http.ResponseWriter) {

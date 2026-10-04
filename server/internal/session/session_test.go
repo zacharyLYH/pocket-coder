@@ -546,3 +546,40 @@ func TestThemeArgsEnablesMouse(t *testing.T) {
 		t.Fatalf("ThemeArgs missing `set-option -g mouse on`: %q", ThemeArgs())
 	}
 }
+
+// IsAlive must never execute a shell for a name outside ValidName: session
+// names can arrive from tmux listings inside the (attacker-influenced)
+// container, and interpolating one into `bash -lc` turns a read-only
+// liveness probe into remote execution. The mock has no Exec expectation,
+// so any exec attempt fails the test.
+func TestIsAliveRejectsMaliciousNameWithoutExec(t *testing.T) {
+	d := dockermocks.NewMockClient(t)
+	for _, name := range []string{
+		`x; touch /tmp/pwn`,
+		`$(touch /tmp/pwn)`,
+		"back`tick`",
+		"has space",
+		"sl/ash",
+		"",
+	} {
+		alive, err := New(d).IsAlive(context.Background(), "c1", name)
+		if err != nil || alive {
+			t.Fatalf("IsAlive(%q) = (%v, %v), want (false, nil) with no exec", name, alive, err)
+		}
+	}
+}
+
+// Legit names still probe, with the name single-quoted so tmux sees the
+// literal even if validation ever widens.
+func TestIsAliveQuotesLegitName(t *testing.T) {
+	d := dockermocks.NewMockClient(t)
+	d.EXPECT().Exec(mock.Anything, "c1", mock.MatchedBy(func(cmd []string) bool {
+		return len(cmd) == 3 && cmd[0] == "bash" && cmd[1] == "-lc" &&
+			strings.Contains(cmd[2], "tmux has-session -t 'main'") &&
+			strings.Contains(cmd[2], "list-panes -t 'main'")
+	}), false).Return(docker.ExecResult{ExitCode: 0}, nil)
+	alive, err := New(d).IsAlive(context.Background(), "c1", "main")
+	if err != nil || !alive {
+		t.Fatalf("IsAlive(main) = (%v, %v), want (true, nil)", alive, err)
+	}
+}

@@ -83,7 +83,9 @@ func TestButlerReadTools(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "one\ntwo\n"}, nil)
 	for _, name := range []string{"one", "two"} {
 		md.EXPECT().Exec(mock.Anything, "pcoder-a-b", mock.MatchedBy(func(argv []string) bool {
-			return len(argv) == 3 && strings.Contains(argv[2], "has-session -t "+name)
+			// IsAlive single-quotes the tmux name so a listing planted
+			// inside the container cannot break out of `bash -lc`.
+			return len(argv) == 3 && strings.Contains(argv[2], "has-session -t '"+name+"'")
 		}), false).Return(docker.ExecResult{ExitCode: 0}, nil)
 	}
 	out, err = byName[butlerToolListSessions](context.Background(), `{"project":"a/b"}`)

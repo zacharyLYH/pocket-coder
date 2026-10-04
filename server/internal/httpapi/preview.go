@@ -206,13 +206,19 @@ func handlePreviewSurface(d Deps) http.HandlerFunc {
 		if path == "vnc.html" || path == "vnc_lite.html" {
 			obs.Info(r.Context(), obs.PreviewOpen, "Preview opened", nil)
 			if explicit {
-				http.SetCookie(w, &http.Cookie{
+				c := &http.Cookie{
 					Name:     previewSurfaceCookieName(id),
 					Value:    sup,
 					Path:     surfaceCookiePath,
 					HttpOnly: true,
 					SameSite: http.SameSiteLaxMode,
-				})
+				}
+				// Same condition as the session cookie (auth.SetCookie):
+				// without Secure the capability travels in cleartext on
+				// plain-HTTP origins; in dev (localhost, no TLS) it stays
+				// unset so the surface keeps working.
+				c.Secure = r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+				http.SetCookie(w, c)
 			}
 		}
 		proxy := newPreviewProxy(target, path)
@@ -253,10 +259,14 @@ func newPreviewProxy(target *url.URL, path string) *httputil.ReverseProxy {
 		req.URL.RawPath = ""
 		req.Host = target.Host
 		// The preview token is a PCODER capability, never a sidecar
-		// credential: strip it before forwarding upstream.
+		// credential: strip it before forwarding upstream. Cookies go too:
+		// the sidecar (static websockify) needs neither the session JWT
+		// nor the capability, and forwarding them widens the sniff/log
+		// surface for both.
 		q := req.URL.Query()
 		q.Del("token")
 		req.URL.RawQuery = q.Encode()
+		req.Header.Del("Cookie")
 	}
 	return proxy
 }

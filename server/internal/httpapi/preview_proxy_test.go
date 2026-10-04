@@ -19,12 +19,19 @@ func TestPreviewProxyStripsTokenQuery(t *testing.T) {
 	}
 	proxy := newPreviewProxy(target, "websockify")
 	req := httptest.NewRequest("GET", "/api/projects/p1/preview/websockify?token=x&autoconnect=true", nil)
+	req.AddCookie(&http.Cookie{Name: "pcoder_session", Value: "jwt"})
+	req.AddCookie(&http.Cookie{Name: "pcoder_preview_p1", Value: "tok"})
 	proxy.Director(req)
 	if req.URL.String() != "http://10.0.0.8:6080/websockify?autoconnect=true" {
 		t.Fatalf("forwarded URL = %s", req.URL)
 	}
 	if req.Host != "10.0.0.8:6080" {
 		t.Fatalf("forwarded host = %q", req.Host)
+	}
+	// The sidecar needs neither the session JWT nor the capability: both
+	// must stop at the Go gate, never ride upstream to websockify logs.
+	if ck := req.Header.Get("Cookie"); ck != "" {
+		t.Fatalf("Cookie forwarded upstream: %q", ck)
 	}
 }
 
@@ -165,6 +172,49 @@ func TestPreviewSurfaceCookieCarriesAssetImports(t *testing.T) {
 	h.ServeHTTP(srec, stale)
 	if srec.Code != http.StatusNotFound {
 		t.Fatalf("wrong query token + live cookie = %d body=%s", srec.Code, srec.Body)
+	}
+}
+
+// The capability cookie follows the session cookie's Secure rule: marked
+// Secure when the browser arrived over TLS (direct or via the Tunnel's
+// X-Forwarded-Proto), unset on plain HTTP so dev keeps working.
+func TestPreviewSurfaceCookieSecureMirrorsOriginScheme(t *testing.T) {
+	script := &scriptedCDP{navigateResult: `{}`}
+	script.eval = func(string) string { return evalValue(`{"state":"complete","href":"http://127.0.0.1:3000/"}`) }
+	for _, tc := range []struct {
+		name      string
+		forwarded string
+		want      bool
+	}{
+		{"plain http dev", "", false},
+		{"behind https proxy", "https", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cookie, tok := tokenDeps(t, script, "ptok-secure")
+			entry := httptest.NewRequest(http.MethodGet,
+				"/api/projects/ptok-secure/preview/vnc_lite.html?token="+tok, nil)
+			entry.AddCookie(cookie)
+			if tc.forwarded != "" {
+				entry.Header.Set("X-Forwarded-Proto", tc.forwarded)
+			}
+			erec := httptest.NewRecorder()
+			h.ServeHTTP(erec, entry)
+			if erec.Code != http.StatusOK {
+				t.Fatalf("entry = %d body=%s", erec.Code, erec.Body)
+			}
+			var capability *http.Cookie
+			for _, c := range erec.Result().Cookies() {
+				if c.Name == previewSurfaceCookieName("ptok-secure") {
+					capability = c
+				}
+			}
+			if capability == nil {
+				t.Fatal("no capability cookie set")
+			}
+			if capability.Secure != tc.want {
+				t.Fatalf("capability Secure = %v, want %v", capability.Secure, tc.want)
+			}
+		})
 	}
 }
 

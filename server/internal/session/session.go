@@ -138,9 +138,16 @@ func (s *Service) List(ctx context.Context, container string) ([]Entry, error) {
 // `tmux has-session` returns 0 for both live and dead (remain-on-exit)
 // sessions, so we check whether the pane's initial process is alive.
 func (s *Service) IsAlive(ctx context.Context, container, name string) (bool, error) {
+	// Fail closed without executing: names here can arrive from tmux
+	// listings inside the container (attacker-influenced), and anything
+	// outside ValidName is certainly not one of ours. The Sprintf below
+	// is quoted anyway (defense in depth for future callers).
+	if !ValidName(name) {
+		return false, nil
+	}
 	chk, err := s.dkr.Exec(ctx, container, []string{
 		"bash", "-lc",
-		fmt.Sprintf(`tmux has-session -t %s 2>/dev/null && pid=$(tmux list-panes -t %s -F '#{pane_pid}' 2>/dev/null | head -1) && kill -0 "$pid" 2>/dev/null`, name, name),
+		fmt.Sprintf(`tmux has-session -t %s 2>/dev/null && pid=$(tmux list-panes -t %s -F '#{pane_pid}' 2>/dev/null | head -1) && kill -0 "$pid" 2>/dev/null`, textutil.ShellQuote(name), textutil.ShellQuote(name)),
 	}, false)
 	if err != nil {
 		return false, err
