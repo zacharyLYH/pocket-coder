@@ -8,7 +8,12 @@ import { createResponsiveProject, openPreviewFromTerminal, waitForChromiumFit, s
 // data-mode marker), so these shots prove the sidecar window really follows
 // the preview window instead of cropping a fixed-size desktop.
 test.describe('preview window fit', () => {
-  test.use({ viewport: { width: 1280, height: 720 } })
+  // hasTouch (without isMobile) emulates touch capability while keeping a
+  // desktop pointer: the desktop shot stays back-button-free (wide viewport
+  // fails the touch+small-screen gate) and the phone shot below exercises
+  // the real touch path, back button included. isMobile must stay off: it
+  // flips pointer to coarse, which would show the button on desktop too.
+  test.use({ viewport: { width: 1280, height: 720 }, hasTouch: true })
 
   test('responsive page reflows: desktop vs phone styles', async ({ page, request }) => {
     test.setTimeout(600_000)
@@ -30,12 +35,15 @@ test.describe('preview window fit', () => {
       expect(((await desktopRes.json()) as { html: string }).html).toContain('data-mode="desktop"')
       await expect(previewPage).toHaveScreenshot('preview-fit-desktop.png', { fullPage: true })
 
-      // Narrow window: the same Chromium must switch to phone styles.
+      // Narrow window: the same Chromium must switch to phone styles. The
+      // surface re-evaluates its touch gate on resize, so the back button
+      // appears here live — no reload, no dropped VNC session.
       await previewPage.setViewportSize({ width: 390, height: 844 })
       await waitForChromiumFit(previewPage, request, projectID)
       const phoneRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       expect(phoneRes.ok()).toBeTruthy()
       expect(((await phoneRes.json()) as { html: string }).html).toContain('data-mode="phone"')
+      await expect(previewPage.getByRole('button', { name: 'Back to terminal' })).toBeVisible({ timeout: 10_000 })
       await expect(previewPage).toHaveScreenshot('preview-fit-phone.png', { fullPage: true })
 
       await previewPage.close()

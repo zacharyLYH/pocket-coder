@@ -41,6 +41,13 @@ const TERM_THEME = {
 // /ws/projects/{id}/sessions/{name}. Frames: input/resize out, output/exit
 // in. Re-dials whenever session or redial changes; the host element is
 // owned by the parent view.
+//
+// Scrolling is intentionally NOT intercepted here: xterm.js scrolls its own
+// scrollback natively, and under `tmux attach` (alternate screen) the wheel
+// reaches tmux via mouse mode (server ThemeArgs sets `mouse on`) so tmux
+// scrolls copy-mode instead of emitting Up/Down arrows. A DOM-level wheel
+// handler would run after xterm's own handler and double-handle the gesture
+// (arrow-key leak = shell history recall, the scroll-up bug).
 export function TerminalPane({ projectId, session, redial, fontSize, hostRef, onStatus, onError }: {
   projectId: string
   session: string
@@ -79,6 +86,8 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
       letterSpacing: 0.3,
       theme: TERM_THEME,
       allowProposedApi: true,
+      scrollback: 10000,
+      scrollSensitivity: 2,
     })
     const fit = new FitAddon()
     term.loadAddon(fit)

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { PreviewSurface } from '@/components/PreviewSurface'
@@ -131,5 +131,130 @@ describe('PreviewSurface', () => {
       expect(clearSpy).toHaveBeenCalled()
     })
     clearSpy.mockRestore()
+  })
+
+  it('renders back button on touch (mobile) with pull-to-refresh opt-out', async () => {
+    // Simulate mobile: pointer is coarse
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: query === '(pointer: coarse)',
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith('/preview')) {
+          return new Response(JSON.stringify({ status: 'ready', token: 'tokT' }), { status: 200 })
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }),
+    )
+
+    render(<PreviewSurface projectId="abc" />)
+    await screen.findByTitle('Remote project preview')
+
+    // The container must opt out of pull-to-refresh so dragging on the VNC
+    // surface doesn't trigger a reload.
+    const main = screen.getByTitle('Remote project preview').closest('main')
+    expect(main).toHaveAttribute('data-no-pull-refresh')
+
+    // On touch devices, the back button should be present.
+    const backBtn = screen.getByLabelText('Back to terminal')
+    expect(backBtn).toBeInTheDocument()
+  })
+
+  it('toggles the back button live on resize, without a reload', async () => {
+    // Desktop touchscreen at a wide viewport: the width gate keeps it off.
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockReturnValue({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    })
+    const origTouch = navigator.maxTouchPoints
+    const origWidth = window.innerWidth
+    Object.defineProperty(navigator, 'maxTouchPoints', { value: 1, configurable: true })
+    Object.defineProperty(window, 'innerWidth', { value: 1280, configurable: true })
+    try {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string) => {
+          if (String(url).endsWith('/preview')) {
+            return new Response(JSON.stringify({ status: 'ready', token: 'tokR' }), { status: 200 })
+          }
+          return new Response(JSON.stringify({ ok: true }), { status: 200 })
+        }),
+      )
+      render(<PreviewSurface projectId="abc" />)
+      await screen.findByTitle('Remote project preview')
+      expect(screen.queryByLabelText('Back to terminal')).toBeNull()
+      // Narrow past the gate: the button appears on resize alone.
+      Object.defineProperty(window, 'innerWidth', { value: 390 })
+      await act(async () => {
+        window.dispatchEvent(new Event('resize'))
+      })
+      expect(screen.getByLabelText('Back to terminal')).toBeInTheDocument()
+    } finally {
+      Object.defineProperty(navigator, 'maxTouchPoints', { value: origTouch, configurable: true })
+      Object.defineProperty(window, 'innerWidth', { value: origWidth, configurable: true })
+    }
+  })
+
+  it('back button calls history.back when history is available', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockReturnValue({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    })
+    const backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => {})
+    Object.defineProperty(window.history, 'length', { value: 2, configurable: true })
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).endsWith('/preview')) {
+        return new Response(JSON.stringify({ status: 'ready', token: 'tokB' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }))
+
+    render(<PreviewSurface projectId="abc" />)
+    await screen.findByTitle('Remote project preview')
+    fireEvent.click(screen.getByLabelText('Back to terminal'))
+    expect(backSpy).toHaveBeenCalled()
+    backSpy.mockRestore()
+  })
+
+   it('back button falls back when no history', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockReturnValue({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    })
+    Object.defineProperty(window.history, 'length', { value: 0, configurable: true })
+    const backSpy = vi.spyOn(window.history, 'back')
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).endsWith('/preview')) {
+        return new Response(JSON.stringify({ status: 'ready', token: 'tokF' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }))
+
+    render(<PreviewSurface projectId="abc" />)
+    await screen.findByTitle('Remote project preview')
+    fireEvent.click(screen.getByLabelText('Back to terminal'))
+    // history.length === 0 means the fallback path is taken:
+    // history.back() must NOT be called.
+    expect(backSpy).not.toHaveBeenCalled()
+    backSpy.mockRestore()
   })
 })

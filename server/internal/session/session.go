@@ -67,7 +67,9 @@ func splitSuffix(name string) (base string, n int, ok bool) {
 // ThemeArgs are the tmux commands appended to every session create so the
 // container's tmux matches the web terminal (TERM_THEME in
 // web/src/components/terminal/TerminalPane.tsx): truecolor passthrough,
-// COLORTERM for pane processes, and a status bar in the app palette.
+// COLORTERM for pane processes, a status bar in the app palette, and mouse
+// mode so wheel scrolls tmux copy-mode instead of leaking through xterm.js
+// as Up/Down arrow keys (shell history recall).
 // All global options, so applying them on every create is idempotent.
 func ThemeArgs() []string {
 	return []string{
@@ -76,6 +78,11 @@ func ThemeArgs() []string {
 		// a 256-color approximation.
 		";", "set-option", "-sa", "terminal-features", ",*:RGB",
 		";", "set-environment", "-g", "COLORTERM", "truecolor",
+		// Wheel → tmux copy-mode scroll. Without this, xterm.js converts
+		// wheel to arrow-key sequences when the buffer reports no scrollback
+		// (always true under `tmux attach`, which uses the alternate
+		// screen), so scrolling recalled shell history instead of scrolling.
+		";", "set-option", "-g", "mouse", "on",
 		// Status bar in the app palette: accent session name, dim chrome.
 		";", "set-option", "-g", "status-style", "bg=#0a0e14,fg=#b3b1ad",
 		";", "set-option", "-g", "status-left", "#[fg=#e6b450,bold]#S #[fg=#686868]",

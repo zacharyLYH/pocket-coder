@@ -534,3 +534,15 @@ func TestInjectValidation(t *testing.T) {
 		}
 	})
 }
+
+// Scroll pin: tmux mouse mode must stay on so wheel scrolls tmux copy-mode
+// instead of leaking through xterm.js as Up/Down arrows (shell history
+// recall instead of scroll).
+func TestThemeArgsEnablesMouse(t *testing.T) {
+	// NUL-joined so the match is on whole adjacent argv elements, not a
+	// substring accident across one flag.
+	joined := strings.Join(ThemeArgs(), "\x00")
+	if !strings.Contains(joined, "set-option\x00-g\x00mouse\x00on") {
+		t.Fatalf("ThemeArgs missing `set-option -g mouse on`: %q", ThemeArgs())
+	}
+}
