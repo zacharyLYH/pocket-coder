@@ -39,11 +39,13 @@ type wsOut struct {
 	Code int    `json:"code,omitempty"`
 }
 
-// Same-origin need not be re-checked here: the session cookie is
-// SameSite=Strict, so a cross-site handshake cannot carry it, and RequireAuth
-// already rejected unauthenticated upgrades.
+// The session cookie is SameSite=Strict, so a cross-site handshake cannot
+// carry it, and RequireAuth already rejected unauthenticated upgrades.
+// CheckOrigin is the second lock at upgrade time (the mux middleware pays
+// the same check earlier): foreign Origins are refused even if they reach
+// here through a route that skips the middleware.
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(*http.Request) bool { return true },
+	CheckOrigin: wsOriginAllowed,
 }
 
 // ensureProject requires a project's container to exist (recreating it from

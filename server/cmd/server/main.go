@@ -147,13 +147,13 @@ func main() {
 	}
 	slog.Info("data dir ready", "data_dir", cfg.DataDir, "seeded_harnesses", seeded)
 
-	srv := &http.Server{Addr: cfg.Bind, Handler: httpapi.New(httpapi.Deps{
+	srv := newHTTPServer(cfg.Bind, httpapi.New(httpapi.Deps{
 		Events: ev, Version: version, Auth: authSvc, Projects: svc,
 		Sessions: sessions, Harnesses: harnesses,
 		SSHKeys: sshKeyStore, State: st, Preview: previewManager,
 		Obs: observe, Docker: dkr, Codemaps: codemapStore,
 		Butler: threads.New(filepath.Join(cfg.DataDir, "butler"), true),
-	})}
+	}))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -226,6 +226,32 @@ func smtpFromConfig(cfg *config.Config) *state.SMTP {
 		return nil
 	}
 	return &state.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, User: cfg.SMTPUser, Password: cfg.SMTPPass, From: cfg.SMTPFrom}
+}
+
+// newHTTPServer builds the control-plane listener with transport timeouts.
+// The zero-value http.Server has none, so an unauthenticated client can
+// dribble headers forever (Slowloris) and hold a goroutine + buffers per
+// connection. Bounds, and why each is safe here:
+//   - ReadHeaderTimeout 10s: headers are tiny; nothing legit is slower.
+//   - ReadTimeout 60s: request bodies are small JSON (PINs, commands).
+//   - WriteTimeout 15m: must exceed the longest synchronous handler —
+//     /api/projects/exec and harness installs run Docker builds up to
+//     10 min (session.execTimeout). WebSocket terminals/preview sockets
+//     are unaffected: Go stops enforcing timeouts once a connection is
+//     hijacked.
+//   - IdleTimeout 120s: idle keep-alive reuse only.
+//   - MaxHeaderBytes 1MB: cookies + headers are KBs; caps header-memory
+//     amplification per connection.
+func newHTTPServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      15 * time.Minute,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 }
 
 // aiFromConfig seeds the shared model list from env. Any part

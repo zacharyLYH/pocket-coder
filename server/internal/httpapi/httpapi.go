@@ -199,7 +199,7 @@ func New(d Deps) http.Handler {
 		authed("POST", "/api/butler/confirms/{id}/apply", handleButlerConfirmApply)
 		authed("POST", "/api/butler/confirms/{id}/discard", handleButlerConfirmDiscard)
 	}
-	return obs.Middleware(mux)
+	return obs.Middleware(requireSameOriginForWrites(mux))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -286,6 +286,10 @@ func handleGetState(d Deps) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// state.json carries SMTP + AI credentials and the SSH private
+		// key: forbid any intermediary or browser cache from storing it.
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Pragma", "no-cache")
 		if r.URL.Query().Get("download") == "true" {
 			w.Header().Set("Content-Disposition", `attachment; filename="state.json"`)
 		}
