@@ -107,11 +107,7 @@ var commitMsgSchema = map[string]any{
 func handleGitCommitMessage(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.GitCommitMsg, "git commit-message failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.GitCommitMsg, "git commit-message failed", &err, nil)()
 		cfg, container, dir, serr := aiGitSetup(d, w, r)
 		if serr != nil {
 			err = serr
@@ -164,11 +160,7 @@ var prBodySchema = map[string]any{
 func handleGitPRBody(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.GitPRBody, "git pr-body failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.GitPRBody, "git pr-body failed", &err, nil)()
 		cfg, container, dir, serr := aiGitSetup(d, w, r)
 		if serr != nil {
 			err = serr

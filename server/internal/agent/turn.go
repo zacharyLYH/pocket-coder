@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 )
 
@@ -231,6 +230,3 @@ func (p Pipeline) Execute(ctx context.Context, cfg Config, lin *Lineage, userPro
 	}
 	return res
 }
-
-// JSONArg is a helper for pipeline stages that need to decode raw args.
-func JSONArg(raw string, v any) error { return json.Unmarshal([]byte(raw), v) }

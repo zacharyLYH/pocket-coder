@@ -161,7 +161,7 @@ export function NerdyStuffTab({ projectId }: { projectId: string }) {
           {PANELS.map((p) => (
             <Button key={p} variant={panel === p ? 'default' : 'outline'} size="sm" role="tab" aria-selected={panel === p}
               data-testid={`nerdy-panel-${p}`} onClick={() => setPanel(p)}>
-              {p[0].toUpperCase() + p.slice(1)}{p === 'errors' && groups.length > 0 ? ` (${groups.length})` : ''}
+              {panelLabel(p)}
             </Button>
           ))}
         </div>

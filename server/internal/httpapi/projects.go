@@ -69,11 +69,7 @@ func handleListProjects(d Deps) http.HandlerFunc {
 func handleGetProject(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.ProjectGet, "get project failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.ProjectGet, "get project failed", &err, nil)()
 		p, status, gerr := d.Projects.Get(r.Context(), r.PathValue("id"))
 		if gerr != nil {
 			err = gerr
@@ -95,11 +91,7 @@ func handleGetProject(d Deps) http.HandlerFunc {
 func handlePatchProject(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.ProjectPatch, "patch project failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.ProjectPatch, "patch project failed", &err, nil)()
 		if d.State == nil {
 			err = errors.New("state not available")
 			writeErr(w, http.StatusInternalServerError, err.Error())
@@ -203,11 +195,7 @@ func handleProjectOp(d Deps, op string) http.HandlerFunc {
 			"restart": obs.ProjectRestart,
 		}[op]
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, key, "project "+op+" failed", err, map[string]any{"op": op})
-			}
-		}()
+		defer obsFailAt(r, key, "project "+op+" failed", &err, map[string]any{"op": op})()
 		id := r.PathValue("id")
 		ctx := r.Context()
 		if d.Preview != nil && (op == "stop" || op == "restart") {
@@ -239,11 +227,7 @@ func handleProjectOp(d Deps, op string) http.HandlerFunc {
 func handleDeleteProject(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.ProjectDelete, "delete project failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.ProjectDelete, "delete project failed", &err, nil)()
 		if d.Preview != nil {
 			_ = d.Preview.Stop(r.Context(), r.PathValue("id"))
 		}

@@ -43,11 +43,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 		// Deferred error covers only the pre-reserve failures: reserve and
 		// store failures below log specifically (codemap.turn key).
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.CodemapAsk, "codemap ask failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.CodemapAsk, "codemap ask failed", &err, nil)()
 		cfg := aiConfig(d, aiBody{})
 		if !cfg.Valid() {
 			err = errors.New("ai not configured")
@@ -151,11 +147,7 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 		id := r.PathValue("id")
 		tid := r.PathValue("tid")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.CodemapRetry, "codemap retry failed", err, map[string]any{"threadId": tid})
-			}
-		}()
+		defer obsFailAt(r, obs.CodemapRetry, "codemap retry failed", &err, map[string]any{"threadId": tid})()
 		cfg := aiConfig(d, aiBody{})
 		if !cfg.Valid() {
 			err = errors.New("ai not configured")
@@ -517,11 +509,7 @@ func codemapViews(th threads.Thread) []agent.TurnView {
 func handleCodemapFile(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.CodemapFile, "read file failed", err, map[string]any{"path": r.URL.Query().Get("path")})
-			}
-		}()
+		defer obsFailAt(r, obs.CodemapFile, "read file failed", &err, map[string]any{"path": r.URL.Query().Get("path")})()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
 			err = errors.New("repo unavailable")

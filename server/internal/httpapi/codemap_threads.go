@@ -39,11 +39,7 @@ func handleCodemapThreads(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.CodemapThreads, "list threads failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.CodemapThreads, "list threads failed", &err, nil)()
 		st, ok := threadsOr500(w, d)
 		if !ok {
 			err = errStoreUnconfigured
@@ -75,11 +71,7 @@ func handleCodemapThreadGet(d Deps) http.HandlerFunc {
 		id := r.PathValue("id")
 		tid := r.PathValue("tid")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.CodemapThread, "get thread failed", err, map[string]any{"threadId": tid})
-			}
-		}()
+		defer obsFailAt(r, obs.CodemapThread, "get thread failed", &err, map[string]any{"threadId": tid})()
 		st, ok := threadsOr500(w, d)
 		if !ok {
 			err = errStoreUnconfigured
@@ -103,11 +95,7 @@ func handleCodemapThreadDelete(d Deps) http.HandlerFunc {
 		id := r.PathValue("id")
 		tid := r.PathValue("tid")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.CodemapThreadDeleted, "delete thread failed", err, map[string]any{"threadId": tid})
-			}
-		}()
+		defer obsFailAt(r, obs.CodemapThreadDeleted, "delete thread failed", &err, map[string]any{"threadId": tid})()
 		st, ok := threadsOr500(w, d)
 		if !ok {
 			err = errStoreUnconfigured

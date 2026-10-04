@@ -16,6 +16,7 @@ import (
 
 	"pcoder/internal/obs"
 	"pcoder/internal/project"
+	"pcoder/internal/textutil"
 )
 
 // gitFile is one row in the status response.
@@ -31,9 +32,7 @@ type gitFile struct {
 }
 
 // shellQuote wraps s in single quotes for `bash -lc` embedding.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
+var shellQuote = textutil.ShellQuote
 
 // validGitPath rejects empty, absolute, parent-escaping, and empty-segment
 // paths. The empty-segment check matches codemap's validRepoPath so the
@@ -135,11 +134,7 @@ func parseNumstat(out string, counts map[string][2]int, binary map[string]bool) 
 func handleGitStatus(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.GitStatus, "git status failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.GitStatus, "git status failed", &err, nil)()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
 			err = errors.New("repo unavailable")
@@ -237,11 +232,7 @@ func handleGitStatus(d Deps) http.HandlerFunc {
 func handleGitDiff(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.GitDiff, "git diff failed", err, map[string]any{"path": r.URL.Query().Get("path")})
-			}
-		}()
+		defer obsFailAt(r, obs.GitDiff, "git diff failed", &err, map[string]any{"path": r.URL.Query().Get("path")})()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
 			err = errors.New("repo unavailable")
@@ -356,11 +347,7 @@ func handleGitStage(d Deps, unstage bool) http.HandlerFunc {
 			op = "unstage"
 		}
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, key, "git "+op+" failed", err, map[string]any{"op": op})
-			}
-		}()
+		defer obsFailAt(r, key, "git "+op+" failed", &err, map[string]any{"op": op})()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
 			err = errors.New("repo unavailable")
@@ -399,11 +386,7 @@ func handleGitStage(d Deps, unstage bool) http.HandlerFunc {
 func handleGitStageHunk(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.GitStageHunk, "git stage hunk failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.GitStageHunk, "git stage hunk failed", &err, nil)()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
 			err = errors.New("repo unavailable")

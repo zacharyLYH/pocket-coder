@@ -181,11 +181,7 @@ func promptUndo(c opsContext, repoDir string) string {
 func handleGitOpsPrompt(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.GitOpsPrompt, "git ops-prompt failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.GitOpsPrompt, "git ops-prompt failed", &err, nil)()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
 			err = errors.New("repo unavailable")

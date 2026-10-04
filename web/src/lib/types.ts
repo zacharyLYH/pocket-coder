@@ -1,8 +1,5 @@
-// Shared butler shapes. Steps are the one shared agent-step shape
-// {tool, args, output?, error?} both products persist; butler just
-// summarizes outputs shorter server-side.
 // One shared agent-step shape both products persist
-// {tool, args, output?, error?}; butler just summarizes outputs shorter.
+// {tool, args, output?, error?}; butler summarizes outputs shorter.
 export type AgentStep = { tool: string; args?: string; output?: string; error?: string }
 export type ThreadStatus = 'ready' | 'running' | 'awaiting' | 'failed'
 export type ButlerTurn = { turnId: string; prompt: string; answer?: string; steps?: AgentStep[] | null; projectHint?: string; time?: string; error?: string | null }

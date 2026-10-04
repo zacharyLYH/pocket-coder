@@ -130,11 +130,7 @@ func handleDeleteHarness(d Deps) http.HandlerFunc {
 func handleProjectHarnesses(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.ProjectHarnesses, "project harnesses failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.ProjectHarnesses, "project harnesses failed", &err, nil)()
 		id, ok := ensureProject(d, w, r)
 		if !ok {
 			err = errors.New("project container not running")

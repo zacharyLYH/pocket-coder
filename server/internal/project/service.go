@@ -244,9 +244,7 @@ func (s *Service) injectGitSSH(ctx context.Context, container string) error {
 }
 
 // shQuote wraps s in single quotes for sh -c embedding.
-func shQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
+var shQuote = textutil.ShellQuote
 
 // execOK runs argv in the container, turning transport errors and
 // non-zero exits into one error. Shared by the provisioning injects.

@@ -81,11 +81,7 @@ func dirtyTrackedUnder(ctx context.Context, d Deps, container, dir string) ([]st
 func handleGitCommit(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.GitCommit, "git commit failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.GitCommit, "git commit failed", &err, nil)()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
 			err = errors.New("repo unavailable")
@@ -157,11 +153,7 @@ func handleGitIdentity(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := obs.GitIdentity
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, key, "git identity failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, key, "git identity failed", &err, nil)()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
 			err = errors.New("repo unavailable")
@@ -199,11 +191,7 @@ func handleGitIdentity(d Deps) http.HandlerFunc {
 func handleGitPush(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.GitPush, "git push failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.GitPush, "git push failed", &err, nil)()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
 			err = errors.New("repo unavailable")
@@ -239,11 +227,7 @@ func handleGitPush(d Deps) http.HandlerFunc {
 func handleGitPull(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.GitPull, "git pull failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.GitPull, "git pull failed", &err, nil)()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
 			err = errors.New("repo unavailable")
@@ -273,11 +257,7 @@ var prShaRe = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 func handleGitBranches(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.GitBranches, "git branches failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.GitBranches, "git branches failed", &err, nil)()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
 			err = errors.New("repo unavailable")
@@ -337,11 +317,7 @@ func handleGitBranches(d Deps) http.HandlerFunc {
 func handleGitSwitch(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.GitSwitch, "git switch failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.GitSwitch, "git switch failed", &err, nil)()
 		container, dir, ok := gitRepoDir(d, w, r)
 		if !ok {
 			err = errors.New("repo unavailable")

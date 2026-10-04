@@ -247,6 +247,18 @@ func obsFail(r *http.Request, key, msg string, err error, data map[string]any) {
 	obs.Error(r.Context(), key, msg+": "+err.Error(), data)
 }
 
+// obsFailAt returns the deferred guard for obsFail's pattern: pair it with
+// a `var err error` declared just before, then assign err before every
+// error return. The returned func is invoked at handler return and logs
+// only when err is still non-nil.
+func obsFailAt(r *http.Request, key, msg string, errp *error, data map[string]any) func() {
+	return func() {
+		if *errp != nil {
+			obsFail(r, key, msg, *errp, data)
+		}
+	}
+}
+
 // writeErr writes the standard JSON error shape {"error": msg}.
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
@@ -294,11 +306,7 @@ func handleGetState(d Deps) http.HandlerFunc {
 func handleDeleteState(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.ProjectDelete, "state wipe failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.ProjectDelete, "state wipe failed", &err, nil)()
 		// 1. Stop live surfaces and delete every project.
 		entries, lerr := d.Projects.List()
 		if lerr != nil {

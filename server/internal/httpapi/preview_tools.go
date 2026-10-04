@@ -368,11 +368,7 @@ func decodeScreenshotPNG(raw json.RawMessage) ([]byte, error) {
 func handlePreviewScreenshot(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewScreenshot, "preview screenshot failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewScreenshot, "preview screenshot failed", &err, nil)()
 		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			err = terr
 			return
@@ -403,11 +399,7 @@ func handlePreviewScreenshot(d Deps) http.HandlerFunc {
 func handlePreviewInspect(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewInspect, "preview inspect failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewInspect, "preview inspect failed", &err, nil)()
 		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			err = terr
 			return
@@ -441,11 +433,7 @@ func handlePreviewInspect(d Deps) http.HandlerFunc {
 func handlePreviewConsole(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewConsole, "preview console failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewConsole, "preview console failed", &err, nil)()
 		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			err = terr
 			return
@@ -484,11 +472,7 @@ func handlePreviewConsole(d Deps) http.HandlerFunc {
 func handlePreviewNetwork(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewNetwork, "preview network failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewNetwork, "preview network failed", &err, nil)()
 		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			err = terr
 			return
@@ -527,11 +511,7 @@ func handlePreviewNetwork(d Deps) http.HandlerFunc {
 func handlePreviewNavigate(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewNavigate, "preview navigate failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewNavigate, "preview navigate failed", &err, nil)()
 		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			err = terr
 			return
@@ -617,11 +597,7 @@ func typeText(ctx context.Context, s cdpCaller, text string) error {
 func handlePreviewClick(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewClick, "preview click failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewClick, "preview click failed", &err, nil)()
 		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			err = terr
 			return
@@ -678,11 +654,7 @@ func handlePreviewClick(d Deps) http.HandlerFunc {
 func handlePreviewType(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewType, "preview type failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewType, "preview type failed", &err, nil)()
 		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			err = terr
 			return
@@ -733,11 +705,7 @@ func handlePreviewType(d Deps) http.HandlerFunc {
 func handlePreviewReload(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewReload, "preview reload failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewReload, "preview reload failed", &err, nil)()
 		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			err = terr
 			return
@@ -761,11 +729,7 @@ func handlePreviewReload(d Deps) http.HandlerFunc {
 func handlePreviewScroll(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewScroll, "preview scroll failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewScroll, "preview scroll failed", &err, nil)()
 		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			err = terr
 			return
@@ -797,11 +761,7 @@ func handlePreviewScroll(d Deps) http.HandlerFunc {
 func handlePreviewViewport(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewViewport, "preview viewport failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewViewport, "preview viewport failed", &err, nil)()
 		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			err = terr
 			return

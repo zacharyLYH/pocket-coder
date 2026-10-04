@@ -10,6 +10,7 @@ import { Separator } from '@/components/ui/separator'
 import { api, ApiError, errMsg, projectPath } from '@/lib/api'
 import { copyToClipboard } from '@/lib/clipboard'
 import { BranchSheet } from '@/components/terminal/BranchSheet'
+import { EmptyState } from '@/components/EmptyState'
 import { GitOpsPrompt } from '@/components/terminal/GitOpsPrompt'
 import type { GitBranchList, GitDiffResponse, GitFileStatus, GitStatusResponse } from '@/lib/types'
 
@@ -675,13 +676,7 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
         {status === null ? (
           <p className="text-xs text-muted-foreground">Loading…</p>
         ) : status.notRepo ? (
-          <div className="grid place-items-center rounded-lg border border-dashed bg-muted/30 p-8 text-center" data-testid="diff-empty">
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-2xl">○</span>
-              <p className="text-sm font-medium">Not a git repo</p>
-              <p className="text-xs text-muted-foreground">Init one in the terminal to review diffs here.</p>
-            </div>
-          </div>
+          <EmptyState testid="diff-empty" title="Not a git repo" hint="Init one in the terminal to review diffs here." />
         ) : (
           <>
             <div className="flex items-center justify-end gap-2">
@@ -708,13 +703,7 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
               )}
             </div>
             {files.length === 0 ? (
-              <div className="grid place-items-center rounded-lg border border-dashed bg-muted/30 p-8 text-center" data-testid="diff-empty">
-                <div className="flex flex-col items-center gap-2">
-                  <span className="text-2xl">○</span>
-                  <p className="text-sm font-medium">No changes</p>
-                  <p className="text-xs text-muted-foreground">Working tree is clean.</p>
-                </div>
-              </div>
+              <EmptyState testid="diff-empty" title="No changes" hint="Working tree is clean." />
             ) : (
               // min-h-36 floors the list: on short screens the fixed
               // message/actions blocks must not squeeze it to zero.

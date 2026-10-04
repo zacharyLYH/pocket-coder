@@ -21,11 +21,7 @@ func handlePreviewStatus(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewStatus, "preview status failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewStatus, "preview status failed", &err, nil)()
 		worker, gerr := d.Preview.Get(id)
 		if errors.Is(gerr, preview.ErrNotFound) {
 			writeJSON(w, http.StatusOK, map[string]any{"project": id, "status": "stopped"})
@@ -62,11 +58,7 @@ func handlePreviewStatus(d Deps) http.HandlerFunc {
 func handlePreviewStart(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewStart, "preview start failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewStart, "preview start failed", &err, nil)()
 		var body struct {
 			Port int `json:"port"`
 		}
@@ -133,11 +125,7 @@ func handlePreviewClose(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewClose, "preview close failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewClose, "preview close failed", &err, nil)()
 		// Clear cached CDP session first: it dangles if the worker is gone
 		// (stop/restart/delete raced close), and a stale entry makes the next
 		// tools call dial a dead socket.
@@ -170,11 +158,7 @@ func handlePreviewSurface(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewSurface, "preview surface failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewSurface, "preview surface failed", &err, nil)()
 		prefix := "/api/projects/" + id + "/preview/"
 		path := strings.TrimPrefix(r.URL.Path, prefix)
 		if path == "" {
@@ -337,11 +321,7 @@ func handlePreviewPorts(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.PreviewPorts, "preview ports probe failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.PreviewPorts, "preview ports probe failed", &err, nil)()
 		if d.Projects == nil {
 			err = errors.New("no projects")
 			writeErr(w, http.StatusNotFound, err.Error())

@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { api, errMsg, projectPath } from '@/lib/api'
+import { EmptyState } from '@/components/EmptyState'
 
 export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; onOpenPreview: () => void }) {
   const [ports, setPorts] = useState<{ port: number }[]>([])
@@ -93,13 +94,7 @@ export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; on
       <Separator />
       <CardContent className="flex flex-1 flex-col gap-4 pt-4">
         {ports.length === 0 ? (
-          <div className="grid place-items-center rounded-lg border border-dashed bg-muted/30 p-8 text-center" data-testid="preview-empty">
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-2xl">○</span>
-              <p className="text-sm font-medium">No active localhost ports</p>
-              <p className="text-xs text-muted-foreground">Start a server with a quick command, then hit Refresh.</p>
-            </div>
-          </div>
+          <EmptyState testid="preview-empty" title="No active localhost ports" hint="Start a server with a quick command, then hit Refresh." />
         ) : (
           <div className="flex flex-wrap gap-2" data-testid="preview-ports">
             {ports.map((s) => (

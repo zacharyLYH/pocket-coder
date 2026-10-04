@@ -72,11 +72,7 @@ func handleTerminal(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.TerminalAttach, "terminal attach failed", err, map[string]any{"session": name})
-			}
-		}()
+		defer obsFailAt(r, obs.TerminalAttach, "terminal attach failed", &err, map[string]any{"session": name})()
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 
@@ -295,11 +291,7 @@ func splitUTF8(b []byte) (n, hold int) {
 func handleListSessions(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.SessionList, "list sessions failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.SessionList, "list sessions failed", &err, nil)()
 		id, ok := ensureProject(d, w, r)
 		if !ok {
 			err = errors.New("project container not running")
@@ -332,11 +324,7 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.SessionCreate, "create session failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.SessionCreate, "create session failed", &err, nil)()
 		// created writes the success response. The obs detail line is
 		// emitted before the explicit event Appends at each site (not here),
 		// so the Append stays the last events.log entry — tests and readers
@@ -578,11 +566,7 @@ func handleRenameSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, oldName := r.PathValue("id"), r.PathValue("name")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.SessionRename, "rename session failed", err, map[string]any{"from": oldName})
-			}
-		}()
+		defer obsFailAt(r, obs.SessionRename, "rename session failed", &err, map[string]any{"from": oldName})()
 		var body struct {
 			Name string `json:"name"`
 		}
@@ -656,11 +640,7 @@ func handleInjectSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.SessionInject, "inject session failed", err, map[string]any{"session": name})
-			}
-		}()
+		defer obsFailAt(r, obs.SessionInject, "inject session failed", &err, map[string]any{"session": name})()
 		var body struct {
 			Command string `json:"command"`
 		}
@@ -702,11 +682,7 @@ func handleKillSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.SessionKill, "kill session failed", err, map[string]any{"session": name})
-			}
-		}()
+		defer obsFailAt(r, obs.SessionKill, "kill session failed", &err, map[string]any{"session": name})()
 		var ok bool
 		if id, ok = ensureProject(d, w, r); !ok {
 			err = errors.New("project container not running")
@@ -734,11 +710,7 @@ func handleDeleteSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.SessionDelete, "delete session failed", err, map[string]any{"session": name})
-			}
-		}()
+		defer obsFailAt(r, obs.SessionDelete, "delete session failed", &err, map[string]any{"session": name})()
 		var ok bool
 		if id, ok = ensureProject(d, w, r); !ok {
 			err = errors.New("project container not running")
@@ -788,11 +760,7 @@ func handleRestartSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.SessionRestart, "restart session failed", err, map[string]any{"session": name})
-			}
-		}()
+		defer obsFailAt(r, obs.SessionRestart, "restart session failed", &err, map[string]any{"session": name})()
 		ctx := r.Context()
 		var ok bool
 		if id, ok = ensureProject(d, w, r); !ok {

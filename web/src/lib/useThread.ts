@@ -167,5 +167,5 @@ export function useThread<
     }
   }, [])
 
-  return { threads, thread, inFlight, error, setError, refreshList, openThread, newChat, removeThread, sendTurn, retryTurn }
+  return { threads, thread, inFlight, error, setError, openThread, newChat, removeThread, sendTurn, retryTurn }
 }

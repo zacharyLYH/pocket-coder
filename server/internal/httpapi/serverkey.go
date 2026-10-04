@@ -114,11 +114,7 @@ var probeGitHubSSH = func(ctx context.Context, kp sshkeys.Key) (string, error) {
 func handleServerKeyTest(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.SSHKeyTest, "ssh probe failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.SSHKeyTest, "ssh probe failed", &err, nil)()
 		kp, ok := serverKeypair(d, w)
 		if !ok {
 			return
@@ -137,11 +133,7 @@ func handleServerKeyTest(d Deps) http.HandlerFunc {
 func handleServerKeyRegen(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.SSHKeyRegen, "ssh regen failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.SSHKeyRegen, "ssh regen failed", &err, nil)()
 		if d.SSHKeys == nil {
 			writeInternalErr(w, "ssh store", errors.New("no ssh store"))
 			return

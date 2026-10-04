@@ -79,26 +79,3 @@ export function validateDraft(d: { name: string; text: string }, rows: Shortcut[
   return { name, text }
 }
 
-// validateShortcutRows mirrors the server's checks so saves fail fast
-// without a round trip. Returns cleaned rows or throws the first problem.
-export function validateShortcutRows(rows: Shortcut[]): Shortcut[] {
-  const seen = new Set<string>()
-  return rows.map((r, i) => {
-    const alias = r.alias.trim()
-    if (!alias) throw new Error('alias must be non-empty')
-    if (!ALIAS_RE.test(alias)) throw new Error(`invalid alias: ${alias}`)
-    if (seen.has(alias)) throw new Error(`duplicate alias: ${alias}`)
-    seen.add(alias)
-    if (r.kind === 'cmd') {
-      const command = (r.command ?? '').trim()
-      if (!command) throw new Error('command must be non-empty')
-      return { id: r.id || `s-${i}`, alias, kind: r.kind, command }
-    }
-    if (r.kind === 'keys') {
-      const keys = (r.keys ?? '').trim()
-      if (!keys) throw new Error('keys must be non-empty')
-      return { id: r.id || `s-${i}`, alias, kind: r.kind, keys }
-    }
-    throw new Error('kind must be cmd or keys')
-  })
-}

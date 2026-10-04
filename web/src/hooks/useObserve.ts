@@ -152,5 +152,5 @@ export function useObserve(projectId: string, filters: ObserveFilters, follow: b
     return () => { stop = true; clearInterval(id) }
   }, [projectId])
 
-  return { logs, firstSeq, lastSeq, refresh, loadOlder, follow, stats, samples, groups }
+  return { logs, firstSeq, loadOlder, stats, samples, groups }
 }

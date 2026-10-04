@@ -30,11 +30,7 @@ func handleObserveMeta(d Deps) http.HandlerFunc {
 func handleObserve(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.ObserveRead, "observe read failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.ObserveRead, "observe read failed", &err, nil)()
 		q := r.URL.Query()
 		after, before := parseSeq(q.Get("after")), parseSeq(q.Get("before"))
 		if after < 0 || before < 0 {

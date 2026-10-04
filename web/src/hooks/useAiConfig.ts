@@ -7,11 +7,9 @@ import type { AIConfigStatus, AIModel } from '@/lib/types'
 // features everywhere; the head of the list is the active model.
 export function useAiConfig() {
   const [status, setStatus] = useState<AIConfigStatus | null>(null)
-  const [models, setModels] = useState<AIModel[]>([])
   const refresh = useCallback(async () => {
     try {
       const d = await api<{ models: AIModel[] }>('/api/ai/models')
-      setModels(d.models ?? [])
       const first = (d.models ?? [])[0]
       const s = first
         ? { model: first.model, configured: true }
@@ -22,5 +20,5 @@ export function useAiConfig() {
       return null
     }
   }, [])
-  return { status, models, refresh }
+  return { status, refresh }
 }

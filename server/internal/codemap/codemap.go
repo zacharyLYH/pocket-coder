@@ -12,6 +12,7 @@ import (
 
 	"pcoder/internal/agent"
 	"pcoder/internal/prompt"
+	"pcoder/internal/textutil"
 )
 
 // Ref is one clickable snippet: a file plus an exact line range, with
@@ -538,9 +539,7 @@ func shapeResult(res Result) Result {
 	return res
 }
 
-func shQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
+var shQuote = textutil.ShellQuote
 
 // codemapScopeParse reads the gate verdict. False only on a clean parse
 // of about_code=false; anything unparseable fails open into the loop.

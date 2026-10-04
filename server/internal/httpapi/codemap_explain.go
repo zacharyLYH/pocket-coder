@@ -36,11 +36,7 @@ func handleGitExplain(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var err error
-		defer func() {
-			if err != nil {
-				obsFail(r, obs.GitExplain, "git explain failed", err, nil)
-			}
-		}()
+		defer obsFailAt(r, obs.GitExplain, "git explain failed", &err, nil)()
 		var body struct {
 			Mode string `json:"mode"`
 			Sha  string `json:"sha"`
