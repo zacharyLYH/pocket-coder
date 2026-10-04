@@ -1,7 +1,7 @@
 import { expect, test } from './test'
 
-import { deleteAllProjects, engineUp, projectURL } from './helpers'
-import { createVanillaProject, openSurfacePage, statusToken, tokenHeaders } from './preview.helpers'
+import { deleteAllProjects, engineUp } from './helpers'
+import { createVanillaProject } from './preview.helpers'
 
 // Screenshot test for the mobile back button on the preview surface.
 // On touch devices, swipe-back gestures are captured by the VNC canvas
