@@ -207,4 +207,48 @@ describe('NerdyStuffTab', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('nerdy-trace-chip')) })
     await waitFor(() => expect(screen.queryByTestId('nerdy-trace-chip')).toBeNull())
   })
+
+  it('healthcheck runs once per click and prints every divergence both ways', async () => {
+    const posts: { url: string; method: string }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      if (u.endsWith('/health')) {
+        posts.push({ url: u, method: init?.method ?? 'GET' })
+        return new Response(JSON.stringify({
+          project: 'abc',
+          inSync: false,
+          checks: [
+            { name: 'container', status: 'ok', state: 'recorded', system: 'running' },
+            { name: 'session:ghost-1', status: 'drift', state: 'recorded harness fake', system: 'missing from tmux', detail: 'recorded but not running' },
+            { name: 'harness:fake', status: 'drift', state: 'installed', system: 'missing', detail: 'recorded installed but the binary is missing' },
+            { name: 'harness:helper', status: 'drift', state: 'not recorded', system: 'binary present', detail: 'binary present but not recorded' },
+          ],
+        }), { status: 200 })
+      }
+      if (u.includes('/observe/errors')) return new Response(JSON.stringify({ groups: [] }), { status: 200 })
+      if (u.includes('/observe/stats')) return new Response(JSON.stringify(STATS), { status: 200 })
+      if (u.includes('/observe/meta')) return new Response(JSON.stringify({
+        auditTypes: ['project.create', 'terminal.attach', 'session.create'],
+        buildTypes: ['project.create'],
+      }), { status: 200 })
+      if (u.includes('/observe')) {
+        return new Response(JSON.stringify({ logs: LOGS, firstSeq: 1, lastSeq: 2 }), { status: 200 })
+      }
+      return new Response(JSON.stringify({}), { status: 200 })
+    }))
+    render(<NerdyStuffTab projectId="abc" />)
+    await waitFor(() => expect(screen.getByTestId('nerdy-healthcheck')).toBeVisible())
+
+    // One click → exactly one synchronous run.
+    await act(async () => { fireEvent.click(screen.getByTestId('nerdy-healthcheck-run')) })
+    await waitFor(() => expect(screen.getByTestId('nerdy-healthcheck-report')).toBeVisible())
+    expect(posts).toHaveLength(1)
+    expect(posts[0]).toEqual({ url: '/api/projects/abc/health', method: 'POST' })
+
+    // Verdict counts the drifts; both directions are named explicitly.
+    expect(screen.getByTestId('nerdy-healthcheck-verdict')).toHaveTextContent('3 drifts found')
+    expect(screen.getByTestId('nerdy-healthcheck-row-session:ghost-1')).toHaveTextContent('missing from tmux')
+    expect(screen.getByTestId('nerdy-healthcheck-row-harness:fake')).toHaveTextContent('recorded installed but the binary is missing')
+    expect(screen.getByTestId('nerdy-healthcheck-row-harness:helper')).toHaveTextContent('binary present but not recorded')
+  })
 })

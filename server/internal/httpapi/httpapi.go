@@ -117,6 +117,7 @@ func New(d Deps) http.Handler {
 
 	if d.Projects != nil && d.Sessions != nil {
 		authed("POST", "/api/projects/exec", handleExecCommand)
+		authedProject("POST", "/api/projects/{id}/health", handleProjectHealth)
 		authedProject("GET", "/api/projects/{id}/git/status", handleGitStatus)
 		authedProject("GET", "/api/projects/{id}/git/diff", handleGitDiff)
 		authedProject("POST", "/api/projects/{id}/git/stage", func(d Deps) http.HandlerFunc { return handleGitStage(d, false) })

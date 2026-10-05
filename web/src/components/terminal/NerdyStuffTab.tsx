@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
-import { api } from '@/lib/api'
+import { api, errMsg, projectPath } from '@/lib/api'
 import { EMPTY_FILTERS, useObserve, type ObserveFilters } from '@/hooks/useObserve'
 
 const LEVELS = ['all', 'info', 'warn', 'error']
@@ -45,6 +45,72 @@ function Meter({ used, total, testid, label }: { used: number; total: number; te
       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
         <div className="h-full rounded-full bg-emerald-500/80" style={{ width: `${pct}%` }} />
       </div>
+    </div>
+  )
+}
+
+// Desired-vs-live sync check, on demand only: compares state.json against
+// the system (container, repo volume, tmux sessions vs recorded sessions,
+// binaries vs recorded installs — both directions) and prints every
+// divergence. Read-only by design: it never reconciles, it only reports,
+// and the existing flows stay the repair paths.
+type HealthCheck = { name: string; status: 'ok' | 'drift' | 'unknown'; state: string; system: string; detail?: string }
+type HealthReport = { project: string; inSync: boolean; checks: HealthCheck[] }
+
+function healthBadge(status: HealthCheck['status']): string {
+  return status === 'ok' ? 'bg-emerald-500' : status === 'drift' ? 'bg-red-500' : 'bg-amber-400'
+}
+
+export function HealthCheckCard({ projectId }: { projectId: string }) {
+  const [report, setReport] = useState<HealthReport | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function run() {
+    setBusy(true)
+    setError(null)
+    try {
+      setReport(await api<HealthReport>(projectPath(projectId, '/health'), { method: 'POST' }))
+    } catch (e) {
+      setError(errMsg(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const drifts = report?.checks.filter((c) => c.status === 'drift').length ?? 0
+  return (
+    <div className="rounded-lg border bg-card p-3" data-testid="nerdy-healthcheck">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">State sync</p>
+          <p className="text-xs text-muted-foreground">state.json vs the system, both directions. Read-only.</p>
+        </div>
+        <Button size="sm" variant="outline" onClick={() => void run()} disabled={busy} data-testid="nerdy-healthcheck-run">
+          {busy ? 'Checking…' : report ? 'Re-check' : 'Run healthcheck'}
+        </Button>
+      </div>
+      {error && <p className="max-h-16 overflow-auto break-all pt-2 text-xs text-destructive" data-testid="nerdy-healthcheck-error">{error}</p>}
+      {report && (
+        <div className="flex flex-col gap-1 pt-2" data-testid="nerdy-healthcheck-report">
+          <p>
+            {report.inSync
+              ? <Badge data-testid="nerdy-healthcheck-verdict"><span className="mr-1 inline-block size-1.5 rounded-full bg-emerald-500" />In sync</Badge>
+              : <Badge variant="destructive" data-testid="nerdy-healthcheck-verdict"><span className="mr-1 inline-block size-1.5 rounded-full bg-red-500" />{drifts} drift{drifts === 1 ? '' : 's'} found</Badge>}
+          </p>
+          {report.checks.map((c) => (
+            <div key={c.name} data-testid={`nerdy-healthcheck-row-${c.name}`} className="flex flex-col gap-px rounded border border-muted px-2 py-1 text-xs">
+              <div className="flex items-center gap-2">
+                <span className={`inline-block size-1.5 shrink-0 rounded-full ${healthBadge(c.status)}`} />
+                <span className="font-mono font-medium">{c.name}</span>
+                <span className="text-muted-foreground">{c.status}</span>
+              </div>
+              <p className="font-mono text-muted-foreground">state: {c.state} → system: {c.system}</p>
+              {c.detail && <p className="break-words text-muted-foreground">{c.detail}</p>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -233,6 +299,7 @@ export function NerdyStuffTab({ projectId }: { projectId: string }) {
               <p className="text-xs text-muted-foreground" data-testid="nerdy-health">
                 health: {ready ? 'ready' : stats?.state ?? 'unknown'} · {logs.length} logs tailed · {groups.length} error groups
               </p>
+              <HealthCheckCard projectId={projectId} />
               {!ready && <p className="text-xs">Build pinned while not ready — see the Build panel.</p>}
             </div>
           )}
