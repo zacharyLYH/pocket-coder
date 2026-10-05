@@ -54,16 +54,13 @@ func handleProjectHealth(d Deps) http.HandlerFunc {
 			writeInternalErr(w, "read project", err)
 			return
 		}
-		checks := checkProjectHealth(r, d, id, p, st)
+		checks := checkProjectHealth(r.Context(), d, id, p, st)
 		drift := false
 		for _, c := range checks {
 			if c.Status == healthDrift {
 				drift = true
 				break
 			}
-		}
-		if checks == nil {
-			checks = []healthCheck{}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"project": id,
@@ -78,8 +75,7 @@ func handleProjectHealth(d Deps) http.HandlerFunc {
 // (registry order, already name-sorted). Exec-based checks degrade to
 // unknown when the container is not running or a probe errors, never to a
 // false ok or a false drift.
-func checkProjectHealth(r *http.Request, d Deps, id string, p project.Project, st project.Status) []healthCheck {
-	ctx := r.Context()
+func checkProjectHealth(ctx context.Context, d Deps, id string, p project.Project, st project.Status) []healthCheck {
 	container := project.ContainerName(id)
 	checks := []healthCheck{}
 
@@ -99,12 +95,15 @@ func checkProjectHealth(r *http.Request, d Deps, id string, p project.Project, s
 	if st.State != project.StateRunning {
 		// Everything below needs exec inside a running container: report
 		// unknown rather than guessing.
-		checks = append(checks,
-			repoCheckUnknown(p),
+		repo := healthCheck{Name: "repo", Status: healthUnknown, State: p.Repo, System: "—", Detail: "container not running — start it to check the volume"}
+		if p.Repo == "" {
+			repo.Status, repo.State, repo.Detail = healthOK, "none recorded", ""
+		}
+		return append(checks,
+			repo,
 			healthCheck{Name: "sessions", Status: healthUnknown, State: "—", System: "—", Detail: "container not running — start it to compare tmux against recorded sessions"},
 			healthCheck{Name: "harnesses", Status: healthUnknown, State: "—", System: "—", Detail: "container not running — start it to compare binaries against recorded installs"},
 		)
-		return checks
 	}
 
 	checks = append(checks, repoCheck(ctx, d, container, p))
@@ -112,12 +111,7 @@ func checkProjectHealth(r *http.Request, d Deps, id string, p project.Project, s
 	// Sessions, both directions: recorded-but-gone and live-but-untracked.
 	tmux, terr := d.Sessions.List(ctx, container)
 	if terr != nil {
-		names := make([]string, 0, len(p.Sessions))
-		for name := range p.Sessions {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
+		for _, name := range sortedSessionNames(p) {
 			checks = append(checks, healthCheck{Name: "session:" + name, Status: healthUnknown, State: describeSession(p.Sessions[name]), System: "—", Detail: "tmux list failed — cannot compare"})
 		}
 	} else {
@@ -125,12 +119,7 @@ func checkProjectHealth(r *http.Request, d Deps, id string, p project.Project, s
 		for _, e := range tmux {
 			live[e.Name] = true
 		}
-		names := make([]string, 0, len(p.Sessions))
-		for name := range p.Sessions {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
+		for _, name := range sortedSessionNames(p) {
 			if live[name] {
 				checks = append(checks, healthCheck{Name: "session:" + name, Status: healthOK, State: describeSession(p.Sessions[name]), System: "in tmux"})
 			} else {
@@ -177,12 +166,9 @@ func checkProjectHealth(r *http.Request, d Deps, id string, p project.Project, s
 			continue
 		}
 		bin := harness.Binary(h)
-		want, recorded := states[h.ID]
+		want := states[h.ID]
 		got := bin != "" && present[bin]
 		c := healthCheck{Name: "harness:" + h.ID, State: describeInstall(want), System: "missing"}
-		if !recorded && want == "" {
-			c.State = "not recorded"
-		}
 		if got {
 			c.System = "binary present"
 		}
@@ -209,6 +195,16 @@ func checkProjectHealth(r *http.Request, d Deps, id string, p project.Project, s
 	return checks
 }
 
+// sortedSessionNames lists recorded session names, sorted for a stable report.
+func sortedSessionNames(p project.Project) []string {
+	names := make([]string, 0, len(p.Sessions))
+	for name := range p.Sessions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // describeSession renders a recorded session for the state column.
 func describeSession(s state.Session) string {
 	if s.Harness == "" {
@@ -229,14 +225,6 @@ func describeInstall(s state.HarnessStatus) string {
 	default:
 		return "not recorded"
 	}
-}
-
-// repoCheckUnknown is the repo row when no container runs to probe.
-func repoCheckUnknown(p project.Project) healthCheck {
-	if p.Repo == "" {
-		return healthCheck{Name: "repo", Status: healthOK, State: "none recorded", System: "—"}
-	}
-	return healthCheck{Name: "repo", Status: healthUnknown, State: p.Repo, System: "—", Detail: "container not running — start it to check the volume"}
 }
 
 // repoCheck compares the recorded repo URL against the repo volume: empty

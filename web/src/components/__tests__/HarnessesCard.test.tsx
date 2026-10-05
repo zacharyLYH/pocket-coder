@@ -274,4 +274,57 @@ describe('HarnessesCard', () => {
     await screen.findByText('Installed.')
     expect(calls.filter((c) => c.url === '/api/harnesses/opencode/install' && c.method === 'POST')).toHaveLength(1)
   })
+
+  it('bring-your-own journey: add a custom harness, install it, see Installed', async () => {
+    // The full user flow for a custom agent CLI: register it through the
+    // dialog (catalog only — nothing downloaded), then Install targets
+    // this project directly, and the row flips to Installed.
+    let added = false
+    const calls: FetchCall[] = []
+    vi.stubGlobal('fetch', mockFetch((url, init) => {
+      const method = init?.method ?? 'GET'
+      if (url === '/api/harnesses' && method === 'GET') {
+        return {
+          status: 200,
+          body: added
+            ? { harnesses: [...HARNESS_RESPONSE.harnesses, { id: 'mine', name: 'Mine', command: 'mine', install: 'npm i -g mine' }] }
+            : HARNESS_RESPONSE,
+        }
+      }
+      if (url === '/api/harnesses' && method === 'POST') {
+        added = true
+        return { status: 201, body: { id: 'mine' } }
+      }
+      if (url === '/api/projects/x%2Falpha/harnesses' && method === 'GET') {
+        return { status: 200, body: { harnesses: [] } }
+      }
+      if (url === '/api/harnesses/mine/install' && method === 'POST') {
+        return { status: 200, body: { results: [{ project: 'x/alpha', status: 'ok' }] } }
+      }
+      return undefined
+    }, (c) => calls.push(c)))
+    render(<HarnessesCard project={{ id: 'x/alpha' }} onInstalled={vi.fn()} />)
+
+    // Register through the dialog, with an install command this time.
+    await screen.findByText('OpenCode')
+    fireEvent.click(screen.getByRole('button', { name: 'Add harness' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByPlaceholderText('Name (e.g. My Agent)'), { target: { value: 'Mine' } })
+    fireEvent.change(within(dialog).getByPlaceholderText('Startup command (e.g. my-agent)'), { target: { value: 'mine' } })
+    fireEvent.change(within(dialog).getByPlaceholderText('Install command (optional, e.g. npm i -g my-agent)'), { target: { value: 'npm i -g mine' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add harness' }))
+    expect(await screen.findByText('Mine')).toBeInTheDocument()
+
+    // The custom row offers Install (OpenCode's row does too — Mine renders
+    // last since the registry appends it). Clicking it installs straight
+    // into this project and flips the row to Installed.
+    const installBtns = screen.getAllByRole('button', { name: 'Install' })
+    expect(installBtns).toHaveLength(2)
+    fireEvent.click(installBtns[installBtns.length - 1])
+    await screen.findByText('Installed.')
+    const call = calls.find((c) => c.url === '/api/harnesses/mine/install')
+    expect(call?.method).toBe('POST')
+    expect(JSON.parse(String(call?.body)).projectIds).toEqual(['x/alpha'])
+    expect(await screen.findByTestId('harness-installed-mine')).toBeInTheDocument()
+  })
 })

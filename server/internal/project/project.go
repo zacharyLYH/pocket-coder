@@ -94,9 +94,9 @@ func (s *StateStore) Delete(id string) error {
 	})
 }
 
-// RecordInstall records that harnessID is installed in projectID.
-// Idempotent: overwrites any "installing" mark with "true".
-func (s *StateStore) RecordInstall(projectID, harnessID string) error {
+// updateProject loads one project, applies fn, and writes it back. The
+// three install-state writers share it instead of repeating the lookup.
+func (s *StateStore) updateProject(projectID string, fn func(*Project)) error {
 	return s.st.Mutate(func(doc *state.Document) error {
 		p, ok := doc.Projects[projectID]
 		if !ok {
@@ -105,9 +105,17 @@ func (s *StateStore) RecordInstall(projectID, harnessID string) error {
 		if p.Harnesses == nil {
 			p.Harnesses = map[string]state.HarnessStatus{}
 		}
-		p.Harnesses[harnessID] = state.HarnessInstalled
+		fn(&p)
 		doc.Projects[projectID] = p
 		return nil
+	})
+}
+
+// RecordInstall records that harnessID is installed in projectID.
+// Idempotent: overwrites any "installing" mark with "true".
+func (s *StateStore) RecordInstall(projectID, harnessID string) error {
+	return s.updateProject(projectID, func(p *Project) {
+		p.Harnesses[harnessID] = state.HarnessInstalled
 	})
 }
 
@@ -115,19 +123,10 @@ func (s *StateStore) RecordInstall(projectID, harnessID string) error {
 // installed ("true") entry is left alone — reinstalling a present binary
 // must not flip it back to installing.
 func (s *StateStore) RecordInstalling(projectID, harnessID string) error {
-	return s.st.Mutate(func(doc *state.Document) error {
-		p, ok := doc.Projects[projectID]
-		if !ok {
-			return fmt.Errorf("project %s: %w", projectID, os.ErrNotExist)
-		}
-		if p.Harnesses == nil {
-			p.Harnesses = map[string]state.HarnessStatus{}
-		}
+	return s.updateProject(projectID, func(p *Project) {
 		if p.Harnesses[harnessID] != state.HarnessInstalled {
 			p.Harnesses[harnessID] = state.HarnessInstalling
 		}
-		doc.Projects[projectID] = p
-		return nil
 	})
 }
 
@@ -135,16 +134,10 @@ func (s *StateStore) RecordInstalling(projectID, harnessID string) error {
 // "true" entry is never touched, so clearing after a successful install
 // (which already overwrote the mark) is a safe no-op. Idempotent.
 func (s *StateStore) ClearInstalling(projectID, harnessID string) error {
-	return s.st.Mutate(func(doc *state.Document) error {
-		p, ok := doc.Projects[projectID]
-		if !ok {
-			return fmt.Errorf("project %s: %w", projectID, os.ErrNotExist)
-		}
+	return s.updateProject(projectID, func(p *Project) {
 		if p.Harnesses[harnessID] == state.HarnessInstalling {
 			delete(p.Harnesses, harnessID)
-			doc.Projects[projectID] = p
 		}
-		return nil
 	})
 }
 

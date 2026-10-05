@@ -224,6 +224,13 @@ func TestProjectHarnessesShowsInstalled(t *testing.T) {
 	}
 }
 
+// probeState is one per-project probe row, keyed by harness id in tests.
+type probeState struct {
+	ID         string `json:"id"`
+	Installed  bool   `json:"installed"`
+	Installing bool   `json:"installing"`
+}
+
 // TestProjectHarnessesShowsInstalling pins the cross-remount progress flag:
 // an install running on the server (its dialog long unmounted) is reported
 // as installing while installed is still false, and clears when done — so a
@@ -233,10 +240,7 @@ func TestProjectHarnessesShowsInstalling(t *testing.T) {
 	seedProject(t, dataDir, "abc")
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	probe := func() map[string]struct {
-		Installed  bool `json:"installed"`
-		Installing bool `json:"installing"`
-	} {
+	probe := func() map[string]probeState {
 		t.Helper()
 		md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
 		md.EXPECT().Exec(mock.Anything, "pcoder-abc",
@@ -247,24 +251,14 @@ func TestProjectHarnessesShowsInstalling(t *testing.T) {
 			t.Fatalf("status = %d body=%s", rec.Code, rec.Body)
 		}
 		var body struct {
-			Harnesses []struct {
-				ID         string `json:"id"`
-				Installed  bool   `json:"installed"`
-				Installing bool   `json:"installing"`
-			} `json:"harnesses"`
+			Harnesses []probeState `json:"harnesses"`
 		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)
 		}
-		out := map[string]struct {
-			Installed  bool `json:"installed"`
-			Installing bool `json:"installing"`
-		}{}
+		out := map[string]probeState{}
 		for _, x := range body.Harnesses {
-			out[x.ID] = struct {
-				Installed  bool `json:"installed"`
-				Installing bool `json:"installing"`
-			}{Installed: x.Installed, Installing: x.Installing}
+			out[x.ID] = x
 		}
 		return out
 	}

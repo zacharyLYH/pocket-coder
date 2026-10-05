@@ -406,11 +406,7 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 						writeLaunchErr(w, d, id, harnessID, lerr)
 						return
 					}
-					// Launch success proves the binary is present — record it
-					// alongside the session so state.json stays converged
-					// with the container (out-of-band installs heal here).
-					_ = d.Projects.RecordInstall(id, harnessID)
-					_ = d.Projects.RecordSession(id, restarted, harnessID)
+					recordLaunch(d, id, restarted, harnessID)
 					observed(restarted, harnessID)
 					_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": restarted, "harness": harnessID})
 					created(http.StatusOK, restarted, harnessID)
@@ -447,11 +443,7 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 						writeLaunchErr(w, d, id, sess.Harness, lerr)
 						return
 					}
-					// Launch success proves the binary is present — record it
-					// alongside the session so state.json stays converged
-					// with the container (out-of-band installs heal here).
-					_ = d.Projects.RecordInstall(id, sess.Harness)
-					_ = d.Projects.RecordSession(id, restarted, sess.Harness)
+					recordLaunch(d, id, restarted, sess.Harness)
 					observed(restarted, sess.Harness)
 					_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": restarted, "harness": sess.Harness})
 					created(http.StatusOK, restarted, sess.Harness)
@@ -496,11 +488,7 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 				writeLaunchErr(w, d, id, h.ID, lerr)
 				return
 			}
-			// Launch success proves the binary is present — record the install
-			// alongside the session so state.json stays converged with the
-			// container (out-of-band installs heal here).
-			_ = d.Projects.RecordInstall(id, h.ID)
-			_ = d.Projects.RecordSession(id, name, h.ID)
+			recordLaunch(d, id, name, h.ID)
 			observed(name, h.ID)
 			_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": name, "harness": h.ID})
 			_, _ = d.Events.Append("session.create", map[string]any{"id": id, "name": name, "harness": h.ID})
@@ -517,16 +505,21 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 			writeLaunchErr(w, d, id, h.ID, lerr)
 			return
 		}
-		// Launch success proves the binary is present — record the install
-		// alongside the session so state.json stays converged with the
-		// container (out-of-band installs heal here).
-		_ = d.Projects.RecordInstall(id, h.ID)
-		_ = d.Projects.RecordSession(id, name, h.ID)
+		recordLaunch(d, id, name, h.ID)
 		observed(name, h.ID)
 		_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": name, "harness": h.ID})
 		_, _ = d.Events.Append("session.create", map[string]any{"id": id, "name": name, "harness": h.ID})
 		created(http.StatusCreated, name, h.ID)
 	}
+}
+
+// recordLaunch records a successful harness (re)launch: the install (a
+// launch proves the binary is present, healing out-of-band installs into
+// state.json) plus the session (which harness the name runs, for
+// restart/re-entry).
+func recordLaunch(d Deps, id, name, harnessID string) {
+	_ = d.Projects.RecordInstall(id, harnessID)
+	_ = d.Projects.RecordSession(id, name, harnessID)
 }
 
 // createShellSession creates a plain shell session and writes the response:
@@ -832,10 +825,7 @@ func handleRestartSession(d Deps) http.HandlerFunc {
 		}
 		obs.Info(r.Context(), obs.SessionRestart, "session restarted: "+restarted,
 			map[string]any{"session": restarted, "harness": harnessID, "mode": "harness"})
-		// Restart success proves the binary is present — record it so
-		// state.json stays converged with the container.
-		_ = d.Projects.RecordInstall(id, harnessID)
-		_ = d.Projects.RecordSession(id, restarted, harnessID)
+		recordLaunch(d, id, restarted, harnessID)
 		_, _ = d.Events.Append("harness.launch", map[string]any{"id": id, "session": restarted, "harness": harnessID, "restart": true})
 		writeJSON(w, http.StatusOK, map[string]any{"name": restarted})
 	}
