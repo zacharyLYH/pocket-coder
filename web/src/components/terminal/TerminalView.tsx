@@ -114,12 +114,16 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
 
   useEffect(() => { refreshSessions() }, [refreshSessions, redial])
 
-  // Re-list on connect: the pane's ensure POST and this view's initial GET
-  // race on first open; by the time the socket is live the session exists,
-  // so this converges the tabs.
+  // Converge without refetching: the pane's ensure POST and this view's
+  // initial GET race on first open, but a live socket means `current`
+  // exists — merge it into the list locally instead of a second GET.
+  // (The old refetch here doubled list traffic on every open, tripled
+  // under StrictMode remounts.)
   useEffect(() => {
-    if (status === 'live') refreshSessions()
-  }, [status, refreshSessions])
+    if (status === 'live') {
+      setSessions((prev) => (prev.some((s) => s.name === current) ? prev : [...prev, { name: current }]))
+    }
+  }, [status, current])
 
   useEffect(() => {
     api<{ harnesses: Harness[] }>(projectPath(projectId, '/harnesses'))

@@ -221,9 +221,9 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 			"cfg-agent": map[string]any{"id": "cfg-agent", "name": "Cfg Agent", "command": "cfg-agent", "install": "pip install cfg-agent"},
 		},
 		"projects": map[string]any{
-			idA: map[string]any{"repo": "git@github.com:x/hello.git", "harnesses": []any{"my-agent", "fake"}, "sessions": map[string]any{"fake-1": map[string]any{"harness": "fake"}}, "shortcuts": state.DefaultShortcuts()},
+			idA: map[string]any{"repo": "git@github.com:x/hello.git", "harnesses": map[string]any{"my-agent": "true", "fake": "true"}, "sessions": map[string]any{"fake-1": map[string]any{"harness": "fake"}}, "shortcuts": state.DefaultShortcuts()},
 			// scope=repo removed the container, the record survives (install record stays even though harness was deleted)
-			idC: map[string]any{"repo": "git@github.com:me/private.git", "harnesses": []any{"my-agent"}, "shortcuts": state.DefaultShortcuts()},
+			idC: map[string]any{"repo": "git@github.com:me/private.git", "harnesses": map[string]any{"my-agent": "true"}, "shortcuts": state.DefaultShortcuts()},
 			// the failed-clone project survives too (retryable project)
 			idE: map[string]any{"repo": "git@github.com:x/fail.git", "shortcuts": state.DefaultShortcuts()},
 			idF: map[string]any{"repo": "git@github.com:x/final.git", "shortcuts": state.DefaultShortcuts()},

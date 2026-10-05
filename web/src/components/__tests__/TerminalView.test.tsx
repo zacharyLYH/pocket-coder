@@ -3,6 +3,29 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { TerminalView } from '@/components/terminal/TerminalView'
 import { mockFetch, type FetchCall } from '@/test/mockFetch'
 
+// The real xterm touches canvas on open(), which jsdom cannot do — stub it
+// (same shape as TerminalPane.test.tsx) so tests can take the socket live
+// and exercise the connect-time refetch path.
+vi.mock('@xterm/xterm', () => ({
+  Terminal: function () {
+    return {
+      open: vi.fn(),
+      dispose: vi.fn(),
+      focus: vi.fn(),
+      write: vi.fn(),
+      onData: vi.fn(),
+      loadAddon: vi.fn(),
+      options: {},
+    }
+  },
+}))
+
+vi.mock('@xterm/addon-fit', () => ({
+  FitAddon: function () {
+    return { fit: vi.fn(), proposeDimensions: vi.fn(() => ({ rows: 24, cols: 80 })) }
+  },
+}))
+
 // Unit tests for TerminalView session management — restart, kill, and
 // switching sessions. The backend is mocked at the fetch/WebSocket level;
 // the real backend path is covered by the Playwright suite.
@@ -287,5 +310,73 @@ describe('TerminalView session management', () => {
     vv.height = 800
     await act(async () => { listeners.get('resize')!() })
     expect(root.style.paddingBottom).toBe('')
+  })
+
+  // Mount traffic, pinned: one GET per list. (StrictMode double-invokes
+  // mount effects in dev — that doubling is React's own dev behavior and
+  // only the component's own redundant fetches are pinned here.) A
+  // regression here is the duplicate /sessions, /harnesses and /ai/models
+  // traffic seen on the terminal page.
+  function renderCountedView(sessionsBody: unknown = SESSIONS_RESPONSE) {
+    vi.stubGlobal('fetch', mockFetch((url, init) => {
+      if (url === '/api/ai/models' && (init?.method ?? 'GET') === 'GET') {
+        return { status: 200, body: { models: [] } }
+      }
+      if (url.endsWith('/sessions') && (init?.method ?? 'GET') === 'GET') {
+        return { status: 200, body: sessionsBody }
+      }
+      return baseHandler()(url, init)
+    }, (c) => fetchCalls.push(c)))
+    return render(
+      <TerminalView projectId={PROJECT_ID} initialSession={SESSION} onBack={vi.fn()} onOpenPreview={vi.fn()} />,
+    )
+  }
+  const getCount = (match: (c: FetchCall) => boolean) =>
+    fetchCalls.filter((c) => c.method === 'GET' && match(c)).length
+  async function flush() {
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)) })
+  }
+
+  it('fetches sessions, harnesses, and models exactly once on mount', async () => {
+    const { rerender } = renderCountedView()
+    await waitFor(() => {
+      expect(fetchCalls.some((c) => c.url.endsWith('/sessions') && c.method === 'GET')).toBe(true)
+      expect(fetchCalls.some((c) => c.url.endsWith('/harnesses'))).toBe(true)
+      expect(fetchCalls.some((c) => c.url === '/api/ai/models')).toBe(true)
+    })
+    await flush()
+    expect(getCount((c) => c.url.endsWith('/sessions'))).toBe(1)
+    expect(getCount((c) => c.url.endsWith('/harnesses'))).toBe(1)
+    expect(getCount((c) => c.url === '/api/ai/models')).toBe(1)
+    // Re-rendering must not refetch (effect deps).
+    rerender(
+      <TerminalView projectId={PROJECT_ID} initialSession={SESSION} onBack={vi.fn()} onOpenPreview={vi.fn()} />,
+    )
+    await flush()
+    expect(getCount((c) => c.url.endsWith('/sessions'))).toBe(1)
+    expect(getCount((c) => c.url.endsWith('/harnesses'))).toBe(1)
+    expect(getCount((c) => c.url === '/api/ai/models')).toBe(1)
+  })
+
+  it('merges the live session locally instead of refetching on connect', async () => {
+    // The server list predates the ensure POST (the first-open race), so it
+    // lacks the attached session: going live must add the tab with zero new
+    // GETs — the old refetch here doubled list traffic on every open.
+    renderCountedView({ sessions: [{ name: 'main' }] })
+    await waitFor(() => {
+      expect(fetchCalls.some((c) => c.url.endsWith('/sessions') && c.method === 'GET')).toBe(true)
+    })
+    await flush()
+    expect(getCount((c) => c.url.endsWith('/sessions'))).toBe(1)
+    expect(screen.queryByTestId('tab-session-helper-1')).toBeNull()
+
+    await act(async () => { wsInstances[0]?.open() })
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-session-helper-1')).toBeTruthy()
+    })
+    await flush()
+    expect(getCount((c) => c.url.endsWith('/sessions'))).toBe(1)
+    expect(getCount((c) => c.url.endsWith('/harnesses'))).toBe(1)
+    expect(getCount((c) => c.url === '/api/ai/models')).toBe(1)
   })
 })

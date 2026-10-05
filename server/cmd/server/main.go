@@ -133,6 +133,13 @@ func main() {
 	// project — containers running, recorded harnesses installed. Blocking on
 	// purpose: slow installs (npm downloads) happen here, on the boot log,
 	// so no request can ever observe a missing container or binary.
+	//
+	// Any "installing" mark surviving a restart belongs to an exec that died
+	// with the old process, so it is cleared first: otherwise it would read
+	// as a running install (and 409 reinstalls) forever.
+	if err := svc.ClearAllInstalling(); err != nil {
+		slog.Warn("clearing stale installing marks failed", "err", err)
+	}
 	if err := dkr.Ping(context.Background()); err == nil {
 		if err := svc.BringAllUp(context.Background()); err != nil {
 			slog.Warn("bootstrap finished with errors — serving anyway; the per-request safety net (EnsureContainer) will retry", "err", err)

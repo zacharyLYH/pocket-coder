@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
 import { HarnessesCard } from '@/components/HarnessesCard'
-import { mockFetch } from '@/test/mockFetch'
+import { mockFetch, type FetchCall } from '@/test/mockFetch'
 
 // Unit tests for the per-project harness card. The backend is mocked at the
 // fetch level: these tests pin the single-project behavior fast (Install
@@ -188,5 +188,90 @@ describe('HarnessesCard', () => {
     await screen.findByText('OpenCode')
     await waitFor(() => expect(screen.getByText('Installed')).toBeInTheDocument())
     expect(screen.queryByTestId('harness-update-opencode')).not.toBeInTheDocument()
+  })
+
+  it('shows Installing… from the probe when an install is running elsewhere', async () => {
+    // The install started in a dialog that has since unmounted (or another
+    // browser): no record, binary not yet present, but the server reports
+    // installing. The row must show a disabled Installing… — never a second
+    // Install button for work already underway.
+    vi.stubGlobal('fetch', mockFetch((url) => {
+      if (url === '/api/harnesses') return { status: 200, body: HARNESS_RESPONSE }
+      if (url === '/api/projects/x%2Fbeta/harnesses') {
+        return {
+          status: 200,
+          body: { harnesses: [{ id: 'opencode', name: 'OpenCode', command: 'opencode', installed: false, installing: true }] },
+        }
+      }
+      return undefined
+    }))
+    render(<HarnessesCard project={{ id: 'x/beta' }} />)
+
+    await screen.findByText('OpenCode')
+    const badge = await screen.findByTestId('harness-installing-opencode')
+    expect(badge).toHaveTextContent('Installing…')
+    expect(badge).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Installed')).not.toBeInTheDocument()
+  })
+
+  it('prefers Installed over Installing once the binary lands', async () => {
+    // Between the record write and the flag clear the probe reports both;
+    // Installed is the truth then.
+    vi.stubGlobal('fetch', mockFetch((url) => {
+      if (url === '/api/harnesses') return { status: 200, body: HARNESS_RESPONSE }
+      if (url === '/api/projects/x%2Fbeta/harnesses') {
+        return {
+          status: 200,
+          body: { harnesses: [{ id: 'opencode', name: 'OpenCode', command: 'opencode', installed: true, installing: true }] },
+        }
+      }
+      return undefined
+    }))
+    render(<HarnessesCard project={{ id: 'x/beta' }} />)
+
+    await screen.findByText('OpenCode')
+    expect(await screen.findByText('Installed')).toBeInTheDocument()
+    expect(screen.queryByTestId('harness-installing-opencode')).not.toBeInTheDocument()
+  })
+
+  it('fetches once per mount and installs once per click', async () => {
+    // Pins the component's own fetch discipline: one GET per endpoint per
+    // mount, no refetch on re-render (effect deps), exactly one install POST
+    // per click (button disables mid-flight). (StrictMode's dev
+    // double-invoke is React's own behavior, not pinned here.)
+    const calls: FetchCall[] = []
+    vi.stubGlobal('fetch', mockFetch((url, init) => {
+      const method = init?.method ?? 'GET'
+      if (url === '/api/harnesses' && method === 'GET') return { status: 200, body: HARNESS_RESPONSE }
+      if (url === '/api/projects/x%2Fgamma/harnesses' && method === 'GET') {
+        return { status: 200, body: { harnesses: [] } }
+      }
+      if (url === '/api/harnesses/opencode/install' && method === 'POST') {
+        return { status: 200, body: { results: [{ project: 'x/gamma', status: 'ok' }] } }
+      }
+      return undefined
+    }, (c) => calls.push(c)))
+    const { rerender } = render(
+      <HarnessesCard project={{ id: 'x/gamma' }} onInstalled={vi.fn()} />,
+    )
+
+    await screen.findByText('OpenCode')
+    // Flush any stragglers, then count.
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)) })
+    const gets = (url: string) => calls.filter((c) => c.url === url && c.method === 'GET').length
+    expect(gets('/api/harnesses')).toBe(1)
+    expect(gets('/api/projects/x%2Fgamma/harnesses')).toBe(1)
+
+    // Re-rendering with the same project must not refetch (effect deps).
+    rerender(<HarnessesCard project={{ id: 'x/gamma' }} onInstalled={vi.fn()} />)
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)) })
+    expect(gets('/api/harnesses')).toBe(1)
+    expect(gets('/api/projects/x%2Fgamma/harnesses')).toBe(1)
+
+    // One click → exactly one install POST (button disables mid-flight).
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    await screen.findByText('Installed.')
+    expect(calls.filter((c) => c.url === '/api/harnesses/opencode/install' && c.method === 'POST')).toHaveLength(1)
   })
 })

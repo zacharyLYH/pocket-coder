@@ -17,6 +17,10 @@ type RowMsg = { kind: 'ok' | 'error'; text: string }
 export function HarnessesCard({ project, onInstalled, onBusyChange }: { project: Project; onInstalled?: () => void; onBusyChange?: (busy: boolean) => void }) {
   const [harnesses, setHarnesses] = useState<Harness[]>([])
   const [liveInstalled, setLiveInstalled] = useState<Record<string, boolean>>({})
+  // Live in-flight installs from the per-project probe: the server marks
+  // these while its synchronous install runs, so they survive this dialog
+  // unmounting (close mid-install, reopen → still Installing, not Install).
+  const [liveInstalling, setLiveInstalling] = useState<Record<string, boolean>>({})
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [rowMsg, setRowMsg] = useState<Record<string, RowMsg | undefined>>({})
   const [addOpen, setAddOpen] = useState(false)
@@ -31,25 +35,41 @@ export function HarnessesCard({ project, onInstalled, onBusyChange }: { project:
     return (project.harnesses ?? []).includes(harnessId) || !!liveInstalled[harnessId]
   }
 
+  // Installing beats the Install button but loses to Installed: once the
+  // binary lands the probe reports both until the server's flag clears, and
+  // Installed is the truth then.
+  function isInstalling(harnessId: string) {
+    return !!liveInstalling[harnessId] && !isInstalled(harnessId)
+  }
+
+  const loadProbe = useCallback(() => {
+    // One round trip for the whole registry's live state in THIS project.
+    // A stopped project (or any probe failure) leaves the maps empty and the
+    // recorded list alone — never hide an Installed row on a probe error.
+    // A confirming (2xx-but-empty) probe clears stale flags, so a finished
+    // install flips Installing → Installed without reopening the dialog.
+    api<{ harnesses: { id: string; installed: boolean; installing?: boolean }[] }>(projectPath(project.id, '/harnesses'))
+      .then((data) => {
+        const installed: Record<string, boolean> = {}
+        const installing: Record<string, boolean> = {}
+        for (const h of data.harnesses) {
+          if (h.installed) installed[h.id] = true
+          if (h.installing) installing[h.id] = true
+        }
+        setLiveInstalled(installed)
+        setLiveInstalling(installing)
+      })
+      .catch(() => {})
+  }, [project.id])
+
   const load = useCallback(() => {
     api<{ harnesses: Harness[] }>('/api/harnesses')
       .then((data) => {
         setHarnesses(data.harnesses)
       })
       .catch(() => {})
-    // One round trip for the whole registry's live state in THIS project.
-    // A stopped project (or any probe failure) leaves the map empty and the
-    // recorded list alone — never hide an Installed row on a probe error.
-    api<{ harnesses: { id: string; installed: boolean }[] }>(projectPath(project.id, '/harnesses'))
-      .then((data) => {
-        const next: Record<string, boolean> = {}
-        for (const h of data.harnesses) {
-          if (h.installed) next[h.id] = true
-        }
-        setLiveInstalled(next)
-      })
-      .catch(() => {})
-  }, [project.id])
+    loadProbe()
+  }, [loadProbe])
 
   // Update checks run against this project's container only: one probe per
   // harness, all in parallel. The map is rebuilt whole each run so cleared
@@ -72,8 +92,10 @@ export function HarnessesCard({ project, onInstalled, onBusyChange }: { project:
   }
 
   // One fetch per mount/project — not per render. (The previous version
-  // had no dependency array here, so every setState re-render re-fired the
-  // update checks and doubled the install-probe traffic.)
+  // had no dependency array here, so every setState re-render re-ran the
+  // check. Residual double-invocation — e.g. StrictMode remounts in dev —
+  // is coalesced by the api client's in-flight GET sharing, so it still
+  // costs one network call.)
   useEffect(() => { load() }, [load])
 
   const checkedKey = useRef('')
@@ -84,6 +106,17 @@ export function HarnessesCard({ project, onInstalled, onBusyChange }: { project:
     checkedKey.current = key
     void checkUpdates(harnesses)
   }, [harnesses, project.id, project.harnesses, liveInstalled])
+
+  // While any install is running elsewhere (started here before a remount,
+  // or from another dialog), re-probe until it lands so the row flips
+  // Installing → Installed on its own. Sequential polls always refetch —
+  // the api client only coalesces concurrent ones.
+  const anyInstalling = Object.values(liveInstalling).some(Boolean)
+  useEffect(() => {
+    if (!anyInstalling) return
+    const t = setInterval(loadProbe, 3000)
+    return () => clearInterval(t)
+  }, [loadProbe, anyInstalling])
 
   useEffect(() => { onBusyChange?.(busyKey !== null) }, [busyKey, onBusyChange])
 
@@ -170,6 +203,20 @@ export function HarnessesCard({ project, onInstalled, onBusyChange }: { project:
                 ) : (
                   <span className="shrink-0 text-muted-foreground text-xs" data-testid={`harness-installed-${h.id}`}>Installed</span>
                 )
+              ) : isInstalling(h.id) ? (
+                // An install is running on the server (started before this
+                // dialog mounted, or from elsewhere): disabled, so it can't
+                // be double-started, and it flips to Installed on its own
+                // via the installing poll.
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  disabled
+                  data-testid={`harness-installing-${h.id}`}
+                >
+                  Installing…
+                </Button>
               ) : (
                 <Button
                   size="sm"

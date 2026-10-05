@@ -5,7 +5,7 @@ async function fetchState(request: APIRequestContext) {
   const res = await request.get('/api/state')
   expect(res.ok()).toBeTruthy()
   return (await res.json()) as {
-    projects: Record<string, { repo: string; harnesses?: string[] }>
+    projects: Record<string, { repo: string; harnesses?: Record<string, string> }>
     harnesses: Record<string, { name: string }>
   }
 }
@@ -95,9 +95,9 @@ test.describe('harness installs are desired state', () => {
       await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5_000 })
 
       const state1 = await fetchState(request)
-      expect(state1.projects[idAlpha].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])
-      expect(state1.projects[idBeta].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])
-      expect(state1.projects[third].harnesses ?? []).toEqual([])
+      expect(state1.projects[idAlpha].harnesses).toEqual({ [FAKE_HARNESS_ID]: 'true', helper: 'true' })
+      expect(state1.projects[idBeta].harnesses).toEqual({ [FAKE_HARNESS_ID]: 'true', helper: 'true' })
+      expect(state1.projects[third].harnesses ?? {}).toEqual({})
       expect(state1.harnesses['helper']).toBeTruthy()
 
       await page.getByRole('button', { name: 'Terminal' }).nth(idxAlpha).click()
@@ -199,9 +199,9 @@ test.describe('harness installs are desired state', () => {
         .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 15_000 })
         .toContain('after-rename')
       const state2 = await fetchState(request)
-      expect(state2.projects[idAlpha].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])
-      expect(state2.projects[idBeta].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])
-      expect(state2.projects[third].harnesses ?? []).toEqual([])
+      expect(state2.projects[idAlpha].harnesses).toEqual({ [FAKE_HARNESS_ID]: 'true', helper: 'true' })
+      expect(state2.projects[idBeta].harnesses).toEqual({ [FAKE_HARNESS_ID]: 'true', helper: 'true' })
+      expect(state2.projects[third].harnesses ?? {}).toEqual({})
 
       await page.getByTestId('terminal-actions-trigger').click()
       await page.getByTestId('terminal-action-restart').click()
@@ -234,9 +234,9 @@ test.describe('harness installs are desired state', () => {
       await d3.getByRole('button', { name: 'Cancel' }).click()
 
       const finalState = await fetchState(request)
-      expect(finalState.projects[idAlpha].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])
-      expect(finalState.projects[idBeta].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])
-      expect(finalState.projects[third].harnesses ?? []).toEqual([])
+      expect(finalState.projects[idAlpha].harnesses).toEqual({ [FAKE_HARNESS_ID]: 'true', helper: 'true' })
+      expect(finalState.projects[idBeta].harnesses).toEqual({ [FAKE_HARNESS_ID]: 'true', helper: 'true' })
+      expect(finalState.projects[third].harnesses ?? {}).toEqual({})
     } finally {
       await deleteAllProjects(request)
       await resetHarnessRegistry(request)

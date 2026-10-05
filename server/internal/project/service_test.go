@@ -573,7 +573,7 @@ func TestEnsureContainerRecreateIsContainerOnly(t *testing.T) {
 	s, d, _, _ := newService(t)
 	if err := s.store.Create("abc", Project{
 		Repo:      testRepo,
-		Harnesses: []string{"opencode"},
+		Harnesses: map[string]state.HarnessStatus{"opencode": state.HarnessInstalled},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -623,7 +623,7 @@ func TestBringAllUpInstallsRecordedHarnesses(t *testing.T) {
 	// Project with two installed harnesses, container missing → full
 	// provisioning at boot.
 	if err := s.store.Create("abc", Project{
-		Harnesses: []string{"opencode", "freebuff"},
+		Harnesses: map[string]state.HarnessStatus{"opencode": state.HarnessInstalled, "freebuff": state.HarnessInstalled},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -638,8 +638,10 @@ func TestBringAllUpInstallsRecordedHarnesses(t *testing.T) {
 	if len(inst.installed) != 2 {
 		t.Fatalf("installed %d harnesses, want 2: %v", len(inst.installed), inst.installed)
 	}
-	if inst.installed[0] != "opencode" || inst.installed[1] != "freebuff" {
-		t.Fatalf("installed = %v, want [opencode freebuff]", inst.installed)
+	// Installed ids are served sorted (state holds a map now), so boot
+	// installs in sorted order.
+	if inst.installed[0] != "freebuff" || inst.installed[1] != "opencode" {
+		t.Fatalf("installed = %v, want [freebuff opencode]", inst.installed)
 	}
 }
 
@@ -649,7 +651,7 @@ func TestBringAllUpReclonesEmptyRepoVolume(t *testing.T) {
 	s, d, _, _ := newService(t)
 	if err := s.store.Create("abc", Project{
 		Repo:      "git@github.com:x/hello.git",
-		Harnesses: []string{"opencode"},
+		Harnesses: map[string]state.HarnessStatus{"opencode": state.HarnessInstalled},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -693,7 +695,7 @@ func TestBringAllUpReclonesEmptyRepoVolume(t *testing.T) {
 // project's container running, not just the ones Docker still has up.
 func TestBringAllUpStartsExitedContainer(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Harnesses: []string{"opencode"}}); err != nil {
+	if err := s.store.Create("abc", Project{Harnesses: map[string]state.HarnessStatus{"opencode": state.HarnessInstalled}}); err != nil {
 		t.Fatal(err)
 	}
 	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: false, Status: "exited"}, nil).Once()
@@ -714,7 +716,7 @@ func TestBringAllUpStartsExitedContainer(t *testing.T) {
 // no downloads, no restarts, just probes.
 func TestBringAllUpHealthyIsProbeOnly(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Harnesses: []string{"opencode"}}); err != nil {
+	if err := s.store.Create("abc", Project{Harnesses: map[string]state.HarnessStatus{"opencode": state.HarnessInstalled}}); err != nil {
 		t.Fatal(err)
 	}
 	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
@@ -734,10 +736,10 @@ func TestBringAllUpHealthyIsProbeOnly(t *testing.T) {
 // remaining projects.
 func TestBringAllUpContinuesPastInstallFailure(t *testing.T) {
 	s, d, _, _ := newService(t)
-	if err := s.store.Create("abc", Project{Harnesses: []string{"broken"}}); err != nil {
+	if err := s.store.Create("abc", Project{Harnesses: map[string]state.HarnessStatus{"broken": state.HarnessInstalled}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.store.Create("def", Project{Harnesses: []string{"opencode"}}); err != nil {
+	if err := s.store.Create("def", Project{Harnesses: map[string]state.HarnessStatus{"opencode": state.HarnessInstalled}}); err != nil {
 		t.Fatal(err)
 	}
 	d.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()

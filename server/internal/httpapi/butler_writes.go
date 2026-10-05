@@ -605,7 +605,12 @@ var butlerWriteTable = []butlerWriteDef{
 					skipped++
 					continue
 				}
-				if ierr := d.Sessions.InstallHarness(ctx, project.ContainerName(pid), h); ierr != nil {
+				// Same installing mark as the HTTP install endpoint, so the
+				// probe reports it while this synchronous run is underway.
+				_ = d.Projects.RecordInstalling(pid, h.ID)
+				ierr := d.Sessions.InstallHarness(ctx, project.ContainerName(pid), h)
+				_ = d.Projects.ClearInstalling(pid, h.ID)
+				if ierr != nil {
 					failed++
 					continue
 				}

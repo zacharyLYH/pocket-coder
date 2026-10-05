@@ -55,7 +55,7 @@ func TestStateMockRecovery(t *testing.T) {
 		ServerKey: mock.ServerKey,
 		Projects: map[string]any{id: map[string]any{
 			"repo": url, "branch": "main",
-			"harnesses": []string{"opencode"},
+			"harnesses": map[string]string{"opencode": "true"},
 			"sessions":  map[string]any{"main": struct{}{}, "oc1": map[string]string{"harness": "opencode"}},
 			"shortcuts": []map[string]string{{"id": "qc-dev", "alias": "dev", "kind": "cmd", "command": "npm install && npm start -- --host 0.0.0.0"}},
 		}},

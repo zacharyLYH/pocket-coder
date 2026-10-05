@@ -14,6 +14,7 @@ import (
 	"pcoder/internal/docker"
 	"pcoder/internal/harness"
 	"pcoder/internal/project"
+	"pcoder/internal/state"
 	"pcoder/internal/state/statetest"
 )
 
@@ -71,6 +72,19 @@ func TestInstallHarnessEndpoint(t *testing.T) {
 		t.Fatalf("results = %+v, want exactly the selected project ok", body.Results)
 	}
 	waitForEvent(t, d, "harness.install")
+
+	// The successful install overwrote the "installing" mark with "true";
+	// the unselected project was never marked or recorded.
+	states, err := d.Projects.HarnessStates("abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states["fake"] != state.HarnessInstalled {
+		t.Fatalf("states = %v, want fake=true after install", states)
+	}
+	if defStates, err := d.Projects.HarnessStates("def"); err != nil || len(defStates) != 0 {
+		t.Fatalf("def states = %v err=%v, want untouched", defStates, err)
+	}
 
 	// empty selection is refused before touching anything
 	if rec := authedPost(t, h, cookie, "/api/harnesses/fake/install", `{"projectIds":[]}`); rec.Code != http.StatusBadRequest {
@@ -207,5 +221,102 @@ func TestProjectHarnessesShowsInstalled(t *testing.T) {
 	rec = authedGet(t, h, cookie, "/api/projects/abc/harnesses")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("stopped container: %d, want 409", rec.Code)
+	}
+}
+
+// TestProjectHarnessesShowsInstalling pins the cross-remount progress flag:
+// an install running on the server (its dialog long unmounted) is reported
+// as installing while installed is still false, and clears when done — so a
+// reopened dialog shows Installing…, never a second Install button.
+func TestProjectHarnessesShowsInstalling(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	probe := func() map[string]struct {
+		Installed  bool `json:"installed"`
+		Installing bool `json:"installing"`
+	} {
+		t.Helper()
+		md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
+		md.EXPECT().Exec(mock.Anything, "pcoder-abc",
+			[]string{"bash", "-lc", `for c in fakecli; do command -v "$c" >/dev/null && echo "$c"; done`}, false).
+			Return(docker.ExecResult{ExitCode: 1}, nil).Once()
+		rec := authedGet(t, h, cookie, "/api/projects/abc/harnesses")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body)
+		}
+		var body struct {
+			Harnesses []struct {
+				ID         string `json:"id"`
+				Installed  bool   `json:"installed"`
+				Installing bool   `json:"installing"`
+			} `json:"harnesses"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]struct {
+			Installed  bool `json:"installed"`
+			Installing bool `json:"installing"`
+		}{}
+		for _, x := range body.Harnesses {
+			out[x.ID] = struct {
+				Installed  bool `json:"installed"`
+				Installing bool `json:"installing"`
+			}{Installed: x.Installed, Installing: x.Installing}
+		}
+		return out
+	}
+
+	// No job: no installing flag anywhere.
+	got := probe()
+	if got["fake"].Installing {
+		t.Fatalf("no job running, want no installing flag: %+v", got["fake"])
+	}
+	// Job running: installing true while installed stays false.
+	if err := d.Projects.RecordInstalling("abc", "fake"); err != nil {
+		t.Fatal(err)
+	}
+	got = probe()
+	if !got["fake"].Installing || got["fake"].Installed {
+		t.Fatalf("running job must read installing=true, installed=false: %+v", got["fake"])
+	}
+	// Job done: flag clears.
+	if err := d.Projects.ClearInstalling("abc", "fake"); err != nil {
+		t.Fatal(err)
+	}
+	got = probe()
+	if got["fake"].Installing {
+		t.Fatalf("finished job must clear the installing flag: %+v", got["fake"])
+	}
+}
+
+// TestInstallWhileInstallingConflicts: a second install for the same
+// (project, harness) while one is running is a 409 — the probe already
+// reports installing, so UIs disable the button instead of double-running
+// two synchronous npm installs against each other. No exec is registered,
+// so any work started would fail the test.
+func TestInstallWhileInstallingConflicts(t *testing.T) {
+	d, md, pinOut, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Maybe()
+	if err := d.Projects.RecordInstalling("abc", "fake"); err != nil {
+		t.Fatal(err)
+	}
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+	rec := authedPost(t, h, cookie, "/api/harnesses/fake/install", `{"projectIds":["abc"]}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("busy install: got %d %q, want 409", rec.Code, rec.Body)
+	}
+	// The mark survives the rejected call — the first run still owns it.
+	states, err := d.Projects.HarnessStates("abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states["fake"] != state.HarnessInstalling {
+		t.Fatalf("rejected call must not clear the mark: %v", states)
 	}
 }

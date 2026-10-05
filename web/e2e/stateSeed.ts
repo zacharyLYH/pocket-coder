@@ -54,7 +54,7 @@ export function seedState(kind: SeedKind): Record<string, unknown> {
           // (container + harness install), not cloning.
           e2eboost: {
             repo: '',
-            harnesses: ['opencode'],
+            harnesses: { opencode: 'true' },
             sessions: { oc1: { harness: 'opencode' } },
           },
         },

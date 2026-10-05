@@ -10,7 +10,7 @@ export type ButlerTurnResult = { threadId: string; threadTitle: string; turnId: 
 
 // Shared API shapes.
 export type Project = { id: string; harnesses?: string[] }
-export type Harness = { id: string; name: string; command: string; install?: string; installed?: boolean }
+export type Harness = { id: string; name: string; command: string; install?: string; installed?: boolean; installing?: boolean }
 export type ExecResult = { project: string; status: 'ok' | 'skipped' | 'error'; detail?: string }
 export type GitFileStatus = {
   path: string

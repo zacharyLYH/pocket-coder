@@ -15,7 +15,10 @@ import (
 type Project = state.Project
 
 // Entry is one row of the projects index. The id is the repo's
-// owner/repo — it is also the display name.
+// owner/repo — it is also the display name. Harnesses carries the
+// installed harness ids, sorted, for display counts and the install-gated
+// UI; in-flight ("installing") states live in state.json but never surface
+// here — the per-project probe reports those.
 type Entry struct {
 	ID        string   `json:"id"`
 	Harnesses []string `json:"harnesses,omitempty"`
@@ -30,6 +33,10 @@ type Store interface {
 	Delete(id string) error
 	List() ([]Entry, error)
 	RecordInstall(projectID, harnessID string) error
+	RecordInstalling(projectID, harnessID string) error
+	ClearInstalling(projectID, harnessID string) error
+	ClearAllInstalling() error
+	HarnessStates(projectID string) (map[string]state.HarnessStatus, error)
 	RecordSession(projectID, name, harnessID string) error
 	GetSession(projectID, name string) (state.Session, bool)
 	RemoveSession(projectID, name string) error
@@ -88,38 +95,125 @@ func (s *StateStore) Delete(id string) error {
 }
 
 // RecordInstall records that harnessID is installed in projectID.
-// Idempotent: duplicate installs do not reorder or duplicate.
+// Idempotent: overwrites any "installing" mark with "true".
 func (s *StateStore) RecordInstall(projectID, harnessID string) error {
 	return s.st.Mutate(func(doc *state.Document) error {
 		p, ok := doc.Projects[projectID]
 		if !ok {
 			return fmt.Errorf("project %s: %w", projectID, os.ErrNotExist)
 		}
-		for _, h := range p.Harnesses {
-			if h == harnessID {
-				return nil
-			}
+		if p.Harnesses == nil {
+			p.Harnesses = map[string]state.HarnessStatus{}
 		}
-		p.Harnesses = append(p.Harnesses, harnessID)
+		p.Harnesses[harnessID] = state.HarnessInstalled
 		doc.Projects[projectID] = p
 		return nil
 	})
 }
 
+// RecordInstalling marks harnessID as mid-install in projectID. An already
+// installed ("true") entry is left alone — reinstalling a present binary
+// must not flip it back to installing.
+func (s *StateStore) RecordInstalling(projectID, harnessID string) error {
+	return s.st.Mutate(func(doc *state.Document) error {
+		p, ok := doc.Projects[projectID]
+		if !ok {
+			return fmt.Errorf("project %s: %w", projectID, os.ErrNotExist)
+		}
+		if p.Harnesses == nil {
+			p.Harnesses = map[string]state.HarnessStatus{}
+		}
+		if p.Harnesses[harnessID] != state.HarnessInstalled {
+			p.Harnesses[harnessID] = state.HarnessInstalling
+		}
+		doc.Projects[projectID] = p
+		return nil
+	})
+}
+
+// ClearInstalling drops an "installing" mark for harnessID in projectID. A
+// "true" entry is never touched, so clearing after a successful install
+// (which already overwrote the mark) is a safe no-op. Idempotent.
+func (s *StateStore) ClearInstalling(projectID, harnessID string) error {
+	return s.st.Mutate(func(doc *state.Document) error {
+		p, ok := doc.Projects[projectID]
+		if !ok {
+			return fmt.Errorf("project %s: %w", projectID, os.ErrNotExist)
+		}
+		if p.Harnesses[harnessID] == state.HarnessInstalling {
+			delete(p.Harnesses, harnessID)
+			doc.Projects[projectID] = p
+		}
+		return nil
+	})
+}
+
+// ClearAllInstalling drops every "installing" mark in every project. Boot
+// calls this before serving: any mark surviving a restart belongs to an
+// exec that died with the old process, so nothing is actually running.
+func (s *StateStore) ClearAllInstalling() error {
+	return s.st.Mutate(func(doc *state.Document) error {
+		for id, p := range doc.Projects {
+			changed := false
+			for hid, st := range p.Harnesses {
+				if st == state.HarnessInstalling {
+					delete(p.Harnesses, hid)
+					changed = true
+				}
+			}
+			if changed {
+				doc.Projects[id] = p
+			}
+		}
+		return nil
+	})
+}
+
+// HarnessStates returns the raw install-state map for one project (a copy;
+// absent ids and any "false" value mean not installed).
+func (s *StateStore) HarnessStates(projectID string) (map[string]state.HarnessStatus, error) {
+	var out map[string]state.HarnessStatus
+	var ok bool
+	s.st.View(func(doc *state.Document) {
+		var p state.Project
+		p, ok = doc.Projects[projectID]
+		if !ok {
+			return
+		}
+		out = map[string]state.HarnessStatus{}
+		for hid, st := range p.Harnesses {
+			out[hid] = st
+		}
+	})
+	if !ok {
+		return nil, fmt.Errorf("project %s: %w", projectID, os.ErrNotExist)
+	}
+	return out, nil
+}
+
+// InstalledIDs returns the sorted ids recorded "true" (installed) for one
+// project — the stable UI list. "installing" entries are excluded: they are
+// not installed yet and the probe reports them separately.
+func InstalledIDs(p Project) []string {
+	var out []string
+	for hid, st := range p.Harnesses {
+		if st == state.HarnessInstalled {
+			out = append(out, hid)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // List returns every project as an entry, sorted by id. Ids are
 // owner/repo and unique, so the order is stable across calls (the home
-// page's project pickers must not shuffle under the user).
+// page's project pickers must not shuffle under the user). Each entry's
+// harness list holds the installed ids, sorted.
 func (s *StateStore) List() ([]Entry, error) {
 	out := []Entry{}
 	s.st.View(func(doc *state.Document) {
 		for id, p := range doc.Projects {
-			h := p.Harnesses
-			if h != nil {
-				cp := make([]string, len(h))
-				copy(cp, h)
-				h = cp
-			}
-			out = append(out, Entry{ID: id, Harnesses: h})
+			out = append(out, Entry{ID: id, Harnesses: InstalledIDs(p)})
 		}
 	})
 	sort.Slice(out, func(i, j int) bool {

@@ -99,6 +99,37 @@ func (s *Service) RecordInstall(projectID, harnessID string) error {
 	return nil
 }
 
+// RecordInstalling marks harnessID mid-install in projectID (see Store).
+func (s *Service) RecordInstalling(projectID, harnessID string) error {
+	if err := s.store.RecordInstalling(projectID, harnessID); err != nil {
+		return s.wrapNotFound(err)
+	}
+	return nil
+}
+
+// ClearInstalling drops an "installing" mark for harnessID in projectID.
+func (s *Service) ClearInstalling(projectID, harnessID string) error {
+	if err := s.store.ClearInstalling(projectID, harnessID); err != nil {
+		return s.wrapNotFound(err)
+	}
+	return nil
+}
+
+// ClearAllInstalling drops every "installing" mark everywhere. Boot calls
+// this before serving: marks surviving a restart belong to dead execs.
+func (s *Service) ClearAllInstalling() error {
+	return s.store.ClearAllInstalling()
+}
+
+// HarnessStates returns the raw install-state map for one project.
+func (s *Service) HarnessStates(projectID string) (map[string]state.HarnessStatus, error) {
+	states, err := s.store.HarnessStates(projectID)
+	if err != nil {
+		return nil, s.wrapNotFound(err)
+	}
+	return states, nil
+}
+
 // RecordSession saves session metadata (name → harness) in state.json.
 func (s *Service) RecordSession(projectID, name, harnessID string) error {
 	return s.wrapNotFound(s.store.RecordSession(projectID, name, harnessID))
@@ -340,10 +371,11 @@ func (s *Service) EnsureContainer(ctx context.Context, id string) (Status, error
 	return ContainerStatus(ctx, s.dkr, ContainerName(id))
 }
 
-// installRecordedHarnesses runs the explicit install for every harness id
-// recorded on the project. Unknown ids (harness deleted from the registry)
-// are skipped; real failures are logged and returned to the caller, which
-// decides whether they are fatal.
+// installRecordedHarnesses runs the explicit install for every installed
+// harness id. Unknown ids (harness deleted from the registry) are skipped;
+// real failures are logged and returned to the caller, which decides
+// whether they are fatal. ids must be the installed ("true") ones —
+// "installing" marks are boot-cleared before this ever runs.
 func (s *Service) installRecordedHarnesses(ctx context.Context, id, cid string, harnessIDs []string) error {
 	if s.installer == nil || len(harnessIDs) == 0 {
 		return nil
@@ -409,7 +441,7 @@ func (s *Service) provisionProject(ctx context.Context, id string) error {
 			}
 		}
 	}
-	return s.installRecordedHarnesses(ctx, id, ContainerName(id), p.Harnesses)
+	return s.installRecordedHarnesses(ctx, id, ContainerName(id), InstalledIDs(p))
 }
 
 // BringAllUp makes the live Docker state match state.json for EVERY project:

@@ -20,6 +20,7 @@ import (
 	"pcoder/internal/harness"
 	"pcoder/internal/project"
 	"pcoder/internal/session"
+	"pcoder/internal/state"
 	dockermocks "pcoder/mocks/docker"
 )
 
@@ -667,12 +668,9 @@ func TestHarnessLaunchRecordsInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, hid := range p.Harnesses {
-		if hid == "fake" {
-			return
-		}
+	if p.Harnesses["fake"] != state.HarnessInstalled {
+		t.Fatalf("launch did not record the install: harnesses = %v", p.Harnesses)
 	}
-	t.Fatalf("launch did not record the install: harnesses = %v", p.Harnesses)
 }
 
 func TestCreateHarnessSessionUnknownHarness404(t *testing.T) {

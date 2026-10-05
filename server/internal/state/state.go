@@ -76,12 +76,24 @@ func DefaultShortcuts() []Shortcut {
 // repo's owner/repo (the display name), and the container/volumes are
 // derived from it.
 type Project struct {
-	Repo      string             `json:"repo"`
-	Branch    string             `json:"branch,omitempty"`
-	Harnesses []string           `json:"harnesses,omitempty"` // installed harness ids, ordered by install
-	Sessions  map[string]Session `json:"sessions,omitempty"`  // keyed by session name
-	Shortcuts []Shortcut         `json:"shortcuts,omitempty"` // the one shortcuts list (commands and keys alike)
+	Repo      string                   `json:"repo"`
+	Branch    string                   `json:"branch,omitempty"`
+	Harnesses map[string]HarnessStatus `json:"harnesses,omitempty"` // install state by harness id
+	Sessions  map[string]Session       `json:"sessions,omitempty"`  // keyed by session name
+	Shortcuts []Shortcut               `json:"shortcuts,omitempty"` // the one shortcuts list (commands and keys alike)
 }
+
+// HarnessStatus is one harness's install state inside a project. Stored as
+// a plain string: "true" (installed), "installing" (an explicit install is
+// running on the server right now), or absent/"false" (not installed —
+// "false" is never written, absence means it).
+type HarnessStatus string
+
+const (
+	HarnessInstalled    HarnessStatus = "true"
+	HarnessInstalling   HarnessStatus = "installing"
+	HarnessNotInstalled HarnessStatus = "false"
+)
 
 // Session is high-level metadata about a tmux session. Stored in
 // state.json so restart/re-entry can look up which harness a session

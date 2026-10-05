@@ -10,6 +10,7 @@ import (
 	"pcoder/internal/harness"
 	"pcoder/internal/obs"
 	"pcoder/internal/project"
+	"pcoder/internal/state"
 )
 
 func handleListHarnesses(d Deps) http.HandlerFunc {
@@ -83,6 +84,29 @@ func handleInstallHarness(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "select at least one project")
 			return
 		}
+		// Reject when any target is already mid-install for this harness: a
+		// second synchronous run would race the first. The probe reports
+		// installing, so UIs disable the button instead of reaching here.
+		for _, pid := range body.ProjectIDs {
+			if states, serr := d.Projects.HarnessStates(pid); serr == nil && states[id] == state.HarnessInstalling {
+				writeErr(w, http.StatusConflict, fmt.Sprintf("%q is already installing in %s", h.Name, pid))
+				return
+			}
+		}
+		// Mark every target installing for the whole synchronous run (npm
+		// can take minutes and the starting dialog may unmount): the
+		// per-project probe reports these marks so a reopened dialog shows
+		// Installing instead of a second Install button. Successful results
+		// overwrite the mark with "true" below; the deferred clear drops it
+		// only where it is still "installing".
+		for _, pid := range body.ProjectIDs {
+			_ = d.Projects.RecordInstalling(pid, id)
+		}
+		defer func() {
+			for _, pid := range body.ProjectIDs {
+				_ = d.Projects.ClearInstalling(pid, id)
+			}
+		}()
 		results := runInProjects(d, r, body.ProjectIDs, func(container string) (string, error) {
 			return "", d.Sessions.InstallHarness(r.Context(), container, h)
 		})
@@ -158,10 +182,18 @@ func handleProjectHarnesses(d Deps) http.HandlerFunc {
 			Command   string `json:"command"`
 			Install   string `json:"install,omitempty"`
 			Installed bool   `json:"installed"`
+			// Installing is true while an explicit install is running for
+			// this harness in this project — set even when Installed is
+			// still false, so install starters survive dialog remounts.
+			Installing bool `json:"installing,omitempty"`
+		}
+		installing := map[string]state.HarnessStatus{}
+		if states, serr := d.Projects.HarnessStates(id); serr == nil {
+			installing = states
 		}
 		out := make([]entry, 0, len(harnesses))
 		for _, h := range harnesses {
-			out = append(out, entry{ID: h.ID, Name: h.Name, Command: h.Command, Install: h.Install, Installed: installed[harness.Binary(h)]})
+			out = append(out, entry{ID: h.ID, Name: h.Name, Command: h.Command, Install: h.Install, Installed: installed[harness.Binary(h)], Installing: installing[h.ID] == state.HarnessInstalling})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"harnesses": out})
 	}

@@ -12,7 +12,7 @@
     "developit/preact-vite-template": {
       "repo": "https://github.com/developit/preact-vite-template.git",
       "branch": "main",
-      "harnesses": ["opencode"],
+      "harnesses": { "opencode": "true" },
       "sessions": {
         "main": {},
         "oc1": { "harness": "opencode" }

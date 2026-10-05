@@ -133,6 +133,96 @@ func TestCreateMinimalProjectExactFile(t *testing.T) {
 	})
 }
 
+// Install states are plain strings per harness id: "true" (installed),
+// "installing" (an explicit install is running), absent (not installed).
+// RecordInstall overwrites any mark with "true"; RecordInstalling never
+// demotes "true"; ClearInstalling only drops "installing" marks.
+func TestInstallStates(t *testing.T) {
+	st, s := newStore(t)
+	if err := s.Create("x/hello", Project{Repo: "https://github.com/x/hello.git"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordInstalling("x/hello", "opencode"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordInstall("x/hello", "cline"); err != nil {
+		t.Fatal(err)
+	}
+	// Marking over an installed entry must not demote it.
+	if err := s.RecordInstalling("x/hello", "cline"); err != nil {
+		t.Fatal(err)
+	}
+	statetest.AssertEqual(t, st.Path(), map[string]any{
+		"user": map[string]any{"email": ""},
+		"projects": map[string]any{"x/hello": map[string]any{
+			"repo":      "https://github.com/x/hello.git",
+			"harnesses": map[string]any{"opencode": "installing", "cline": "true"},
+		}},
+	})
+	// Clearing an installed entry is a no-op; clearing installing drops it.
+	if err := s.ClearInstalling("x/hello", "cline"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClearInstalling("x/hello", "opencode"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClearInstalling("x/hello", "opencode"); err != nil { // idempotent
+		t.Fatal(err)
+	}
+	states, err := s.HarnessStates("x/hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 1 || states["cline"] != state.HarnessInstalled {
+		t.Fatalf("states = %v, want only cline=true", states)
+	}
+	// List entries carry installed ids only, sorted — never "installing".
+	entries, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || !reflect.DeepEqual(entries[0].Harnesses, []string{"cline"}) {
+		t.Fatalf("index = %+v, want [cline]", entries)
+	}
+}
+
+// ClearAllInstalling sweeps every "installing" mark everywhere (boot calls
+// this before serving: surviving marks belong to dead execs) and leaves
+// "true" entries alone.
+func TestClearAllInstalling(t *testing.T) {
+	_, s := newStore(t)
+	if err := s.Create("x/a", Project{Repo: "https://github.com/x/a.git"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create("x/b", Project{Repo: "https://github.com/x/b.git"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordInstalling("x/a", "opencode"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordInstall("x/a", "cline"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordInstalling("x/b", "opencode"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClearAllInstalling(); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"x/a", "x/b"} {
+		states, err := s.HarnessStates(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := states["opencode"]; ok {
+			t.Fatalf("%s still marked installing: %v", id, states)
+		}
+	}
+	if states, _ := s.HarnessStates("x/a"); states["cline"] != state.HarnessInstalled {
+		t.Fatalf("installed entry disturbed: %v", states)
+	}
+}
+
 // List ordering is stable across calls: sorted by id.
 func TestListStableOrder(t *testing.T) {
 	_, s := newStore(t)
