@@ -59,6 +59,40 @@ describe('ButlerSheet', () => {
     expect(answerBox.querySelectorAll('li')).toHaveLength(2)
   })
 
+  // Async-butler contract: the POST returns as soon as the turn is
+  // reserved, so the very next thread GET already carries the user's
+  // prompt (status running, no answer yet) — the bubble shows during the
+  // run, then polling picks up the answer. No client-side echo exists.
+  it('shows the reserved prompt and typing while the in-flight turn runs', async () => {
+    let threadGets = 0
+    const fetchMock = mockFetch((url, init) => {
+      if (url === '/api/butler/threads' && (!init?.method || init.method === 'GET'))
+        return { status: 200, body: { threads: [{ id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', turnCount: 1, preview: 'Brief me', status: 'running' }] } }
+      if (url === `/api/butler/threads/${THREAD}`) {
+        threadGets++
+        const done = threadGets >= 2
+        return { status: 200, body: { thread: { id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', status: done ? 'ready' : 'running', approvals: [], turns: [{ turnId: 't1', prompt: 'Brief me', answer: done ? 'All healthy.' : undefined, steps: [], time: '2026-09-02T10:00:00Z', error: null }] } } }
+      }
+      return undefined
+    })
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      // POST answers immediately with only the reservation identity.
+      if (String(url) === '/api/butler/turn') return new Response(JSON.stringify({ threadId: THREAD, threadTitle: 'Brief me', turnId: 't1', time: '2026-09-02T10:00:00Z' }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      return fetchMock(String(url), init)
+    }))
+    render(<ButlerSheet projectHint={null} onClearHint={vi.fn()} onClose={vi.fn()} />)
+    await screen.findByTestId('butler-sheet')
+    fireEvent.change(screen.getByTestId('butler-prompt'), { target: { value: 'Brief me' } })
+    fireEvent.click(screen.getByTestId('butler-send'))
+    // The reserved turn (prompt) is visible while the run is still going.
+    const turn = await screen.findByTestId('butler-turn')
+    expect(turn).toHaveTextContent('Brief me')
+    expect(screen.getByTestId('butler-pending')).toBeInTheDocument()
+    expect(screen.queryByTestId('butler-answer')).not.toBeInTheDocument()
+    // Poll settles: the answer replaces the typing indicator.
+    await waitFor(() => expect(screen.getByTestId('butler-answer')).toHaveTextContent('All healthy.'), { timeout: 10000 })
+  })
+
   it('shows a pending indicator while the turn is in flight', async () => {
     const realFetch = mockAll('')
     let resolveTurn!: (r: Response) => void

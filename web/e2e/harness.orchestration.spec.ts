@@ -61,49 +61,38 @@ test.describe('harness installs are desired state', () => {
       }
       const order = await getOrder()
       const idxAlpha = order.indexOf(idAlpha)
-      const idxBeta = order.indexOf(idBeta)
-      const idxThird = order.indexOf(third)
 
       // installs run from the project menu → Harnesses dialog now (not a
-      // home card). Opened from alpha's menu, each picker starts scoped to
-      // alpha; check beta for the 2-project installs.
-      await page.getByTestId(`project-menu-${idAlpha}`).click()
-      await page.getByRole('menuitem', { name: /Harnesses/ }).click()
-      const hdialog = page.getByRole('dialog')
-      await expect(hdialog.getByText(FAKE_HARNESS_NAME)).toBeVisible()
-
-      for (const harnessName of [FAKE_HARNESS_NAME, 'Helper']) {
-        const row = hdialog.locator('div.flex.items-center.justify-between', { hasText: harnessName })
-        await expect(row).toBeVisible()
-        await row.getByRole('button', { name: 'Install…' }).click()
-        const picker = hdialog.locator('div.mt-1.flex.flex-col')
-        await expect(picker).toBeVisible()
-        await picker.locator('label').nth(idxBeta).locator('input').check()
-        await expect(picker.getByRole('button', { name: /Install in 2 project/ })).toBeVisible()
-        await picker.getByRole('button', { name: /Install in 2 project/ }).click()
-        await expect(hdialog.getByText('Applied to 2 projects.')).toBeVisible({ timeout: 60_000 })
+      // home card). Harnesses are a per-project property: Install applies
+      // straight to the project whose menu opened the dialog, so each
+      // project gets its own one-click install — no project picker.
+      const catalog: { name: string; id: string }[] = [
+        { name: FAKE_HARNESS_NAME, id: FAKE_HARNESS_ID },
+        { name: 'Helper', id: 'helper' },
+      ]
+      const installInto = async (projectID: string) => {
+        await page.getByTestId(`project-menu-${projectID}`).click()
+        await page.getByRole('menuitem', { name: /Harnesses/ }).click()
+        const hd = page.getByRole('dialog')
+        await expect(hd.getByText(FAKE_HARNESS_NAME)).toBeVisible()
+        for (const h of catalog) {
+          const row = hd.locator('div.flex.items-center.justify-between', { hasText: h.name })
+          await expect(row).toBeVisible()
+          await row.getByRole('button', { name: 'Install', exact: true }).click()
+          await expect(hd.getByTestId(`harness-installed-${h.id}`)).toBeVisible({ timeout: 60_000 })
+        }
+        return hd
       }
 
-      const rowCheck = hdialog.locator('div.flex.items-center.justify-between', { hasText: FAKE_HARNESS_NAME })
-      await rowCheck.getByRole('button', { name: 'Install…' }).click()
-      const pickerCheck = hdialog.locator('div.mt-1.flex.flex-col')
-      await expect(pickerCheck).toBeVisible()
-      await expect(pickerCheck.getByText('Installed')).toHaveCount(2)
-      await expect(pickerCheck.locator('label').nth(idxAlpha).locator('input')).toBeDisabled()
-      await expect(pickerCheck.locator('label').nth(idxBeta).locator('input')).toBeDisabled()
-      await expect(pickerCheck.locator('label').nth(idxThird).locator('input')).toBeEnabled()
+      const hdialog = await installInto(idAlpha)
+      // Installed shows for this project immediately; reopening proves it.
       await gateShot(page, 'gate1-installed')
-      await pickerCheck.getByRole('button', { name: 'Cancel' }).click()
-
-      const helperRow = hdialog.locator('div.flex.items-center.justify-between', { hasText: 'Helper' })
-      await helperRow.getByRole('button', { name: 'Install…' }).click()
-      const helperPicker = hdialog.locator('div.mt-1.flex.flex-col')
-      await expect(helperPicker).toBeVisible()
-      await expect(helperPicker.getByText('Installed')).toHaveCount(2)
-      await expect(helperPicker.locator('label').nth(idxThird).locator('input')).toBeEnabled()
-      await helperPicker.getByRole('button', { name: 'Cancel' }).click()
       await page.keyboard.press('Escape')
       await expect(hdialog).not.toBeVisible({ timeout: 5_000 })
+
+      await installInto(idBeta)
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5_000 })
 
       const state1 = await fetchState(request)
       expect(state1.projects[idAlpha].harnesses).toEqual([FAKE_HARNESS_ID, 'helper'])

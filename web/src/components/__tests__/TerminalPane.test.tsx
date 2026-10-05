@@ -87,6 +87,46 @@ describe('TerminalPane scroll behavior', () => {
   // after xterm's own handler (that double-handled the gesture and leaked
   // Up/Down arrows into the shell). A wheel over the host sends nothing and
   // scrolls nothing by itself — xterm + tmux mouse mode own the gesture.
+  // xterm has no touch scrolling of its own, so a one-finger drag must be
+  // bridged into the wheel events xterm already understands. The handler
+  // owns the gesture (preventDefault) so the browser cannot cancel it.
+  it('bridges a vertical touch drag into wheel events on .xterm-screen', async () => {
+    const host = hostRef()
+    render(<TerminalPane projectId="abc" session="main" redial={0} fontSize={14} hostRef={host} onStatus={vi.fn()} onError={vi.fn()} />)
+    await new Promise((r) => setTimeout(r, 50))
+    wsInstances[0]?.open()
+    await new Promise((r) => setTimeout(r, 10))
+
+    const screen = document.createElement('div')
+    screen.className = 'xterm-screen'
+    host.current!.appendChild(screen)
+    const deltas: number[] = []
+    screen.addEventListener('wheel', (e) => deltas.push((e as WheelEvent).deltaY))
+
+    const fire = (type: 'touchstart' | 'touchmove' | 'touchend', y: number) => {
+      const ev = new Event(type, { bubbles: true, cancelable: true }) as Event & {
+        touches: Array<{ clientX: number; clientY: number }>
+        changedTouches: Array<{ clientX: number; clientY: number }>
+      }
+      const touch = { clientX: 10, clientY: y }
+      ev.touches = type === 'touchend' ? [] : [touch]
+      ev.changedTouches = [touch]
+      host.current!.dispatchEvent(ev)
+      return ev
+    }
+
+    fire('touchstart', 100)
+    const move = fire('touchmove', 170) // 70px drag down
+    fire('touchend', 170)
+
+    expect(move.defaultPrevented).toBe(true)
+    expect(deltas.length).toBeGreaterThan(0)
+    // Drag down reveals earlier output → positive wheel deltas (xterm
+    // scrolls up on positive deltaY), never Up/Down input escapes.
+    expect(deltas.every((d) => d > 0)).toBe(true)
+    expect(wsInstances[0]?.sent.filter((s) => s.includes('"input"'))).toEqual([])
+  })
+
   it('does not hijack wheel events into scrollLines/input', async () => {
     const host = hostRef()
 

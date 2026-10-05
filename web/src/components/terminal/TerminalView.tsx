@@ -23,6 +23,30 @@ function defaultFontSize(): number {
   return 14
 }
 
+// useKeyboardNudge keeps the terminal input visible when the mobile
+// keyboard opens. The page viewport meta locks scaling (so chat textareas
+// never auto-zoom), and interactive-widget=resizes-content shrinks the
+// visual viewport — we mirror that shrink as bottom padding so the focused
+// input scrolls back into view above the keyboard.
+function useKeyboardNudge(ref: React.RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    function onResize() {
+      const el = ref.current
+      if (!el) return
+      // Layout viewport minus the visible area = keyboard height.
+      const hidden = Math.max(0, window.innerHeight - vv!.height)
+      el.style.paddingBottom = hidden > 40 ? `${hidden}px` : ''
+      if (hidden > 40) {
+        try { document.activeElement?.scrollIntoView({ block: 'end' }) } catch { /* noop */ }
+      }
+    }
+    vv.addEventListener('resize', onResize)
+    return () => vv.removeEventListener('resize', onResize)
+  }, [ref])
+}
+
 // The terminal screen: header (status, session picker, actions) above the
 // live terminal pane. Owns which session is attached and the shared status/
 // error state; the pane owns xterm and the websocket.
@@ -74,6 +98,8 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
     setFontSize(def)
   }
   const hostRef = useRef<HTMLDivElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  useKeyboardNudge(rootRef)
   // The Codemap tab only exists once a model key is configured. Hidden
   // until the config loads so key-less backends never show it.
   const { status: aiStatus, refresh: refreshAi } = useAiConfig()
@@ -202,7 +228,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   }
 
   return (
-    <div className="flex h-dvh w-full flex-col gap-3 bg-muted/40 p-0 pt-[env(safe-area-inset-top)]">
+    <div ref={rootRef} className="flex h-dvh w-full flex-col gap-3 bg-muted/40 p-0 pt-[env(safe-area-inset-top)]" data-no-pull-refresh data-testid="terminal-root">
       <div className="px-3 pt-3">
         <TerminalHeader
           projectId={projectId}
@@ -246,8 +272,10 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
         <p className="mx-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs break-all text-destructive">{shortcutError}</p>
       )}
       <ShortcutsModal projectId={projectId} open={shortcutsOpen} onOpenChange={setShortcutsOpen} onRun={(s) => void runShortcut(s)} />
-      <div className={`min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl touch-manipulation ${tab === 'terminal' ? '' : 'hidden'}`}>
-        <div ref={hostRef} className="h-full w-full touch-manipulation" />
+      {/* touch-action:none hands every gesture to TerminalPane's touch→wheel
+          bridge; the browser must not start (and then cancel) a scroll. */}
+      <div className={`min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl [touch-action:none] ${tab === 'terminal' ? '' : 'hidden'}`}>
+        <div ref={hostRef} className="h-full w-full [touch-action:none]" />
         <TerminalPane
           projectId={projectId}
           session={current}

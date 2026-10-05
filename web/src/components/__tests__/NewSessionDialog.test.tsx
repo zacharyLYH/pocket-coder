@@ -6,7 +6,7 @@ import { mockFetch } from '@/test/mockFetch'
 // Unit tests for the terminal session dialog — the pieces with real logic
 // (name-required, installed-only filter, launch-timeout error surfacing).
 // Fetch is mocked; the real terminal bridge is covered by the Playwright
-// stack tests. (ProjectPicker is tested alongside its host HarnessesCard.)
+// stack tests.
 
 beforeEach(() => {
   window.confirm = vi.fn(() => true)

@@ -79,14 +79,19 @@ test('real OpenCode session renders through the backend terminal bridge', async 
 
   try {
     await deleteAllProjects(page.request)
-    await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
+    const projectID = await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
 
     // installs are explicit and per project: install OpenCode through the
-    // home page (real npm download) BEFORE launching it
-    const row = page.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
-    await row.getByRole('button', { name: 'Install…' }).click()
-    await page.getByRole('button', { name: /Install in 1 project/ }).click()
-    await expect(page.getByText('Applied to 1 project.')).toBeVisible({ timeout: 300_000 })
+    // project menu (real npm download) BEFORE launching it
+    await page.getByTestId(`project-menu-${projectID}`).click()
+    await page.getByRole('menuitem', { name: /Harnesses/ }).click()
+    const hdialog = page.getByRole('dialog')
+    const row = hdialog.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
+    // Scoped dialog: Install hits this project directly, no picker.
+    await row.getByRole('button', { name: 'Install', exact: true }).click()
+    await expect(hdialog.getByText('Installed.')).toBeVisible({ timeout: 300_000 })
+    await page.keyboard.press('Escape')
+    await expect(hdialog).not.toBeVisible({ timeout: 5_000 })
 
     await page.getByRole('button', { name: 'Terminal' }).click()
     await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })

@@ -38,6 +38,7 @@ export function useThread<
   const [threads, setThreads] = useState<TSummary[]>([])
   const [thread, setThread] = useState<TThread | null>(null)
   const [inFlight, setInFlight] = useState(false)
+  const [loading, setLoading] = useState(!!ops.autoOpen)
   const [error, setError] = useState<string | null>(null)
   const opsRef = useRef(ops)
   opsRef.current = ops
@@ -74,11 +75,16 @@ export function useThread<
       return
     }
     let cancelled = false
+    setLoading(true)
     void (async () => {
-      const loaded = await refreshList()
-      if (cancelled || !loaded) return
-      const target = loaded.threads.find((t) => t.status === 'running') ?? loaded.threads[0]
-      if (target) void openThread(target.id)
+      try {
+        const loaded = await refreshList()
+        if (cancelled || !loaded) return
+        const target = loaded.threads.find((t) => t.status === 'running') ?? loaded.threads[0]
+        if (target) await openThread(target.id)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     })()
     return () => {
       cancelled = true
@@ -167,5 +173,5 @@ export function useThread<
     }
   }, [])
 
-  return { threads, thread, inFlight, error, setError, openThread, newChat, removeThread, sendTurn, retryTurn }
+  return { threads, thread, inFlight, loading, error, setError, openThread, newChat, removeThread, sendTurn, retryTurn }
 }

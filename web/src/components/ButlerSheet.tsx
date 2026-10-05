@@ -39,7 +39,9 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
   }, [thread?.turns.length, inFlight])
 
   // Server owns sendability. The starter posts; everyone (including a
-  // reloaded starter) polls the open thread until it settles.
+  // reloaded starter) polls the open thread until it settles. The reserve
+  // persists the prompt before the POST returns, so the user's bubble is
+  // the transcript's own turn — no client-side echo to keep in sync.
   const status = thread?.status ?? 'ready'
   const confirms = thread?.approvals ?? []
   const blocked = inFlight || status === 'running' || status === 'awaiting'
@@ -50,7 +52,7 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
     if (!p || blocked) return
     setNotice(null)
     setPrompt('')
-    void sendTurn(p, thread?.id)
+    void sendTurn(p, thread?.id).catch(() => {})
   }
 
   const turns = thread?.turns ?? []
@@ -160,7 +162,7 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
           <textarea placeholder="Ask Butler…" value={prompt} disabled={blocked} onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(prompt) } }}
             data-testid="butler-prompt" rows={1}
-            className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-3 pt-2 pb-1 text-sm leading-relaxed focus:outline-none disabled:cursor-not-allowed" />
+            className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-3 pt-2 pb-1 text-base leading-relaxed focus:outline-none disabled:cursor-not-allowed" />
           <Button size="icon" onClick={() => send(prompt)} disabled={blocked || !prompt.trim()} data-testid="butler-send" aria-label="Send" className="size-8 shrink-0 rounded-full disabled:cursor-not-allowed"><Send className="size-4" /></Button>
         </div>
       </div>

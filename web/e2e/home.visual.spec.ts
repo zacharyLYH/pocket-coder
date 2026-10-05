@@ -132,15 +132,13 @@ test.describe('home screen', () => {
 
       // an explicit install runs synchronously and surfaces the outcome here.
       // E2E Fake is used because its "download" is a local script — fast,
-      // while still exercising the real install+validate endpoint. The picker
-      // defaults to every project checked; with one project that is a 1:1 run.
+      // while still exercising the real install+validate endpoint. The dialog
+      // is scoped to this project, so Install is one click — no picker.
       const row = dialog.locator('div.flex.items-center.justify-between', { hasText: FAKE_HARNESS_NAME })
-      await row.getByRole('button', { name: 'Install…' }).click()
-      // the project picker is part of the feature's surface — capture it open
-      await expect(dialog.getByRole('button', { name: /Install in 1 project/ })).toBeVisible()
-      await expect(page).toHaveScreenshot('harness-project-picker.png', { fullPage: true })
-      await dialog.getByRole('button', { name: /Install in 1 project/ }).click()
-      await expect(dialog.getByText('Applied to 1 project.')).toBeVisible({ timeout: 120_000 })
+      await expect(row.getByRole('button', { name: 'Install', exact: true })).toBeVisible()
+      await expect(page).toHaveScreenshot('harness-install-dialog.png', { fullPage: true })
+      await row.getByRole('button', { name: 'Install', exact: true }).click()
+      await expect(dialog.getByText('Installed.')).toBeVisible({ timeout: 120_000 })
     } finally {
       await deleteAllProjects(page.request)
     }
@@ -164,13 +162,10 @@ test.describe('home screen', () => {
       await expect(dialog.getByText(FAKE_HARNESS_NAME)).toBeVisible()
 
       const row = dialog.locator('div.flex.items-center.justify-between', { hasText: FAKE_HARNESS_NAME })
-      await row.getByRole('button', { name: 'Install…' }).click()
-      // race the click against the visibility check: the mocked install
-      // resolves in 2s, so a sequential assert can miss the busy state
-      await Promise.all([
-        expect(dialog.locator('p.text-muted-foreground').filter({ hasText: 'Working' })).toBeVisible({ timeout: 10_000 }),
-        dialog.getByRole('button', { name: /Install in 1 project/ }).click(),
-      ])
+      // one click installs into this project; the mocked 2s round-trip keeps
+      // the busy label up long enough to capture it
+      await row.getByRole('button', { name: 'Install', exact: true }).click()
+      await expect(dialog.getByRole('button', { name: 'Installing…' })).toBeVisible({ timeout: 10_000 })
       await expect(page).toHaveScreenshot('home-busy-installing.png')
     } finally {
       await deleteAllProjects(page.request)

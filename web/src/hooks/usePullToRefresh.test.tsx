@@ -60,27 +60,35 @@ describe('usePullToRefresh + FAB edge case', () => {
     delete (window as unknown as Record<string, unknown>).ontouchstart
   })
 
-  it('still reloads on a body drag-down past the threshold (baseline)', () => {
+  it('ignores short pulls, reloads on a 1/3-viewport drag (baseline)', () => {
     render(<Probe />)
     touchOn(document.body, 'touchstart', 80)
     touchOn(document.body, 'touchmove', 140)
     touchOn(document.body, 'touchmove', 220)
     expect(screen.getByTestId('pull-state')).toHaveTextContent('pulling')
     touchOn(document.body, 'touchend', 220)
+    // 140px < innerHeight/3 in jsdom (768px) → no reload: casual scrolls
+    // and short flicks never trigger it.
+    expect(reload).not.toHaveBeenCalled()
+    touchOn(document.body, 'touchstart', 80)
+    touchOn(document.body, 'touchmove', 220)
+    touchOn(document.body, 'touchmove', 420)
+    expect(screen.getByTestId('pull-state')).toHaveTextContent('pulling')
+    touchOn(document.body, 'touchend', 420)
     expect(reload).toHaveBeenCalledTimes(1)
   })
 
-  it('dragging down starting on the FAB never refreshes', () => {
+  it('dragging down past 1/3 viewport starting on the FAB never refreshes', () => {
     render(<Probe />)
     const fab = screen.getByTestId('fab-stub')
-    // The reported bug: FAB sits at the top, user drags it down 120px+
-    // (past the 72px threshold) at scrollY 0 → page reloaded.
+    // The reported bug: FAB sits at the top, user drags it down 300px+
+    // (past innerHeight/3) at scrollY 0 → page reloaded.
     touchOn(fab, 'touchstart', 40)
-    touchOn(fab, 'touchmove', 100)
-    touchOn(fab, 'touchmove', 180)
+    touchOn(fab, 'touchmove', 200)
+    touchOn(fab, 'touchmove', 400)
     // No spinner while dragging from the FAB …
     expect(screen.getByTestId('pull-state')).toHaveTextContent('idle')
-    touchOn(fab, 'touchend', 180)
+    touchOn(fab, 'touchend', 400)
     // … and no reload on release.
     expect(reload).not.toHaveBeenCalled()
   })

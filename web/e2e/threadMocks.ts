@@ -31,9 +31,11 @@ export async function mockButlerThreads(page: Page, turns: { prompt: string; ans
   })
 }
 
-export async function mockButlerTurn(page: Page, final: Record<string, unknown>) {
+// Turns run detached: POST only returns the reservation identity, so the
+// route needs no answer payload — the thread GET carries the transcript.
+export async function mockButlerTurn(page: Page) {
   await page.route('**/api/butler/turn', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threadId: TID, threadTitle: 'chat', turnId: 't0', steps: [], time: '2026-09-02T10:00:00Z', ...final }) })
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threadId: TID, threadTitle: 'chat', turnId: 't0', time: '2026-09-02T10:00:00Z' }) })
   })
 }
 

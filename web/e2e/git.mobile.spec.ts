@@ -156,12 +156,13 @@ test.describe('terminal keys (mobile)', () => {
     await page.goto(terminalUrl(PROJECT, 'main'))
     await page.getByTestId('tab-shortcuts').click()
     const dialog = page.getByRole('dialog')
-    await expect(dialog.getByTestId('sc-run-Esc')).toBeVisible()
-    await expect(dialog.getByTestId('sc-run-Ctrl-C')).toBeVisible()
+    // Row tap runs: no separate play button on the terminal modal.
+    await expect(dialog.getByTestId('sc-row-Esc')).toBeVisible()
+    await expect(dialog.getByTestId('sc-row-Ctrl-C')).toBeVisible()
     await expect(dialog).toHaveScreenshot('git-mobile-shortcuts.png')
 
     // running a key sends terminal input without any network: the modal closes
-    await dialog.getByTestId('sc-run-Ctrl-C').click()
+    await dialog.getByTestId('sc-row-Ctrl-C').click()
     await expect(dialog).not.toBeVisible()
   })
 })

@@ -61,6 +61,65 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
   const wsRef = useRef<WebSocket | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+
+  // Mobile scroll: xterm.js has no touch handling of its own — the pane is
+  // a custom scroll element driven by wheel events only, so a one-finger
+  // drag did nothing. Translate a vertical drag into synthetic wheel events
+  // dispatched at .xterm-screen (the scroll element's node): xterm then
+  // handles the gesture exactly like a real wheel, including forwarding it
+  // to tmux as a mouse-wheel when mouse mode is active. Desktop wheel is
+  // untouched (no wheel listener here) — only touch is bridged.
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    const PX_PER_NOTCH = 26
+    let active = false
+    let startX = 0
+    let startY = 0
+    let lastY = 0
+    let accum = 0
+    function onTouchStart(e: TouchEvent) {
+      if (e.touches.length !== 1) { active = false; return }
+      active = true
+      startX = e.touches[0].clientX
+      startY = lastY = e.touches[0].clientY
+      accum = 0
+    }
+    function onTouchMove(e: TouchEvent) {
+      if (!active || e.touches.length !== 1) return
+      const t = e.touches[0]
+      // Let horizontal gestures (rare) pass through untouched.
+      if (Math.abs(t.clientX - startX) > Math.abs(t.clientY - startY)) return
+      // Own the gesture: suppress the browser's own scroll so it can't
+      // cancel the drag mid-stream (which is what made the pane unscrollable).
+      e.preventDefault()
+      accum += t.clientY - lastY
+      lastY = t.clientY
+      const screen = host?.querySelector('.xterm-screen')
+      if (!screen) return
+      while (Math.abs(accum) >= PX_PER_NOTCH) {
+        const step = accum > 0 ? PX_PER_NOTCH : -PX_PER_NOTCH
+        accum -= step
+        // Drag down reveals earlier output: positive deltaY scrolls xterm up.
+        screen.dispatchEvent(new WheelEvent('wheel', {
+          deltaY: step, deltaMode: 0, clientX: t.clientX, clientY: t.clientY,
+          bubbles: true, cancelable: true,
+        }))
+      }
+    }
+    function onTouchEnd() { active = false; accum = 0 }
+    host.addEventListener('touchstart', onTouchStart, { passive: true })
+    host.addEventListener('touchmove', onTouchMove, { passive: false })
+    host.addEventListener('touchend', onTouchEnd, { passive: true })
+    host.addEventListener('touchcancel', onTouchEnd, { passive: true })
+    return () => {
+      host.removeEventListener('touchstart', onTouchStart)
+      host.removeEventListener('touchmove', onTouchMove)
+      host.removeEventListener('touchend', onTouchEnd)
+      host.removeEventListener('touchcancel', onTouchEnd)
+    }
+  }, [hostRef])
+
   useEffect(() => {
     const onInput = (e: Event) => {
       const ws = wsRef.current

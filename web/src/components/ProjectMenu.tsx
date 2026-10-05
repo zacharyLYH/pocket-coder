@@ -11,8 +11,8 @@ import type { Project } from '@/lib/types'
 
 // Per-project menu: shortcuts + harnesses live here, not on home.
 // The row itself navigates; this menu holds the rest.
-export function ProjectMenu({ project, projects, onChanged, navigate }: {
-  project: Project; projects: Project[]; onChanged: () => void; navigate: (to: string) => void
+export function ProjectMenu({ project, onChanged, navigate }: {
+  project: Project; onChanged: () => void; navigate: (to: string) => void
 }) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [harnessOpen, setHarnessOpen] = useState(false)
@@ -40,7 +40,7 @@ export function ProjectMenu({ project, projects, onChanged, navigate }: {
       <Dialog open={harnessOpen} onOpenChange={setHarnessOpen}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto rounded-xl sm:max-w-lg">
           <DialogHeader><DialogTitle>Harnesses for {project.id.split('/')[1] ?? project.id}</DialogTitle></DialogHeader>
-          <HarnessesCard projects={projects} initialProjectId={project.id} onInstalled={onChanged} onBusyChange={setHarnessBusy} />
+          <HarnessesCard project={project} onInstalled={onChanged} onBusyChange={setHarnessBusy} />
           {harnessBusy && <p className="text-sm text-muted-foreground">Working...</p>}
         </DialogContent>
       </Dialog>

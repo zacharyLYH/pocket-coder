@@ -27,8 +27,11 @@ export function usePullToRefresh(onRefresh?: () => void) {
   const startY = useRef(0)
   const delta = useRef(0)
   // Deliberately stiff: a refresh is a full reload, so the drag must
-  // travel well past a casual scroll.
-  const threshold = 110
+  // travel at least 1/3 of the viewport height — casual scrolls and
+  // short flicks never trigger it.
+  function threshold(): number {
+    return Math.max(110, window.innerHeight / 3)
+  }
 
   useEffect(() => {
     if (!('ontouchstart' in window)) return
@@ -50,7 +53,7 @@ export function usePullToRefresh(onRefresh?: () => void) {
     }
     function onTouchEnd(e: TouchEvent) {
       if (!isPullRefreshOptOut(e.target)) {
-        if (delta.current > threshold) window.location.reload()
+        if (delta.current > threshold()) window.location.reload()
       }
       startY.current = 0
       delta.current = 0

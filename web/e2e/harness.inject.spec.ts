@@ -4,8 +4,7 @@ import { FAKE_HARNESS_ID, FAKE_HARNESS_NAME, createProjectViaUI, deleteAllProjec
 // The project-menu injection flow, end to end against the real backend:
 //
 //   1. seed two projects via the UI, inject a harness into ONE of them via
-//      its project menu → Harnesses dialog (the picker defaults to that
-//      project only)
+//      its project menu → Harnesses dialog (scoped to that project only)
 //   2. verify only that project got the binary
 //   3. a NEW project is NOT auto-injected — injecting into just it works
 //   4. the home page's global Run card injects too (it runs the harness's
@@ -55,11 +54,12 @@ test.describe('harness injection orchestration', () => {
       const b = order1[1]
 
       // --- inject E2E Fake into ONLY the first project ---
+      // The dialog is scoped to the project whose menu opened it, so one
+      // Install click applies there and nowhere else.
       let dialog = await openHarnessDialog(page, a)
       const row = dialog.locator('div.flex.items-center.justify-between', { hasText: FAKE_HARNESS_NAME })
-      await row.getByRole('button', { name: 'Install…' }).click()
-      await dialog.getByRole('button', { name: /Install in 1 project/ }).click()
-      await expect(dialog.getByText('Applied to 1 project.')).toBeVisible({ timeout: 60_000 })
+      await row.getByRole('button', { name: 'Install', exact: true }).click()
+      await expect(dialog.getByTestId(`harness-installed-${FAKE_HARNESS_ID}`)).toBeVisible({ timeout: 60_000 })
       await page.keyboard.press('Escape')
 
       expect(await fakeInstalled(page.request, a)).toBe(true)
@@ -75,9 +75,8 @@ test.describe('harness injection orchestration', () => {
       // ...but injecting into just it works
       dialog = await openHarnessDialog(page, c)
       const row2 = dialog.locator('div.flex.items-center.justify-between', { hasText: FAKE_HARNESS_NAME })
-      await row2.getByRole('button', { name: 'Install…' }).click()
-      await dialog.getByRole('button', { name: /Install in 1 project/ }).click()
-      await expect(dialog.getByText('Applied to 1 project.')).toBeVisible({ timeout: 60_000 })
+      await row2.getByRole('button', { name: 'Install', exact: true }).click()
+      await expect(dialog.getByTestId(`harness-installed-${FAKE_HARNESS_ID}`)).toBeVisible({ timeout: 60_000 })
 
       expect(await fakeInstalled(page.request, c)).toBe(true)
       expect(await fakeInstalled(page.request, b)).toBe(false)

@@ -18,6 +18,7 @@ import (
 
 	"pcoder/internal/docker"
 	"pcoder/internal/harness"
+	"pcoder/internal/project"
 	"pcoder/internal/session"
 	dockermocks "pcoder/mocks/docker"
 )
@@ -636,6 +637,42 @@ func TestCreateHarnessSession(t *testing.T) {
 	if !sawLaunch {
 		t.Fatalf("no harness.launch event in %+v", evs)
 	}
+}
+
+// TestHarnessLaunchRecordsInstall pins the convergence this package owns: a
+// successful harness launch records the install in the project's state.json
+// entry — even when the binary arrived out-of-band (manual npm install,
+// reused home volume) and no explicit install call ever ran. Without this,
+// live truth (binary present, launch succeeds) and desired state (recorded
+// installs) diverge forever, and install-gated UI (the harnesses card)
+// disagrees with launch-gated UI (the session picker). Every other launch
+// test pre-records the install in setup, which is exactly how the gap went
+// unnoticed: nothing asserted the launch→record link itself.
+func TestHarnessLaunchRecordsInstall(t *testing.T) {
+	d, md, pinOut, st := newSessionDeps(t)
+	seedProject(t, st, "abc")
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
+	expectLaunch(md, "abc", "fake-1")
+
+	h := New(d)
+	cookie := loginCookie(t, h, pinOut)
+
+	// No install call and no RecordInstall in setup: the binary is simply
+	// present (the mock's `command -v` succeeds).
+	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"harnessId":"fake"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("launch: got %d %q, want 201", rec.Code, rec.Body)
+	}
+	p, err := project.Open(st).Get("abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hid := range p.Harnesses {
+		if hid == "fake" {
+			return
+		}
+	}
+	t.Fatalf("launch did not record the install: harnesses = %v", p.Harnesses)
 }
 
 func TestCreateHarnessSessionUnknownHarness404(t *testing.T) {

@@ -243,4 +243,49 @@ describe('TerminalView session management', () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 50)) })
     expect(ensurePosts().length).toBe(ensureCount)
   })
+
+  it('opts the terminal root out of pull-to-refresh and leaves pan to the browser', async () => {
+    renderView(baseHandler())
+
+    await waitFor(() => {
+      expect(fetchCalls.some(c => c.url.endsWith('/sessions') && c.method === 'GET')).toBe(true)
+    })
+
+    // Regression pin for the mobile bug (every terminal drag reloaded the
+    // page, and one-finger scroll never reached xterm): the root must opt
+    // out of the document-level pull handler, and the pane's touch-action
+    // must leave pan-x/pan-y to the browser — NOT touch-none/manipulation.
+    const root = screen.getByTestId('terminal-root')
+    expect(root.hasAttribute('data-no-pull-refresh')).toBe(true)
+    expect(root.className).not.toMatch(/touch-none/)
+    expect(root.className).not.toMatch(/touch-manipulation/)
+  })
+
+  it('pads the root when the visual viewport shrinks (keyboard opens over a long thread)', async () => {
+    // Playwright cannot open a real iOS/Android keyboard, so this pins the
+    // mechanism instead: a visualViewport resize (what
+    // interactive-widget=resizes-content fires when the keyboard opens)
+    // nudges the root with bottom padding so the focused input at the
+    // bottom of a long thread scrolls back into view.
+    const listeners = new Map<string, () => void>()
+    const vv = {
+      height: 800,
+      addEventListener: vi.fn((t: string, fn: () => void) => { listeners.set(t, fn) }),
+      removeEventListener: vi.fn((t: string) => { listeners.delete(t) }),
+    }
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: vv })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+    render(
+      <TerminalView projectId={PROJECT_ID} initialSession={SESSION} onBack={vi.fn()} onOpenPreview={vi.fn()} />
+    )
+    const root = screen.getByTestId('terminal-root')
+    // Keyboard opens: visual viewport shrinks 350px.
+    vv.height = 450
+    await act(async () => { listeners.get('resize')!() })
+    expect(root.style.paddingBottom).toBe('350px')
+    // Keyboard closes: padding clears.
+    vv.height = 800
+    await act(async () => { listeners.get('resize')!() })
+    expect(root.style.paddingBottom).toBe('')
+  })
 })

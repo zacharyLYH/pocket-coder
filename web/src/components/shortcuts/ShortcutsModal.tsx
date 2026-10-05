@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Pencil, Play, Plus, Search, Trash2 } from 'lucide-react'
+import { EllipsisVertical, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api, errMsg, projectPath } from '@/lib/api'
 import { useShortcuts } from '@/hooks/useShortcuts'
@@ -90,30 +91,41 @@ export function ShortcutsModal({ projectId, open, onOpenChange, onSaved, onRun }
                 )}
               </div>
             )}
+            {/* Rows are runnable only where onRun is wired (the terminal
+                modal); the home modal renders the same rows inert so nobody
+                expects a shortcut to execute from the home page. */}
             {rows.map((s, i) => form && form.id === s.id ? (
               <ShortcutForm key={s.id} name={form.name} text={form.text} index={i} busy={busy}
                 onName={(name) => setForm({ ...form, name })} onText={(text) => setForm({ ...form, text })}
                 onSubmit={submitForm} onCancel={() => { setForm(null); setError(null) }} submitLabel="Save" />
             ) : (
-              <div key={s.id} className="flex items-center gap-1 rounded-lg border px-2 py-1.5">
+              <div key={s.id} role={onRun ? 'button' : undefined} tabIndex={onRun ? 0 : undefined} aria-label={onRun ? `Run ${s.alias}` : undefined}
+                onClick={onRun ? () => onRun(s) : undefined}
+                onKeyDown={onRun ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRun(s) } } : undefined}
+                data-testid={onRun ? `sc-row-${s.alias}` : undefined}
+                className={`flex items-center gap-1 rounded-lg border px-2 py-1.5 ${onRun ? 'cursor-pointer hover:bg-accent/50' : ''}`}>
                 <div className="min-w-0 flex-1 px-1">
-                  <p className="truncate text-sm font-medium">{s.alias}</p>
-                  <p className="truncate font-mono text-xs text-muted-foreground">{shortcutText(s)}</p>
+                  <p className="text-sm font-medium wrap-break-word">{s.alias}</p>
+                  <p className="font-mono text-xs wrap-break-word text-muted-foreground">{shortcutText(s)}</p>
                 </div>
-                {onRun && (
-                  <Button variant="ghost" size="icon" aria-label={`Run ${s.alias}`} title={`Run ${s.alias}`}
-                    onClick={() => onRun(s)} data-testid={`sc-run-${s.alias}`} className="size-11 shrink-0 text-primary hover:text-primary">
-                    <Play className="size-4" />
-                  </Button>
-                )}
-                <Button variant="ghost" size="icon" aria-label={`Edit ${s.alias}`}
-                  onClick={() => { setError(null); setForm({ id: s.id, name: s.alias, text: shortcutText(s) }) }} className="size-11 shrink-0">
-                  <Pencil className="size-4" />
-                </Button>
-                <Button variant="ghost" size="icon" aria-label={`Delete ${s.alias}`} disabled={busy}
-                  onClick={() => void persist(shortcuts.filter((r) => r.id !== s.id))} data-testid={`sc-delete-${i}`} className="size-11 shrink-0 text-destructive hover:text-destructive">
-                  <Trash2 className="size-4" />
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" aria-label={`Manage ${s.alias}`} data-testid={`sc-menu-${s.alias}`} className="size-11 shrink-0"
+                      onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                      <EllipsisVertical className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onSelect={() => { setError(null); setForm({ id: s.id, name: s.alias, text: shortcutText(s) }) }}>
+                      <Pencil className="size-4" /> Edit
+                    </DropdownMenuItem>
+                    <DropdownMenuItem variant="destructive" disabled={busy}
+                      onSelect={() => void persist(shortcuts.filter((r) => r.id !== s.id))}>
+                      <Trash2 className="size-4" /> Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             ))}
             {!form && rows.length > 0 && (

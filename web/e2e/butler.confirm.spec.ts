@@ -15,7 +15,7 @@ test.describe('butler refusal', () => {
   test('code ask shows refusal plus redirect', async ({ page }) => {
     const refusal = 'Sorry, I am firewalled from reading source code by design. For source code related queries, ask your own LLM or CodeMaps.'
     await mockButlerThreads(page, [{ prompt: 'read main.go', answer: refusal }])
-    await mockButlerTurn(page, { answer: refusal })
+    await mockButlerTurn(page)
     await openSheet(page)
     await page.getByTestId('butler-prompt').fill('read main.go')
     await page.getByTestId('butler-send').click()
@@ -35,7 +35,7 @@ test.describe('butler confirm card', () => {
     const applied: string[] = []
     const discarded: string[] = []
     await mockButlerThreads(page)
-    await mockButlerTurn(page, { answer: 'Tap Confirm to stop a/b.', confirms: [stopCard] })
+    await mockButlerTurn(page)
     // Server truth after the turn: the card lives on the thread until resolved.
     await page.route(/\/api\/butler\/threads\/[^/?]+$/, async (route) => {
       await route.fulfill({
@@ -76,7 +76,7 @@ test.describe('butler confirm card', () => {
       blastRadius: 'This removes the container, its 3 sessions, both volumes, and the project record.',
     }
     await mockButlerThreads(page)
-    await mockButlerTurn(page, { answer: 'This would delete the project.', confirms: [deleteCard] })
+    await mockButlerTurn(page)
     await page.route(/\/api\/butler\/threads\/[^/?]+$/, async (route) => {
       await route.fulfill({
         status: 200, contentType: 'application/json',

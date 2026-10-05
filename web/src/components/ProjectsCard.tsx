@@ -45,7 +45,7 @@ export function ProjectsCard({ projects, loading, error, refresh, navigate, onBu
               <span className="block truncate font-medium underline-offset-4 hover:underline">{p.id.split('/')[1] ?? p.id}</span>
               <span className="block truncate font-mono text-xs text-muted-foreground">{p.id}</span>
             </button>
-            <ProjectMenu project={p} projects={projects} onChanged={() => { void refresh() }} navigate={navigate} />
+            <ProjectMenu project={p} onChanged={() => { void refresh() }} navigate={navigate} />
           </div>
         ))}
         <details className="mx-2 mt-1 rounded-xl bg-muted/50" {...(projects.length === 0 ? { open: true } : {})}>

@@ -71,5 +71,67 @@ test.describe('terminal scroll', () => {
     // frames carrying arrow escapes may escape during the scroll gestures.
     const scrollInputs = clientFrames.slice(framesBefore).filter((f) => f.includes('"input"'))
     expect(scrollInputs.filter((f) => f.includes('\\u001b[A') || f.includes('\\u001b[B'))).toEqual([])
+    await expect(page).toHaveScreenshot('terminal-scroll.png')
+  })
+
+})
+
+// Regression pin for the mobile bug: xterm has no touch scrolling of its
+// own, so the pane bridges a one-finger drag into wheel events — and the
+// terminal opts out of the document-level pull handler so the drag never
+// reloads the page.
+test.describe('terminal scroll (mobile)', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+
+  async function touchDrag(page: import('@playwright/test').Page, deltaY: number) {
+    await page.evaluate((dy) => {
+      const screen = document.querySelector('.xterm-screen') as HTMLElement
+      const r = screen.getBoundingClientRect()
+      const x = r.x + r.width / 2
+      const t = (y: number): Touch =>
+        new Touch({ identifier: 5, target: screen, clientX: x, clientY: y, screenX: x, screenY: y })
+      const fire = (type: string, y: number, touches: Touch[]) =>
+        screen.dispatchEvent(new TouchEvent(type, { touches, targetTouches: touches, changedTouches: [t(y)], bubbles: true, cancelable: true }))
+      const sy = r.y + r.height / 2
+      fire('touchstart', sy, [t(sy)])
+      const step = dy > 0 ? 20 : -20
+      for (let y = sy + step; dy > 0 ? y <= sy + dy : y >= sy + dy; y += step) fire('touchmove', y, [t(y)])
+      fire('touchend', sy + dy, [])
+    }, deltaY)
+  }
+
+  test('one-finger drag scrolls the pane instead of refreshing', async ({ page }) => {
+    await mockSessions(page)
+
+    await page.routeWebSocket(/\/ws\/projects\//, (ws) => {
+      let serverSent = false
+      ws.onMessage(() => {
+        if (!serverSent) {
+          serverSent = true
+          ws.send(JSON.stringify({ type: 'output', data: lines(1, 200) }))
+        }
+      })
+    })
+
+    await page.goto(terminalUrl(FAKE_ID, 'main'))
+    await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+    const rows = page.locator('.xterm-rows')
+    await expect.poll(() => rows.innerText(), { timeout: 15_000 }).toContain('SCROLL-LINE-200')
+    const bottomText = await rows.innerText()
+
+    // The pane opts out of the document-level pull handler.
+    const optedOut = await page.evaluate(() => !!document.querySelector('.xterm-screen')?.closest('[data-no-pull-refresh]'))
+    expect(optedOut).toBe(true)
+
+    // Drag down reveals earlier output…
+    await touchDrag(page, 300)
+    await expect.poll(() => rows.innerText(), { timeout: 10_000 }).not.toEqual(bottomText)
+    const scrolledText = await rows.innerText()
+    expect(scrolledText).not.toContain('SCROLL-LINE-200')
+    await expect(page).toHaveScreenshot('terminal-scroll-mobile.png')
+
+    // …and dragging back down returns to the latest output.
+    await touchDrag(page, -300)
+    await expect.poll(() => rows.innerText(), { timeout: 10_000 }).toContain('SCROLL-LINE-200')
   })
 })

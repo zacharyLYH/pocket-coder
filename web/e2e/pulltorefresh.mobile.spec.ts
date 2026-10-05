@@ -48,7 +48,11 @@ test.describe('pull-to-refresh (mobile)', () => {
 
     // The reload replaces the document — detect via navigation event.
     const reloadPromise = page.waitForLoadState('domcontentloaded')
-    await dispatchPull(page, 80, 120) // past the 72px threshold
+    // Threshold is 1/3 viewport height (≈281px at 844px) — a short 120px
+    // flick must NOT reload, a deep 400px drag must.
+    await dispatchPull(page, 80, 120) // short flick: no reload
+    await page.waitForTimeout(500)
+    await dispatchPull(page, 80, 400) // deep drag: reload
     await reloadPromise
 
     // After reload, the page should still render the home screen.
@@ -103,7 +107,7 @@ test.describe('pull-to-refresh (mobile)', () => {
     const stamp = Date.now()
     await page.evaluate((s) => { (window as unknown as { __pullTestMarker: number }).__pullTestMarker = s }, stamp)
 
-    // Touch-drag straight down from the FAB, past the 72px threshold.
+    // Touch-drag straight down from the FAB, past 1/3 viewport.
     await page.evaluate(() => {
       const el = document.querySelector('[data-testid="butler-fab"]')!
       const r = el.getBoundingClientRect()
@@ -118,8 +122,8 @@ test.describe('pull-to-refresh (mobile)', () => {
       }
       const sy = r.y + r.height / 2
       fire('touchstart', sy, [t(sy)])
-      for (let y = sy + 20; y <= sy + 140; y += 20) fire('touchmove', y, [t(y)])
-      fire('touchend', sy + 140, [])
+      for (let y = sy + 20; y <= sy + 400; y += 20) fire('touchmove', y, [t(y)])
+      fire('touchend', sy + 400, [])
     })
     await page.waitForTimeout(800)
 

@@ -1,15 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { HarnessesCard, ProjectPicker } from '@/components/HarnessesCard'
+import { HarnessesCard } from '@/components/HarnessesCard'
 import { mockFetch } from '@/test/mockFetch'
 
-// Unit tests for the harness/command orchestration card. The backend is
-// mocked at the fetch level: these tests exist to pin edge-case behavior
-// (selective application, error surfacing, empty states) fast — the real
-// backend path is covered by the Playwright suite. ProjectPicker, whose
-// selection logic lives entirely in service of this card, is tested here too.
+// Unit tests for the per-project harness card. The backend is mocked at the
+// fetch level: these tests pin the single-project behavior fast (Install
+// hits THIS project directly, no picker) — the real backend path is covered
+// by the Playwright suite.
 
-const PROJECTS = [{ id: 'x/alpha' }, { id: 'x/beta' }]
+const PROJECT = { id: 'x/alpha' }
 
 const HARNESS_RESPONSE = {
   harnesses: [
@@ -27,7 +26,7 @@ describe('HarnessesCard', () => {
   it('renders suggestions from the registry, hiding the bash shell', async () => {
     vi.stubGlobal('fetch', mockFetch((url) =>
       url === '/api/harnesses' ? { status: 200, body: HARNESS_RESPONSE } : undefined))
-    render(<HarnessesCard projects={PROJECTS} />)
+    render(<HarnessesCard project={{ id: 'x/alpha' }} />)
 
     expect(await screen.findByText('OpenCode')).toBeInTheDocument()
     expect(screen.getByText('npm i -g opencode-ai')).toBeInTheDocument()
@@ -36,27 +35,48 @@ describe('HarnessesCard', () => {
     expect(screen.getByText('no download needed')).toBeInTheDocument()
   })
 
-  it('shows Installed instead of the button when already everywhere', async () => {
+  it('shows Installed when already installed in this project', async () => {
     vi.stubGlobal('fetch', mockFetch((url) =>
       url === '/api/harnesses' ? { status: 200, body: HARNESS_RESPONSE } : undefined))
-    render(<HarnessesCard projects={[{ id: 'x/alpha', harnesses: ['opencode'] }]} />)
+    render(<HarnessesCard project={{ id: 'x/alpha', harnesses: ['opencode'] }} />)
 
     await screen.findByText('OpenCode')
     expect(screen.getByText('Installed')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Install…' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument()
   })
 
-  it('keeps the Install button when only some projects have it', async () => {
-    vi.stubGlobal('fetch', mockFetch((url) =>
-      url === '/api/harnesses' ? { status: 200, body: HARNESS_RESPONSE } : undefined))
-    render(<HarnessesCard projects={[{ id: 'x/alpha', harnesses: ['opencode'] }, { id: 'x/beta' }]} />)
+  it('shows Installed from the live probe even when the record is empty', async () => {
+    // Regression: binaries can exist in the container without a state.json
+    // record (manual npm install, reused home volume). The per-project probe
+    // is live truth — the row must show Installed, not an Install button.
+    vi.stubGlobal('fetch', mockFetch((url) => {
+      if (url === '/api/harnesses') return { status: 200, body: HARNESS_RESPONSE }
+      if (url === '/api/projects/x%2Fbeta/harnesses') {
+        return {
+          status: 200,
+          body: { harnesses: [{ id: 'opencode', name: 'OpenCode', command: 'opencode', installed: true }] },
+        }
+      }
+      return undefined
+    }))
+    render(<HarnessesCard project={{ id: 'x/beta' }} />)
 
     await screen.findByText('OpenCode')
-    expect(screen.getByRole('button', { name: 'Install…' })).toBeInTheDocument()
+    expect(screen.getByText('Installed')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the Install button when this project lacks it', async () => {
+    vi.stubGlobal('fetch', mockFetch((url) =>
+      url === '/api/harnesses' ? { status: 200, body: HARNESS_RESPONSE } : undefined))
+    render(<HarnessesCard project={{ id: 'x/beta' }} />)
+
+    await screen.findByText('OpenCode')
+    expect(screen.getByRole('button', { name: 'Install' })).toBeInTheDocument()
     expect(screen.queryByText('Installed')).not.toBeInTheDocument()
   })
 
-  it('applies an install to exactly the checked projects', async () => {
+  it('installs straight into this project — one click, no picker', async () => {
     const fetchMock = mockFetch((url) => {
       if (url === '/api/harnesses') return { status: 200, body: HARNESS_RESPONSE }
       if (url === '/api/harnesses/opencode/install') {
@@ -65,37 +85,32 @@ describe('HarnessesCard', () => {
       return undefined
     })
     vi.stubGlobal('fetch', fetchMock)
-    render(<HarnessesCard projects={PROJECTS} />)
+    render(<HarnessesCard project={{ id: 'x/beta' }} onInstalled={vi.fn()} />)
 
-    // open the picker (both pre-checked), uncheck alpha, apply to beta only
+    // Install hits this project directly — no picker opens.
     await screen.findByText('OpenCode')
-    fireEvent.click(screen.getByRole('button', { name: 'Install…' }))
-    // picker root: the bordered box that contains the project labels
-    const picker = screen.getByText('x/alpha').closest('div.rounded-md')!
-    fireEvent.click(picker.querySelectorAll('label input')[0]!)
-    fireEvent.click(screen.getByRole('button', { name: /Install in 1 project/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
 
-    await screen.findByText('Applied to 1 project.')
+    await screen.findByText('Installed.')
     const call = fetchMock.mock.calls.find(([u]) => String(u).includes('/install'))
     expect(JSON.parse(String(call![1]?.body)).projectIds).toEqual(['x/beta'])
   })
 
-  it('surfaces per-project install errors as errors, not success', async () => {
+  it('surfaces install errors as errors, not success', async () => {
     vi.stubGlobal('fetch', mockFetch((url) => {
       if (url === '/api/harnesses') return { status: 200, body: HARNESS_RESPONSE }
       if (url === '/api/harnesses/opencode/install') {
         return {
           status: 200,
-          body: { results: [{ project: 'x/alpha', status: 'error', detail: 'npm ERR! network unreachable' }] },
+          body: { results: [{ project: 'x/beta', status: 'error', detail: 'npm ERR! network unreachable' }] },
         }
       }
       return undefined
     }))
-    render(<HarnessesCard projects={PROJECTS} />)
+    render(<HarnessesCard project={{ id: 'x/beta' }} />)
 
     await screen.findByText('OpenCode')
-    fireEvent.click(screen.getByRole('button', { name: 'Install…' }))
-    fireEvent.click(screen.getByRole('button', { name: /Install in 2 project/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
 
     const msg = await screen.findByText(/npm ERR! network unreachable/)
     expect(msg).toHaveClass('text-destructive')
@@ -118,7 +133,7 @@ describe('HarnessesCard', () => {
       return undefined
     })
     vi.stubGlobal('fetch', fetchMock)
-    render(<HarnessesCard projects={PROJECTS} />)
+    render(<HarnessesCard project={PROJECT} />)
 
     await screen.findByText('OpenCode')
     fireEvent.click(screen.getByRole('button', { name: 'Add harness' }))
@@ -151,14 +166,13 @@ describe('HarnessesCard', () => {
       return undefined
     })
     vi.stubGlobal('fetch', fetchMock)
-    render(<HarnessesCard projects={[{ id: 'x/alpha', harnesses: ['opencode'] }]} />)
+    render(<HarnessesCard project={{ id: 'x/alpha', harnesses: ['opencode'] }} />)
 
-    // badge shows the upgrade path, Update opens the picker pre-checked
+    // badge shows the upgrade path, Update re-installs straight into this project
     expect(await screen.findByTestId('harness-update-badge-opencode')).toHaveTextContent('0.9.0 → 0.10.0')
     fireEvent.click(screen.getByTestId('harness-update-opencode'))
-    fireEvent.click(screen.getByRole('button', { name: /Update in 1 project/ }))
 
-    await screen.findByText('Applied to 1 project.')
+    await screen.findByText('Installed.')
     const call = fetchMock.mock.calls.find(([u]) => String(u).includes('/install'))
     expect(JSON.parse(String(call![1]?.body)).projectIds).toEqual(['x/alpha'])
   })
@@ -169,44 +183,10 @@ describe('HarnessesCard', () => {
       if (url.includes('/update-check')) return { status: 409, body: { error: 'start a project first' } }
       return undefined
     }))
-    render(<HarnessesCard projects={[{ id: 'x/alpha', harnesses: ['opencode'] }]} />)
+    render(<HarnessesCard project={{ id: 'x/alpha', harnesses: ['opencode'] }} />)
 
     await screen.findByText('OpenCode')
     await waitFor(() => expect(screen.getByText('Installed')).toBeInTheDocument())
     expect(screen.queryByTestId('harness-update-opencode')).not.toBeInTheDocument()
-  })
-})
-
-describe('ProjectPicker', () => {
-  it('apply is disabled with nothing selected and enabled otherwise', () => {
-    const projects = [{ id: 'x/alpha' }, { id: 'x/beta' }]
-    const base = { projects, onToggle: () => {}, busy: false, onApply: vi.fn(), onCancel: () => {} }
-
-    const { unmount } = render(<ProjectPicker {...base} picked={{ 'x/alpha': false, 'x/beta': false }} applyLabel="Install in 0 project(s)" />)
-    expect(screen.getByRole('button', { name: /Install in 0/ })).toBeDisabled()
-    unmount()
-
-    render(<ProjectPicker {...base} picked={{ 'x/alpha': true, 'x/beta': false }} applyLabel="Install in 1 project(s)" />)
-    fireEvent.click(screen.getByRole('button', { name: /Install in 1 project/ }))
-    expect(base.onApply).toHaveBeenCalledTimes(1)
-  })
-
-  it('installed projects are shown as Installed and cannot be toggled', () => {
-    const projects = [{ id: 'x/alpha' }, { id: 'x/beta' }]
-    const base = {
-      projects,
-      picked: { 'x/alpha': false, 'x/beta': true },
-      onToggle: vi.fn(),
-      busy: false,
-      onApply: vi.fn(),
-      onCancel: () => {},
-      installed: { 'x/alpha': true, 'x/beta': false },
-      applyLabel: 'Install in 1 project(s)',
-    }
-    render(<ProjectPicker {...base} />)
-    expect(screen.getByText('Installed')).toBeInTheDocument()
-    const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[]
-    expect(checkboxes[0].disabled).toBe(true) // alpha is installed
-    expect(checkboxes[1].disabled).toBe(false)
   })
 })

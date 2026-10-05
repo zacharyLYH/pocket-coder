@@ -21,8 +21,10 @@ test.describe('shortcuts', () => {
       const dialog = page.getByRole('dialog')
       await expect(dialog).toBeVisible()
       await dialog.getByTestId('sc-add').click()
-      await dialog.getByTestId('sc-alias-0').fill('dev')
-      await dialog.getByTestId('sc-command-0').fill('npm run dev -- --host 0.0.0.0 --port 3000')
+      // New projects ship default shortcuts, so the add form's row index is
+      // not 0 — target its labelled inputs instead of an index.
+      await dialog.getByLabel('Shortcut name').fill('dev')
+      await dialog.getByLabel('Shortcut value').fill('npm run dev -- --host 0.0.0.0 --port 3000')
       await expect(dialog).toHaveScreenshot('shortcuts-modal.png')
       await dialog.getByTestId('sc-save').click()
       // Instant save: the row appears, the dialog stays open.
@@ -55,9 +57,10 @@ test.describe('shortcuts', () => {
       await page.getByTestId('tab-shortcuts').click()
       const dialog = page.getByRole('dialog')
       await expect(dialog).toBeVisible()
-      await expect(dialog.getByTestId('sc-run-hello')).toBeVisible()
+      // Row tap runs: no separate play button on the terminal modal.
+      await expect(dialog.getByTestId('sc-row-hello')).toBeVisible()
       await expect(page).toHaveScreenshot('shortcuts-modal-run.png')
-      await dialog.getByTestId('sc-run-hello').click()
+      await dialog.getByTestId('sc-row-hello').click()
       await expect(dialog).not.toBeVisible({ timeout: 5_000 })
       await expect(page.locator('.xterm-rows')).toContainText('hello-quick', { timeout: 10_000 })
       await expect(page).toHaveScreenshot('shortcuts-inject.png', { fullPage: true })
@@ -84,13 +87,21 @@ test.describe('shortcuts', () => {
       const dialog = page.getByRole('dialog')
       await expect(dialog).toBeVisible()
       await expect(dialog).toHaveScreenshot('shortcuts-update-before.png')
-      // update a, delete b (both save instantly)
-      await dialog.getByRole('button', { name: 'Edit a' }).click()
+      // update a, delete b (both save instantly) — edit/delete hide behind
+      // the row's ⋮ menu; home rows are NOT clickable (no run from home —
+      // that would confuse: shortcuts execute in the terminal only).
+      await expect(dialog.getByTestId('sc-row-a')).toHaveCount(0)
+      await expect(dialog.getByRole('button', { name: 'Run a' })).toHaveCount(0)
+      await dialog.getByTestId('sc-menu-a').click()
+      await page.getByRole('menuitem', { name: 'Edit' }).click()
       await dialog.getByTestId('sc-command-0').fill('echo a-updated')
       await dialog.getByTestId('sc-save').click()
       await expect(dialog.getByText('echo a-updated')).toBeVisible()
-      await dialog.getByTestId('sc-delete-1').click()
+      await dialog.getByTestId('sc-menu-b').click()
+      await page.getByRole('menuitem', { name: 'Delete' }).click()
       await expect(dialog.getByText('echo b')).not.toBeVisible({ timeout: 5_000 })
+      // Row tap = run: alias + command wrap (no ellipsis) on narrow screens.
+      await expect(dialog).toHaveScreenshot('shortcuts-update-wrapped.png')
       await dialog.press('Escape')
       await expect(dialog).not.toBeVisible({ timeout: 5_000 })
       const body = (await (await request.get(`/api/projects/${projectURL(id)}`)).json()) as { shortcuts: { alias: string; command: string }[] }

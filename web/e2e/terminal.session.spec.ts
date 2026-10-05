@@ -71,9 +71,9 @@ test.describe('session switcher', () => {
     await page.getByRole('menuitem', { name: /Harnesses/ }).click()
     const hdialog = page.getByRole('dialog')
     const row = hdialog.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
-    await row.getByRole('button', { name: 'Install…' }).click()
-    await hdialog.getByRole('button', { name: /Install in 1 project/ }).click()
-    await expect(hdialog.getByText('Applied to 1 project.')).toBeVisible({ timeout: 300_000 })
+    // Scoped dialog: Install hits this project directly, no picker.
+    await row.getByRole('button', { name: 'Install', exact: true }).click()
+    await expect(hdialog.getByText('Installed.')).toBeVisible({ timeout: 300_000 })
     await page.keyboard.press('Escape')
     await expect(hdialog).not.toBeVisible({ timeout: 5_000 })
     await page.getByRole('button', { name: 'Terminal' }).click()

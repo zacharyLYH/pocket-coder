@@ -104,6 +104,7 @@ func TestLineageShapeButler(t *testing.T) {
 	if tid == "" {
 		t.Fatalf("missing threadId: %v", last)
 	}
+	waitThreadSettled(t, h, cookie, tid)
 	th, err := d.Butler.Get(butlerScope, tid)
 	if err != nil || len(th.Turns) != 1 {
 		t.Fatalf("turns = %+v, err=%v", th.Turns, err)

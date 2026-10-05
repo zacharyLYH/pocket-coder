@@ -1,53 +1,66 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { api, errMsg } from '@/lib/api'
+import { api, errMsg, projectPath } from '@/lib/api'
 import { isLaunchable } from '@/lib/types'
 import type { ExecResult, Harness, Project } from '@/lib/types'
 
 type RowMsg = { kind: 'ok' | 'error'; text: string }
 
-// Harnesses card: the agent-CLI catalog plus the command box — the one place
-// where users orchestrate what runs in which projects. Everything is
-// explicit and synchronous: pick the projects, the work happens now, and
-// per-project results (or errors) surface right here. New projects are
-// never auto-injected — they appear in the pickers and the user decides.
-export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyChange }: { projects: Project[]; initialProjectId?: string; onInstalled?: () => void; onBusyChange?: (busy: boolean) => void }) {
+// Harnesses card: the agent-CLI catalog for ONE project — this dialog always
+// opens from a single project's menu, so Install/Update applies straight to
+// that project. No project picker: harnesses are a per-project property, and
+// opening this dialog for a project means you want the harness in THIS
+// project. Update checks probe this project's container only.
+export function HarnessesCard({ project, onInstalled, onBusyChange }: { project: Project; onInstalled?: () => void; onBusyChange?: (busy: boolean) => void }) {
   const [harnesses, setHarnesses] = useState<Harness[]>([])
-  const [pickerFor, setPickerFor] = useState<string | null>(null) // harness id or 'command'
-  const [picked, setPicked] = useState<Record<string, boolean>>({})
+  const [liveInstalled, setLiveInstalled] = useState<Record<string, boolean>>({})
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [rowMsg, setRowMsg] = useState<Record<string, RowMsg | undefined>>({})
   const [addOpen, setAddOpen] = useState(false)
   const [updates, setUpdates] = useState<Record<string, { current: string; latest: string }>>({})
-  const [pickerMode, setPickerMode] = useState<'install' | 'update'>('install')
 
-  function installedIn(harnessId: string) {
-    return projects.filter((p) => isInstalled(p.id, harnessId)).map((p) => p.id)
+  // Installed is true when EITHER source says so: the project's recorded
+  // list (state.json desired state) or the live container probe. Binaries
+  // can exist without a record — manual installs in the terminal, binaries
+  // surviving on a reused home volume — and the probe is the only ground
+  // truth for those, so it must be able to mark a row Installed on its own.
+  function isInstalled(harnessId: string) {
+    return (project.harnesses ?? []).includes(harnessId) || !!liveInstalled[harnessId]
   }
 
-  function load() {
+  const load = useCallback(() => {
     api<{ harnesses: Harness[] }>('/api/harnesses')
       .then((data) => {
         setHarnesses(data.harnesses)
       })
       .catch(() => {})
-  }
+    // One round trip for the whole registry's live state in THIS project.
+    // A stopped project (or any probe failure) leaves the map empty and the
+    // recorded list alone — never hide an Installed row on a probe error.
+    api<{ harnesses: { id: string; installed: boolean }[] }>(projectPath(project.id, '/harnesses'))
+      .then((data) => {
+        const next: Record<string, boolean> = {}
+        for (const h of data.harnesses) {
+          if (h.installed) next[h.id] = true
+        }
+        setLiveInstalled(next)
+      })
+      .catch(() => {})
+  }, [project.id])
 
-  // Update checks run against installed harnesses only: one probe per
-  // harness inside a running container, all in parallel. The map is rebuilt
-  // whole each run so cleared conditions drop their badge. Anything
-  // unavailable (no npm package, nothing running) stays silent.
+  // Update checks run against this project's container only: one probe per
+  // harness, all in parallel. The map is rebuilt whole each run so cleared
+  // conditions drop their badge. Anything unavailable (no npm package,
+  // project stopped) stays silent.
   async function checkUpdates(list: Harness[]) {
     const settled = await Promise.allSettled(list.map(async (h) => {
-      if (!h.install) return null
-      const ids = installedIn(h.id)
-      if (ids.length === 0) return null
+      if (!h.install || !isInstalled(h.id)) return null
       const d = await api<{ current?: string; latest?: string; updateAvailable?: boolean }>(
         `/api/harnesses/${h.id}/update-check`,
-        { method: 'POST', body: JSON.stringify({ projectIds: ids }) },
+        { method: 'POST', body: JSON.stringify({ projectIds: [project.id] }) },
       )
       return d.updateAvailable && d.current && d.latest ? { id: h.id, current: d.current, latest: d.latest } : null
     }))
@@ -58,89 +71,55 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
     setUpdates(fresh)
   }
 
-  useEffect(() => { load() }, [])
+  // One fetch per mount/project — not per render. (The previous version
+  // had no dependency array here, so every setState re-render re-fired the
+  // update checks and doubled the install-probe traffic.)
+  useEffect(() => { load() }, [load])
 
   const checkedKey = useRef('')
   useEffect(() => {
-    if (harnesses.length === 0 || projects.length === 0) return
-    const key = harnesses.map((h) => `${h.id}:${installedIn(h.id).join('+')}`).join(',')
+    if (harnesses.length === 0) return
+    const key = harnesses.map((h) => `${h.id}:${isInstalled(h.id)}`).join(',') + `|${project.id}`
     if (checkedKey.current === key) return
     checkedKey.current = key
     void checkUpdates(harnesses)
-  })
+  }, [harnesses, project.id, project.harnesses, liveInstalled])
 
   useEffect(() => { onBusyChange?.(busyKey !== null) }, [busyKey, onBusyChange])
 
-  function isInstalled(projectId: string, harnessId: string) {
-    const p = projects.find((x) => x.id === projectId)
-    return !!p?.harnesses?.includes(harnessId)
-  }
-
-  function openPicker(key: string) {
-    setPickerMode('install')
-    // from a project menu the run is scoped to that project; the picker can widen it
-    if (initialProjectId) {
-      setPicked({ [initialProjectId]: true })
-      setRowMsg((m) => ({ ...m, [key]: undefined }))
-      setPickerFor((cur) => (cur === key ? null : key))
-      return
-    }
-    // default to every project selected except those already installed
-    const all: Record<string, boolean> = {}
-    for (const p of projects) {
-      if (isInstalled(p.id, key)) continue
-      all[p.id] = true
-    }
-    setPicked(all)
-    setRowMsg((m) => ({ ...m, [key]: undefined }))
-    setPickerFor((cur) => (cur === key ? null : key))
-  }
-
-  // Update path: the check found a newer registry version, so the picker
-  // opens with the installed projects checked — Update re-runs install.
-  function openUpdatePicker(h: Harness) {
-    setPickerMode('update')
-    const ids = installedIn(h.id)
-    setPicked(Object.fromEntries(ids.map((id) => [id, true])))
-    setRowMsg((m) => ({ ...m, [h.id]: undefined }))
-    setPickerFor(h.id)
-  }
-
-  function summarize(key: string, results: ExecResult[]) {
-    const failed = results.filter((r) => r.status === 'error')
-    const skipped = results.filter((r) => r.status === 'skipped')
-    const okCount = results.filter((r) => r.status === 'ok').length
-    let msg: RowMsg
-    if (failed.length > 0) {
-      msg = { kind: 'error', text: failed.map((f) => `${f.project}: ${f.detail}`).join(' · ') }
-    } else if (results.length === 0) {
-      msg = { kind: 'ok', text: 'Nothing to do — no projects selected.' }
-    } else {
-      const skipNote = skipped.length > 0 ? ` (skipped ${skipped.length} stopped)` : ''
-      msg = { kind: 'ok', text: `Applied to ${okCount} project${okCount === 1 ? '' : 's'}${skipNote}.` }
-    }
-    setRowMsg((m) => ({ ...m, [key]: msg }))
-  }
-
-  async function applyToProjects(key: string, url: string, body: object) {
-    const projectIds = Object.entries(picked).filter(([, on]) => on).map(([id]) => id)
-    setBusyKey(key)
+  // Install/update applies straight to this project — the dialog only ever
+  // opens from one project's menu, so there is nothing to pick. The button
+  // disables while the round-trip is in flight; the card re-reads which
+  // harnesses this project has afterwards so Installed shows immediately.
+  async function applyHarness(harnessId: string) {
+    setBusyKey(harnessId)
+    setRowMsg((m) => ({ ...m, [harnessId]: undefined }))
     try {
-      const data = await api<{ results?: ExecResult[] }>(url, {
+      const data = await api<{ results?: ExecResult[] }>(`/api/harnesses/${harnessId}/install`, {
         method: 'POST',
-        body: JSON.stringify({ projectIds, ...body }),
+        body: JSON.stringify({ projectIds: [project.id] }),
       })
-      summarize(key, (data.results ?? []) as ExecResult[])
-      setPickerFor(null)
-      setUpdates((u) => {
-        if (!(key in u)) return u
-        const next = { ...u }
-        delete next[key]
-        return next
-      })
-      onInstalled?.()
+      const r = (data.results ?? [])[0]
+      const msg: RowMsg | undefined = r?.status === 'ok'
+        ? { kind: 'ok', text: 'Installed.' }
+        : { kind: 'error', text: r ? `${r.project}: ${r.detail ?? r.status}` : 'install failed' }
+      setRowMsg((m) => ({ ...m, [harnessId]: msg }))
+      if (r?.status === 'ok') {
+        // Drop the update badge; flip the row to "Installed" immediately
+        // from live truth (the parent refresh re-reads the recorded list,
+        // which converges via the same install). Either source shows
+        // Installed, so the row is correct during the gap too.
+        setLiveInstalled((m) => ({ ...m, [harnessId]: true }))
+        setUpdates((u) => {
+          if (!(harnessId in u)) return u
+          const next = { ...u }
+          delete next[harnessId]
+          return next
+        })
+        onInstalled?.()
+      }
     } catch (err) {
-      setRowMsg((m) => ({ ...m, [key]: { kind: 'error', text: errMsg(err) } }))
+      setRowMsg((m) => ({ ...m, [harnessId]: { kind: 'error', text: errMsg(err) } }))
     } finally {
       setBusyKey(null)
     }
@@ -154,10 +133,10 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
           <p className="text-muted-foreground text-sm">No harnesses yet.</p>
         )}
         {suggestions.map((h) => {
-          // Installed everywhere shown → nothing left to do: no button.
-          // Otherwise the button stays so the remaining projects can be
-          // covered (the picker marks the installed ones).
-          const fullyInstalled = projects.length > 0 && projects.every((p) => isInstalled(p.id, h.id))
+          // This dialog is scoped to one project: installed here → nothing
+          // left to do; otherwise Install/Update hits this project directly.
+          const installed = isInstalled(h.id)
+          const busy = busyKey === h.id
           return (
           <div key={h.id} className="flex flex-col">
             <div className="flex items-center justify-between gap-2 text-sm">
@@ -171,7 +150,7 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
               </div>
               {!h.install ? (
                 <span className="shrink-0 text-muted-foreground text-xs">no download needed</span>
-              ) : fullyInstalled ? (
+              ) : installed ? (
                 updates[h.id] ? (
                   <span className="flex shrink-0 items-center gap-2">
                     <span className="text-xs text-muted-foreground" data-testid={`harness-update-badge-${h.id}`}>
@@ -182,39 +161,28 @@ export function HarnessesCard({ projects, initialProjectId, onInstalled, onBusyC
                       variant="outline"
                       className="shrink-0"
                       disabled={busyKey !== null}
-                      onClick={() => openUpdatePicker(h)}
+                      onClick={() => void applyHarness(h.id)}
                       data-testid={`harness-update-${h.id}`}
                     >
-                      {busyKey === h.id ? 'Updating…' : 'Update'}
+                      {busy ? 'Updating…' : 'Update'}
                     </Button>
                   </span>
                 ) : (
-                  <span className="shrink-0 text-muted-foreground text-xs">Installed</span>
+                  <span className="shrink-0 text-muted-foreground text-xs" data-testid={`harness-installed-${h.id}`}>Installed</span>
                 )
               ) : (
                 <Button
                   size="sm"
-                  variant={pickerFor === h.id ? 'secondary' : 'outline'}
+                  variant="outline"
                   className="shrink-0"
                   disabled={busyKey !== null}
-                  onClick={() => openPicker(h.id)}
+                  onClick={() => void applyHarness(h.id)}
+                  data-testid={`harness-install-${h.id}`}
                 >
-                  {busyKey === h.id ? 'Installing…' : 'Install…'}
+                  {busy ? 'Installing…' : 'Install'}
                 </Button>
               )}
             </div>
-            {pickerFor === h.id && (
-              <ProjectPicker
-                projects={projects}
-                picked={picked}
-                onToggle={(id) => setPicked((p) => ({ ...p, [id]: !p[id] }))}
-                busy={busyKey !== null}
-                installed={Object.fromEntries(projects.map((p) => [p.id, isInstalled(p.id, h.id)]))}
-                applyLabel={`${pickerMode === 'update' ? 'Update' : 'Install'} in ${Object.values(picked).filter(Boolean).length} project(s)`}
-                onApply={() => applyToProjects(h.id, `/api/harnesses/${h.id}/install`, {})}
-                onCancel={() => setPickerFor(null)}
-              />
-            )}
             {rowMsg[h.id] && <RowResult msg={rowMsg[h.id]!} />}
           </div>
           )
@@ -236,50 +204,6 @@ function RowResult({ msg }: { msg: RowMsg }) {
     <p className={`max-h-24 overflow-auto break-all text-xs ${msg.kind === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
       {msg.text}
     </p>
-  )
-}
-
-// ProjectPicker is the multi-select used by harness installs and the
-// command box: check the projects a run should touch, then apply. All
-// projects start checked; unchecking is how a run gets scoped.
-export function ProjectPicker({ projects, picked, onToggle, busy, applyLabel, onApply, onCancel, installed }: {
-  projects: Project[]
-  picked: Record<string, boolean>
-  onToggle: (id: string) => void
-  busy: boolean
-  applyLabel: string
-  onApply: () => void
-  onCancel: () => void
-  installed?: Record<string, boolean>
-}) {
-  const count = Object.values(picked).filter(Boolean).length
-  return (
-    <div className="mt-1 flex flex-col gap-1.5 rounded-md border bg-muted/40 p-2">
-      {projects.map((p) => {
-        const isInstalled = !!installed?.[p.id]
-        return (
-          <label key={p.id} className="flex cursor-pointer items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={!!picked[p.id]}
-              onChange={() => onToggle(p.id)}
-              disabled={busy || isInstalled}
-              className="accent-primary"
-            />
-            <span title={p.id} className="min-w-0 flex-1 truncate">{p.id}</span>
-            {isInstalled && <span className="ml-auto shrink-0 text-muted-foreground">Installed</span>}
-          </label>
-        )
-      })}
-      <div className="mt-1 flex gap-2">
-        <Button type="button" size="sm" disabled={busy || count === 0} onClick={onApply}>
-          {busy ? 'Working…' : applyLabel}
-        </Button>
-        <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onCancel}>
-          Cancel
-        </Button>
-      </div>
-    </div>
   )
 }
 

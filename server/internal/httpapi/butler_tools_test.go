@@ -338,10 +338,10 @@ func TestButlerScopeGateRefuses(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	rec := butlerPost(t, h, cookie, `{"prompt":"read main.go for me"}`, http.StatusOK)
-	last := finalBody(t, rec)
-	if last["answer"] != prompt.ButlerRefusal {
-		t.Fatalf("answer = %v, want the pinned refusal", last["answer"])
+	tid := postButlerTurn(t, h, cookie, `{"prompt":"read main.go for me"}`)
+	settled := waitThreadSettled(t, h, cookie, tid)
+	if got := settledTurnAnswer(t, settled); got != prompt.ButlerRefusal {
+		t.Fatalf("answer = %q, want the pinned refusal", got)
 	}
 	// Structured, not prose: the gate carries a json_schema and no tools.
 	rf, _ := gateBody["response_format"].(map[string]any)
@@ -370,10 +370,10 @@ func TestButlerScopeGateMalformedFallsThrough(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	rec := butlerPost(t, h, cookie, `{"prompt":"brief me"}`, http.StatusOK)
-	last := finalBody(t, rec)
-	if last["answer"] != "All three projects are healthy." {
-		t.Fatalf("final = %v, want the loop answer after a garbled gate", last)
+	tid := postButlerTurn(t, h, cookie, `{"prompt":"brief me"}`)
+	settled := waitThreadSettled(t, h, cookie, tid)
+	if got := settledTurnAnswer(t, settled); got != "All three projects are healthy." {
+		t.Fatalf("answer = %q, want the loop answer after a garbled gate", got)
 	}
 }
 
@@ -1015,9 +1015,8 @@ func TestButlerDiscardSiblingPending(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := butlerPost(t, h, cookie, `{"prompt":"toggle the preview"}`, http.StatusOK)
-	last := finalBody(t, rec)
-	tid, _ := last["threadId"].(string)
+	tid := postButlerTurn(t, h, cookie, `{"prompt":"toggle the preview"}`)
+	waitThreadSettled(t, h, cookie, tid)
 	th0, err := d.Butler.Get(butlerScope, tid)
 	if err != nil || len(th0.Approvals) != 2 {
 		t.Fatalf("approvals = %+v, want 2 cards on the thread", th0.Approvals)

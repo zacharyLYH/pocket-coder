@@ -1,5 +1,7 @@
-// Butler endpoints: one global thread list (no project scope), one turn
-// per request answered as plain JSON.
+// Butler endpoints: one global thread list (no project scope). A turn is
+// reserved synchronously (the prompt lands on disk before the POST
+// returns) while the agent loop runs detached, so the client polls the
+// thread from "running" to its answer.
 package httpapi
 
 import (
@@ -167,51 +169,25 @@ func handleButlerRetry(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusConflict, "butler busy — wait for the current run")
 			return
 		}
-		defer butlerRuns.done(butlerRunKey)
 		n, turnID, prompt, rerr := st.BeginRetry(butlerScope, tid, "")
 		if rerr != nil {
+			// Release on the failed reserve here; the detached run owns
+			// the slot once it is handed the reserved turn.
+			butlerRuns.done(butlerRunKey)
 			writeTurnErr(w, http.StatusInternalServerError, "retry reserve: "+rerr.Error(), tid, th.Title)
 			return
 		}
 		butlerRuns.set(butlerRunKey, tid)
-		finishButlerTurn(w, r, d, st, reservedTurn{
+		startButlerTurn(w, r, d, st, reservedTurn{
 			threadID: tid, turnID: turnID, title: th.Title, n: n,
 		}, prompt, th.Turns[len(th.Turns)-1].ProjectHint)
 	}
 }
 
-// finishButlerTurn runs one reserved turn detached from the HTTP request
-// (refresh never cancels it) and answers plain JSON. The placeholder was
-// reserved before the model ran, so failures persist as retryable turns.
-func finishButlerTurn(w http.ResponseWriter, r *http.Request, d Deps, st *threads.Store, t reservedTurn, prompt, projectHint string) {
-	cfg := aiConfig(d, aiBody{})
-	r = detached(r)
-	answer, steps, lineage, runErr := runButlerTurn(r, d, cfg, st, t.threadID, t.turnID, prompt)
-	turn := butlerTurn(t.turnID, prompt, projectHint, answer, steps)
-	if runErr != nil {
-		msg := runErr.Error()
-		turn.Error = &msg
-		_ = st.CompleteTurn(butlerScope, t.threadID, t.n, turn, butlerLineage(lineage, t.turnID, t.threadID, prompt, msg))
-		obsFail(r, obs.ButlerTurn, "butler turn failed", runErr, map[string]any{"threadId": t.threadID})
-		writeTurnErr(w, http.StatusBadGateway, msg, t.threadID, t.title)
-		return
-	}
-	if cerr := st.CompleteTurn(butlerScope, t.threadID, t.n, turn, butlerLineage(lineage, t.turnID, t.threadID, prompt, "")); cerr != nil {
-		obsFail(r, obs.ButlerTurn, "complete butler turn failed", cerr, map[string]any{"threadId": t.threadID})
-		writeTurnErr(w, http.StatusInternalServerError, errInternal, t.threadID, t.title)
-		return
-	}
-	_, _ = d.Events.Append("butler.turn", map[string]any{
-		"threadId": t.threadID, "turnId": t.turnID,
-		"prompt": capData(prompt, 500), "steps": len(steps),
-	})
-	writeJSON(w, http.StatusOK, map[string]any{
-		"threadId": t.threadID, "threadTitle": t.title,
-		"turnId": t.turnID, "answer": answer,
-		"steps": steps, "time": turn.Time.Format(time.RFC3339),
-	})
-}
-
+// handleButlerTurn reserves the turn (persisting the user's prompt
+// immediately), starts the agent loop in a detached goroutine, and
+// returns 200 with the thread identity right away. The client polls the
+// thread to see the user's bubble, the running status, then the answer.
 func handleButlerTurn(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cfg := aiConfig(d, aiBody{})
@@ -244,9 +220,9 @@ func handleButlerTurn(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusConflict, "butler busy — wait for the current run")
 			return
 		}
-		defer butlerRuns.done(butlerRunKey)
 		rt, rerr := reserveTurn(st, butlerScope, body.ThreadID, body.Prompt, "")
 		if rerr != nil {
+			butlerRuns.done(butlerRunKey)
 			obsFail(r, obs.ButlerTurn, "reserve butler turn failed", rerr, nil)
 			if errors.Is(rerr, threads.ErrPendingApproval) {
 				th, _ := st.Get(butlerScope, body.ThreadID)
@@ -265,8 +241,45 @@ func handleButlerTurn(d Deps) http.HandlerFunc {
 			return
 		}
 		butlerRuns.set(butlerRunKey, rt.threadID)
-		finishButlerTurn(w, r, d, st, rt, body.Prompt, body.ProjectHint)
+		startButlerTurn(w, r, d, st, rt, body.Prompt, body.ProjectHint)
 	}
+}
+
+// startButlerTurn detaches the agent loop from the request (a refresh
+// never cancels it) and answers with the reservation identity the client
+// polls from. The run owns the global slot until it completes.
+func startButlerTurn(w http.ResponseWriter, r *http.Request, d Deps, st *threads.Store, t reservedTurn, prompt, projectHint string) {
+	go executeButlerTurn(detached(r), d, st, t, prompt, projectHint)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"threadId": t.threadID, "threadTitle": t.title,
+		"turnId": t.turnID, "time": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// executeButlerTurn runs one reserved turn detached from the HTTP request
+// (refresh never cancels it). The placeholder was reserved before the
+// model ran, so failures persist as retryable turns. Completion releases
+// the global slot via the deferred done.
+func executeButlerTurn(r *http.Request, d Deps, st *threads.Store, t reservedTurn, prompt, projectHint string) {
+	defer butlerRuns.done(butlerRunKey)
+	cfg := aiConfig(d, aiBody{})
+	answer, steps, lineage, runErr := runButlerTurn(r, d, cfg, st, t.threadID, t.turnID, prompt)
+	turn := butlerTurn(t.turnID, prompt, projectHint, answer, steps)
+	if runErr != nil {
+		msg := runErr.Error()
+		turn.Error = &msg
+		_ = st.CompleteTurn(butlerScope, t.threadID, t.n, turn, butlerLineage(lineage, t.turnID, t.threadID, prompt, msg))
+		obsFail(r, obs.ButlerTurn, "butler turn failed", runErr, map[string]any{"threadId": t.threadID})
+		return
+	}
+	if cerr := st.CompleteTurn(butlerScope, t.threadID, t.n, turn, butlerLineage(lineage, t.turnID, t.threadID, prompt, "")); cerr != nil {
+		obsFail(r, obs.ButlerTurn, "complete butler turn failed", cerr, map[string]any{"threadId": t.threadID})
+		return
+	}
+	_, _ = d.Events.Append("butler.turn", map[string]any{
+		"threadId": t.threadID, "turnId": t.turnID,
+		"prompt": capData(prompt, 500), "steps": len(steps),
+	})
 }
 
 // butlerScopeParse reads the classifier verdict. False only on a clean

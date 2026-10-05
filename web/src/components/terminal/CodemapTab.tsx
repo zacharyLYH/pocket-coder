@@ -57,7 +57,7 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
   const [overlay, setOverlay] = useState<OverlaySel | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
 
-  const { threads, thread, inFlight, error, setError, openThread, newChat, removeThread, sendTurn, retryTurn } =
+  const { threads, thread, inFlight, loading, error, setError, openThread, newChat, removeThread, sendTurn, retryTurn } =
     useThread<CodemapThread, CodemapThreadSummary>({
       list: () => api<{ threads: CodemapThreadSummary[] }>(projectPath(projectId, '/codemap/threads')),
       open: async (id) => (await api<{ thread: CodemapThread }>(projectPath(projectId, `/codemap/threads/${encodeURIComponent(id)}`))).thread,
@@ -303,7 +303,14 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
       <Separator className="shrink-0" />
       <CardContent className="flex min-h-0 flex-1 flex-col p-0">
         <div ref={viewportRef} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3" data-testid="codemap-thread">
-          {turns.length === 0 && !inFlight && status !== 'running' && (
+          {loading ? (
+            <div className="flex flex-1 flex-col gap-2 pt-1" data-testid="codemap-loading">
+              <Skeleton className="h-3.5 w-3/4" />
+              <Skeleton className="h-3.5 w-full" />
+              <Skeleton className="h-3.5 w-2/3" />
+              <p className="text-xs text-muted-foreground">Loading codemap…</p>
+            </div>
+          ) : turns.length === 0 && !inFlight && status !== 'running' && (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
               <Avatar className="size-10">
                 <Bot className="size-5 text-muted-foreground" />
@@ -373,7 +380,7 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
               }}
               data-testid="codemap-prompt"
               rows={2}
-              className="max-h-36 min-h-10 w-full resize-none bg-transparent px-5 pt-3.5 pb-2 text-sm leading-relaxed focus:outline-none"
+              className="max-h-36 min-h-10 w-full resize-none bg-transparent px-5 pt-3.5 pb-2 text-base leading-relaxed focus:outline-none"
             />
             <div className="flex items-center justify-end px-2.5 pb-2.5">
               <Button

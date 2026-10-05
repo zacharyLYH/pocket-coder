@@ -340,6 +340,9 @@ var butlerWriteTable = []butlerWriteDef{
 					if _, lerr := d.Sessions.LaunchNamed(ctx, container, name, h); lerr != nil {
 						return "", lerr
 					}
+					// Relaunch proves the binary is present — keep the
+					// install record converged with the container.
+					_ = d.Projects.RecordInstall(id, h.ID)
 					return "Restarted " + name, nil
 				}
 			}

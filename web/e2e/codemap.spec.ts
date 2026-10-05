@@ -284,6 +284,25 @@ test.describe('codemap desktop', () => {
   // REQUIRED: remount-into-run (route-mocked, no engine/model). Pins the
   // §8 contract: busy restore via row status, block scope
   // (composer + delete + retry), crash-vs-in-flight, mount-poll only.
+  test('slow navigation shows a loading state before the thread lands', async ({ page }) => {
+    await mockSessions(page)
+    await mockConfigured(page)
+    // Hold the thread list: navigation must show a skeleton, not a blank
+    // pane that feels stuck.
+    let releaseList!: () => void
+    const listGate = new Promise<void>((res) => { releaseList = res })
+    await page.route(/\/api\/projects\/.*\/codemap\/threads$/, async (route) => {
+      await listGate
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ threads: [] }) })
+    })
+    await page.goto(terminalUrl(FAKE_ID, 'main'))
+    await page.getByTestId('tab-codemap').click()
+    await expect(page.getByTestId('codemap-loading')).toBeVisible()
+    await expect(page).toHaveScreenshot('codemap-loading.png')
+    releaseList()
+    await expect(page.getByTestId('codemap-loading')).toHaveCount(0)
+    await expect(page.getByText('Ask about this codebase')).toBeVisible()
+  })
   test('remount into running thread shows spinner and blocks', async ({ page }) => {
     await mockSessions(page)
     await mockConfigured(page)
