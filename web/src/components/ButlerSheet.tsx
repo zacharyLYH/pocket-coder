@@ -57,6 +57,12 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
 
   const turns = thread?.turns ?? []
   const lastFailedTurn = !inFlight && status !== 'awaiting' && thread && turns.length > 0 && turns[turns.length - 1].error ? turns[turns.length - 1] : null
+  // The running turn already renders its own typing indicator inside its
+  // answer bubble, so the standalone pending bubble is only for the gap
+  // before the reservation lands (no turn to attach to yet).
+  const lastTurnPending =
+    showPending && turns.length > 0 && !turns[turns.length - 1].answer && !turns[turns.length - 1].error
+  const showStandalonePending = showPending && !lastTurnPending
 
   function retry() {
     if (!lastFailedTurn || !thread) return
@@ -109,7 +115,7 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
             </div>
           </div>
         )}
-        {turns.map((t) => (
+        {turns.map((t, i) => (
           <div key={t.turnId} className="flex flex-col gap-3" data-testid="butler-turn">
             <div className="flex justify-end">
               <div className="max-w-[85%] rounded-2xl bg-[#0084ff] px-4 py-2.5 text-sm text-white">{t.prompt}</div>
@@ -120,6 +126,13 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
                 <div className="w-fit max-w-full rounded-2xl bg-muted px-4 py-2.5">
                   {t.error ? (<p className="text-sm text-destructive" data-testid="butler-error">{t.error}</p>)
                     : t.answer ? (<div data-testid="butler-answer"><Markdown className="text-sm" text={t.answer} /></div>)
+                    : i === turns.length - 1 && showPending ? (
+                      <div className="flex items-center gap-1 py-1" data-testid="butler-pending" aria-label="Butler is typing">
+                        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground" />
+                        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:150ms]" />
+                        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:300ms]" />
+                      </div>
+                    )
                     : (<p className="text-sm text-muted-foreground">…</p>)}
                   {lastFailedTurn?.turnId === t.turnId && (
                     <Button variant="outline" size="sm" className="mt-2" onClick={() => retry()} disabled={inFlight} data-testid="butler-retry">
@@ -143,7 +156,7 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
           />
         ))}
         {notice && <p className="text-xs text-muted-foreground" data-testid="butler-applied">{notice}</p>}
-        {showPending && (
+        {showStandalonePending && (
           <div className="flex gap-2.5" data-testid="butler-pending">
             <Avatar className="mt-0.5 size-7"><Bot className="size-4 text-muted-foreground" /></Avatar>
             <div className="flex w-fit items-center gap-1 rounded-2xl bg-muted px-4 py-3" aria-label="Butler is typing">
