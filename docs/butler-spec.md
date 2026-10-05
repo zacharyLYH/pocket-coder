@@ -35,13 +35,13 @@ Read tools:
 Write tools, each behind a confirm card with a Confirm button:
 
 * `create_project` clones a repo URL and branch, then reports Ready.
-* `start`, `stop`, `restart` change one project container.
+* `start_project`, `stop_project`, `restart_project` change one project container.
 * `session_create`, `session_kill`, `session_restart`, `session_rename` manage tmux sessions.
 * `fanout_exec` runs one command in many projects. Example: a user says "update opencode everywhere", and the butler runs `npm i -g opencode-ai@latest` in each picked project.
 * `create_harness`, `install_harness`, `delete_harness` manage harness files.
 * `delete_project` removes a container, repo, or metadata by scope.
-* `propose_env_fix` names the missing variable. The UI collects the value in a masked field.
-* `switch_model` reads one harness config in the home volume and proposes a one-line diff.
+* `create_ai_model` adds one AI model entry by label, model, and endpoint, behind a confirm card. The key is typed into a masked field at Confirm, never shown in chat.
+* `server_public_key` reads the server SSH deploy key's public half, fingerprint, and creation time. Public by design; the private half never leaves the server.
 * `update_ai_model` renames or relabels one AI model entry by id, behind a confirm card. Label only: the model name, endpoint, and stored key stay untouched.
 * `save_shortcut` stores a `state.Shortcut`: either a command shortcut (`Run tests` runs `npm test`) or a key shortcut (`Undo` sends `Ctrl-Z`). Shortcuts store per project.
 * `preview_start`, `preview_close` open or close a preview port.
@@ -84,7 +84,7 @@ Ordered. Each lands with tests. No big bang. Phase 2 stays out.
 
 7. Confirm card and safe writes. Writes need a Confirm tap, no typed confirm. Card states blast radius. This checkpoint covers `create_project`, `start`, `stop`, `restart`, `session_create`, `session_kill`, `session_restart`, `session_rename`, `preview_start`, `preview_close`, `git_pull`, `git_push`, `git_switch`. Example: "Delete project api? This removes the container, its 3 sessions, both volumes, and the project record." Unit: write without confirm never runs. Smoke: confirm then apply, discard does nothing. E2e: card shows old and new value with Confirm and Discard.
 
-8. Sensitive writes. `delete_project`, `create_harness`, `install_harness`, `delete_harness`, `fanout_exec`, `propose_env_fix` with masked field, `switch_model` with one line diff, `save_shortcut`. Example: "update opencode everywhere" runs `npm i -g opencode-ai@latest` in each picked project only after Confirm. Unit: scope check plus masked value never logs. Smoke: destructive tool needs explicit confirm id. E2e: delete flow shows blast radius before Confirm.
+8. Sensitive writes. `delete_project`, `create_harness`, `install_harness`, `delete_harness`, `fanout_exec`, `save_shortcut`. Example: "update opencode everywhere" runs `npm i -g opencode-ai@latest` in each picked project only after Confirm. Unit: scope check plus write without confirm never runs. Smoke: destructive tool needs explicit confirm id. E2e: delete flow shows blast radius before Confirm.
 
 9. Visibility, limits, image, issue. Turn shows collapsed "N steps" row with tool name, args, result summary. Confirm cards stay expanded. Limits answer stays one line, such as "Preview automation is not available." One image per turn, stored beside the thread, deleted with it, vision-less model refuses plainly. Wall case offers a one line issue draft and asks "File this on GitHub?" then one sync create returns the URL. Example: blank preview shot checks `preview_state` before answering. Unit: step row redacts full output, second image rejects, no silent filing. Smoke: image delete cleans folder. E2e: attach button flow plus issue confirm flow.
 

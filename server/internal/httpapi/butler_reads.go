@@ -469,6 +469,23 @@ func butlerReadTools(d Deps) []agent.Tool {
 				return butlerJSON(out), nil
 			},
 		},
+		butlerToolServerPublicKey: {
+			Name:        butlerToolServerPublicKey,
+			Description: "Server SSH deploy key: public half, fingerprint, creation time. Public by design (it goes to GitHub); the private half never leaves the server. No args.",
+			Schema:      noProps,
+			Run: func(_ context.Context, _ string) (string, error) {
+				if d.SSHKeys == nil {
+					return "", fmt.Errorf("server key not generated yet")
+				}
+				kp, ok := d.SSHKeys.Get()
+				if !ok {
+					return "", fmt.Errorf("server key not generated yet")
+				}
+				return butlerJSON(map[string]any{
+					"publicKey": kp.PublicKey, "fingerprint": kp.Fingerprint, "createdAt": kp.CreatedAt,
+				}), nil
+			},
+		},
 		butlerToolArchitecture: {
 			Name:        butlerToolArchitecture,
 			Description: "Design notes: how the system is built and why. Read when a question needs design context (what survives deletes, where state lives). Args: {section?} — overview, state, projects, sessions, previews, harnesses, butler; omit for all.",

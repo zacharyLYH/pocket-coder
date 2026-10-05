@@ -94,7 +94,6 @@ func butlerLiveEnums(d Deps) map[string]map[string][]string {
 				hids = append(hids, id)
 			}
 			sort.Strings(hids)
-			add(butlerToolSwitchModel, "harness", hids)
 			add(butlerToolDeleteHarness, "id", hids)
 			mids := make([]string, 0, len(doc.AIModels))
 			for _, m := range doc.AIModels {
@@ -669,72 +668,59 @@ var butlerWriteTable = []butlerWriteDef{
 		},
 	},
 	{
-		name: butlerToolProposeEnvFix, desc: "Name the missing variable. The UI collects the value in a masked field.",
-		schema: butlerSchema(map[string]any{"name": strProp()}),
-		blast: func(_ Deps, _ context.Context, args map[string]any) (string, string, error) {
-			name := butlerStr(args, "name")
-			if name == "" {
-				return "", "", fmt.Errorf("name is required")
+		name: butlerToolCreateAIModel, desc: "Add one AI model entry (label, model, endpoint). The key is typed into a masked field at Confirm, never shown in chat.",
+		schema: butlerSchema(map[string]any{"label": strProp(), "model": strProp(), "baseURL": strProp()}),
+		blast: func(d Deps, _ context.Context, args map[string]any) (string, string, error) {
+			label, model := butlerStr(args, "label"), butlerStr(args, "model")
+			endpoint := agent.NormalizeBaseURL(butlerStr(args, "baseURL"))
+			if label == "" || model == "" || endpoint == "" {
+				return "", "", fmt.Errorf("label, model, and baseURL are required")
 			}
-			return "Set " + name + "?", "The value is typed into a masked field, never shown in chat.", nil
+			if d.State == nil {
+				return "", "", fmt.Errorf("no state")
+			}
+			var dup string
+			d.State.View(func(doc *state.Document) {
+				for _, m := range doc.AIModels {
+					if m.Model == model { // exact match: model strings are identifiers
+						dup = m.Label
+					}
+				}
+			})
+			if dup != "" {
+				return "", "", fmt.Errorf("model %q is already configured as %q — use update_ai_model to relabel it", model, dup)
+			}
+			return fmt.Sprintf("Add AI model %q?", label),
+				fmt.Sprintf("Adds one entry for model %s via %s. The key is typed into a masked field at Confirm, never shown in chat.", model, endpoint), nil
 		},
 		exec: func(_ context.Context, d Deps, args map[string]any, secret string) (string, error) {
-			name := butlerStr(args, "name")
-			if strings.TrimSpace(secret) == "" {
-				return "", fmt.Errorf("value is required — type it into the masked field")
-			}
-			// No persistence in v1: the value never touches logs, events, or
-			// chat. The caller applies it in their environment and restarts.
-			_ = d
-			return "Noted " + name + " — set it in your environment and restart.", nil
-		},
-	},
-	{
-		name: butlerToolSwitchModel, desc: "Switch the model in one harness config. Proposes a one-line diff.",
-		schema: butlerSchema(map[string]any{"harness": strProp(), "model": strProp()}),
-		blast: func(d Deps, _ context.Context, args map[string]any) (string, string, error) {
-			hid, model := butlerStr(args, "harness"), butlerStr(args, "model")
-			if hid == "" || model == "" {
-				return "", "", fmt.Errorf("harness and model are required")
-			}
-			if d.Harnesses == nil {
-				return "", "", fmt.Errorf("no harness registry")
-			}
-			h, err := d.Harnesses.Get(hid)
-			if err != nil {
-				return "", "", err
-			}
-			where, old := "model", "(unset)"
-			if path, prev, ok := butlerFindModel(h.Config); ok {
-				where, old = strings.Join(path, "."), prev
-				if !butlerAIModelExists(d.State, prev) {
-					return "", "", fmt.Errorf("current model %q is not in the configured AI models (%s) — run list_ai_models for entry ids", prev, butlerAIModelNames(d.State))
-				}
-			}
-			if !butlerAIModelExists(d.State, model) {
-				return "", "", fmt.Errorf("model %q is not in the configured AI models (%s). Only switching is supported here — renaming an entry is update_ai_model", model, butlerAIModelNames(d.State))
-			}
-			return fmt.Sprintf("Switch model in %s to %s?", hid, model),
-				fmt.Sprintf("Rewrites one line in %s config: %s %s -> %s.", hid, where, old, model), nil
-		},
-		exec: func(_ context.Context, d Deps, args map[string]any, _ string) (string, error) {
 			if d.State == nil {
 				return "", fmt.Errorf("no state")
 			}
-			hid, model := butlerStr(args, "harness"), butlerStr(args, "model")
-			err := d.State.Mutate(func(doc *state.Document) error {
-				h, ok := doc.Harnesses[hid]
-				if !ok {
-					return fmt.Errorf("no such harness")
-				}
-				h.Config = butlerSetModel(h.Config, model)
-				doc.Harnesses[hid] = h
+			entry := state.AIModel{
+				ID: "", Label: butlerStr(args, "label"),
+				BaseURL: agent.NormalizeBaseURL(butlerStr(args, "baseURL")),
+				APIKey:  secret,
+				Model:   butlerStr(args, "model"),
+			}
+			if entry.Label == "" || entry.Model == "" || entry.BaseURL == "" {
+				return "", fmt.Errorf("label, model, and baseURL are required")
+			}
+			if strings.TrimSpace(secret) == "" {
+				return "", fmt.Errorf("value is required — type it into the masked field")
+			}
+			entry.ID = state.MintID()
+			if entry.ID == "" {
+				return "", fmt.Errorf("mint model id failed")
+			}
+			if err := d.State.Mutate(func(doc *state.Document) error {
+				doc.AIModels = append(doc.AIModels, entry)
 				return nil
-			})
-			if err != nil {
+			}); err != nil {
 				return "", err
 			}
-			return "Switched to " + model, nil
+			_, _ = d.Events.Append("ai.model_added", map[string]any{"id": entry.ID})
+			return "Added " + entry.ID, nil
 		},
 	},
 	{
@@ -865,27 +851,6 @@ func orDefault(s, def string) string {
 	return s
 }
 
-// butlerAIModelNames returns the configured model names ("Model" field,
-// what switch_model validates against), for error context so the model
-// can self-correct instead of guessing.
-func butlerAIModelNames(st *state.Store) string {
-	if st == nil {
-		return "none configured"
-	}
-	names := []string{}
-	st.View(func(doc *state.Document) {
-		for _, m := range doc.AIModels {
-			if s := strings.TrimSpace(m.Model); s != "" {
-				names = append(names, s)
-			}
-		}
-	})
-	if len(names) == 0 {
-		return "none configured"
-	}
-	return strings.Join(names, ", ")
-}
-
 // dispButlerAIModelString returns the model string ("Model" field) of
 // one entry by id, for display in summaries.
 func dispButlerAIModelString(d Deps, id string) string {
@@ -901,83 +866,4 @@ func dispButlerAIModelString(d Deps, id string) string {
 		}
 	})
 	return s
-}
-
-func butlerAIModelExists(st *state.Store, name string) bool {
-	if st == nil || strings.TrimSpace(name) == "" {
-		return false
-	}
-	found := false
-	st.View(func(doc *state.Document) {
-		for _, model := range doc.AIModels {
-			if strings.TrimSpace(model.Model) == name {
-				found = true
-				return
-			}
-		}
-	})
-	return found
-}
-
-// butlerFindModel locates the first "model" string in a harness config
-// blob, descending sorted keys for determinism. Profile-shaped configs
-// (providers.openai.model) report their dotted path; flat ones report
-// ["model"]. ok is false when no model string exists.
-func butlerFindModel(raw json.RawMessage) (path []string, old string, ok bool) {
-	var m map[string]any
-	if len(raw) == 0 || json.Unmarshal(raw, &m) != nil {
-		return nil, "", false
-	}
-	var walk func(prefix []string, obj map[string]any) bool
-	walk = func(prefix []string, obj map[string]any) bool {
-		keys := make([]string, 0, len(obj))
-		for k := range obj {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			switch v := obj[k].(type) {
-			case string:
-				if k == "model" && strings.TrimSpace(v) != "" {
-					path, old, ok = append(prefix, k), v, true
-					return true
-				}
-			case map[string]any:
-				if walk(append(prefix, k), v) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	walk(nil, m)
-	return path, old, ok
-}
-
-// butlerSetModel returns the config blob with the model set: at its
-// existing path when one is found, top-level "model" otherwise.
-func butlerSetModel(raw json.RawMessage, model string) json.RawMessage {
-	var m map[string]any
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &m)
-	}
-	if m == nil {
-		m = map[string]any{}
-	}
-	if path, _, ok := butlerFindModel(raw); ok && len(path) > 0 {
-		cur := m
-		for _, k := range path[:len(path)-1] {
-			next, _ := cur[k].(map[string]any)
-			if next == nil {
-				next = map[string]any{}
-				cur[k] = next
-			}
-			cur = next
-		}
-		cur[path[len(path)-1]] = model
-	} else {
-		m["model"] = model
-	}
-	out, _ := json.Marshal(m)
-	return out
 }

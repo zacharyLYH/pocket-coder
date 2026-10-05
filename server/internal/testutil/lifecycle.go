@@ -143,10 +143,57 @@ type GitDaemonFixture struct {
 	cleanup func()
 }
 
-// NewGitDaemonFixture creates a temp git repo with one commit, starts git
-// daemon, and registers cleanup to stop it. The returned URL is reachable
-// from containers via host.docker.internal.
+// NewGitDaemonFixture serves a fresh repo on a random port: every fixture
+// gets a unique URL, so parallel runs never share containers or volumes.
+// The URL is reachable from containers via host.docker.internal.
 func NewGitDaemonFixture(t *testing.T) *GitDaemonFixture {
+	t.Helper()
+	return newGitDaemonFixture(t, "", 0)
+}
+
+// FixedGitDaemonPort serves deterministic fixture URLs
+// (git://host.docker.internal:<port>/...). Fails loudly if taken —
+// callers choosing it accept no parallel runs.
+const FixedGitDaemonPort = 39418
+
+// NewFixedGitDaemonFixture serves a fresh repo at a fixed owner and port,
+// so the repo URL is known before boot and seeds can hardcode it. One
+// user at a time: parallel runs collide on the port, the project id,
+// and the container.
+func NewFixedGitDaemonFixture(t *testing.T, owner string) *GitDaemonFixture {
+	t.Helper()
+	return newGitDaemonFixture(t, owner, FixedGitDaemonPort)
+}
+
+func newGitDaemonFixture(t *testing.T, owner string, port int) *GitDaemonFixture {
+	t.Helper()
+	dir := initFixtureRepo(t)
+	port = grabPort(t, port)
+	if owner == "" {
+		owner = fmt.Sprintf("itest-%d", port)
+	}
+	serveDir := filepath.Join(dir, owner)
+	if err := os.MkdirAll(serveDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(dir, "repo"), filepath.Join(serveDir, "repo")); err != nil {
+		t.Fatal(err)
+	}
+	daemon := startDaemon(t, dir, port)
+	g := &GitDaemonFixture{
+		URL: fmt.Sprintf("git://host.docker.internal:%d/%s/repo", port, owner),
+		ID:  strings.ToLower(owner + "/repo"),
+		cleanup: func() {
+			stopDaemon(daemon, dir)
+		},
+	}
+	t.Cleanup(g.Close)
+	return g
+}
+
+// initFixtureRepo creates a temp repo with one commit on main plus a dev
+// branch, and returns the dir holding it.
+func initFixtureRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	repo := filepath.Join(dir, "repo")
@@ -169,42 +216,51 @@ func NewGitDaemonFixture(t *testing.T) *GitDaemonFixture {
 	run("-C", repo, "add", "-A")
 	run("-C", repo, "commit", "-m", "first")
 	run("-C", repo, "branch", "dev")
+	return dir
+}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+// grabPort returns a free port: random when port is 0, else the fixed one
+// after proving nobody holds it. A held fixed port fails loudly instead
+// of shadowing clones into a deleted directory (see stopDaemon).
+func grabPort(t *testing.T, port int) int {
+	t.Helper()
+	if port == 0 {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close()
+		return listener.Addr().(*net.TCPAddr).Port
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
+	if conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 2*time.Second); err == nil {
+		// Stale daemon from a killed run (cleanup never ran). Reclaim with:
+		//   pkill -f 'git daemon.*<port>'; docker volume rm $(docker volume ls -q --filter name=pcoder-itest-)
+		conn.Close()
+		t.Fatalf("fixed git daemon port %d held by a stale daemon — kill it and re-run", port)
+	}
+	return port
+}
 
-	// Serve from a two-segment path so the URL parses to an owner/repo id
-	// under the PCODER_ALLOW_ANY_REPO test hatch; the owner embeds the
-	// port so every fixture (and its project) is unique per run.
-	owner := fmt.Sprintf("itest-%d", port)
-	if err := os.MkdirAll(filepath.Join(dir, owner), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(repo, filepath.Join(dir, owner, "repo")); err != nil {
-		t.Fatal(err)
-	}
-
+// startDaemon serves dir over the git protocol. The returned command is
+// stopped via stopDaemon: the Go child handle is the git frontend, which
+// forks the real listener, so killing the handle alone orphans it.
+func startDaemon(t *testing.T, dir string, port int) *exec.Cmd {
+	t.Helper()
 	daemon := exec.Command("git", "daemon",
 		"--base-path="+dir, "--export-all", "--reuseaddr",
 		"--listen=0.0.0.0", "--port="+fmt.Sprint(port))
 	if err := daemon.Start(); err != nil {
 		t.Fatalf("git daemon: %v", err)
 	}
+	return daemon
+}
 
-	g := &GitDaemonFixture{
-		URL: fmt.Sprintf("git://host.docker.internal:%d/%s/repo", port, owner),
-		ID:  strings.ToLower(owner + "/repo"),
-		cleanup: func() {
-			_ = daemon.Process.Kill()
-			_, _ = daemon.Process.Wait()
-		},
-	}
-	t.Cleanup(g.Close)
-	return g
+// stopDaemon kills the listener by its unique base-path as well as the
+// child handle. Best effort throughout; safe to call twice.
+func stopDaemon(cmd *exec.Cmd, dir string) {
+	_ = cmd.Process.Kill()
+	_, _ = cmd.Process.Wait()
+	_ = exec.Command("pkill", "-f", "git-daemon.*"+dir).Run()
 }
 
 // Close stops the git daemon. Safe to call multiple times.

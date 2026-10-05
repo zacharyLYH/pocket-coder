@@ -1,0 +1,268 @@
+[
+  {
+    "tool": "list_projects",
+    "args": {},
+    "want": []
+  },
+  {
+    "tool": "architecture",
+    "args": {},
+    "want": "# Butler architecture\n\nHow Pocket Coder is built and why: read this when a question needs design context — what survives a stop or delete, where state lives, why a tool behaves the way it does. Facts here outrank guesses.\n\n## State\n\nDesired state lives in state.json (projects, harnesses, keys, model and git lists, shortcuts). Live state lives in Docker (containers, volumes) and tmux (sessions). The server reconciles live toward desired; never confuse the two.\nExample: a missing container with intact volumes is recreated from those volumes — code and harness binaries intact, no re-clone.\n\n## Projects\n\nOne project is one repo checkout in one container (pcoder-owner-repo), with two volumes: repo (code) and home (harness binaries, CLI configs). The id is owner/repo and doubles as the display name.\nExample: deleting with scope=container removes the container and the home volume; the repo volume stays, so recreating keeps the code.\n\n## Sessions\n\nSessions are tmux sessions inside the project container: plain shells or harness launches. state.json records which harness each name runs; a recorded name outliving its container relaunches on entry. Killing a gone session succeeds (idempotent).\nExample: after a container rebuild, a recorded opencode-1 relaunches as opencode instead of 404ing.\n\n## Previews\n\nEach project gets a preview sidecar: a real Chromium sharing the project's network namespace, token-gated through the server. Slots read stopped (no worker), degraded (worker unreachable), or ready (browser answers). Listening ports are probed with ss, minus the sidecar's own ports.\nExample: a blank preview with status degraded means the sidecar lives but the app port answers nothing — check preview_state ports first.\n\n## Harnesses\n\nHarnesses are CLI plugins in one registry (builtins ship seeded and editable). Installing is explicit per project from the home page; launching an uninstalled harness fails and says to install it. A --version probe rejects non-CLIs such as IDEs and GUIs.\nExample: install_harness into picked projects downloads once per container; later sessions just launch.\n\n## Butler\n\nOnly Butler writes, and only through confirm cards: every write proposes a card stating the blast radius; Confirm applies, Discard drops. Nothing runs in the turn itself. Secret values never enter chat: keys and tokens render as booleans, env values arrive through a masked field.\nExample: \"Delete project api? This removes the container and 3 sessions. Volumes stay.\" — Confirm deletes, Discard is silent.\nButler chats persist per thread under data/butler/\u003cthreadID\u003e/ (manifest.json plus N.json turns), one global list across projects. events.log is the separate audit trail: types and times, never bodies.\nExample: \"brief me\" chains list_projects plus events_tail, then writes one summary and stops."
+  },
+  {
+    "tool": "architecture",
+    "args": {
+      "section": "projects"
+    },
+    "want": "## Projects\n\nOne project is one repo checkout in one container (pcoder-owner-repo), with two volumes: repo (code) and home (harness binaries, CLI configs). The id is owner/repo and doubles as the display name.\nExample: deleting with scope=container removes the container and the home volume; the repo volume stays, so recreating keeps the code."
+  },
+  {
+    "tool": "project_detail",
+    "args": {
+      "project": "ghost/repo"
+    },
+    "want": "ERROR: no such project"
+  },
+  {
+    "tool": "events_tail",
+    "args": {
+      "limit": 5
+    },
+    "want": [
+      {
+        "id": 1,
+        "time": "__TIME__",
+        "type": "login.pin.sent"
+      },
+      {
+        "id": 2,
+        "time": "__TIME__",
+        "type": "login.success"
+      }
+    ]
+  },
+  {
+    "tool": "health",
+    "args": {},
+    "want": {
+      "diskFreeBytes": 0,
+      "dockerPing": true,
+      "uptimeSeconds": 0,
+      "version": "itest"
+    }
+  },
+  {
+    "tool": "harness_inventory",
+    "args": {},
+    "want": [
+      {
+        "id": "cline",
+        "installedIn": [],
+        "name": "Cline"
+      },
+      {
+        "id": "freebuff",
+        "installedIn": [],
+        "name": "Freebuff"
+      },
+      {
+        "id": "opencode",
+        "installedIn": [],
+        "name": "OpenCode"
+      }
+    ]
+  },
+  {
+    "tool": "env_names",
+    "args": {},
+    "want": [
+      "PCODER_LOGIN_EMAIL",
+      "PCODER_DATA_DIR",
+      "PCODER_BIND",
+      "PCODER_DOCKER_SOCK",
+      "SMTP_HOST",
+      "SMTP_PORT",
+      "SMTP_USER",
+      "SMTP_PASSWORD",
+      "SMTP_FROM"
+    ]
+  },
+  {
+    "tool": "config_status",
+    "args": {},
+    "want": {
+      "aiConfigured": true,
+      "smtp": true,
+      "sshKeys": true
+    }
+  },
+  {
+    "tool": "list_ai_models",
+    "args": {},
+    "want": [
+      {
+        "baseURL": "https://x",
+        "hasKey": true,
+        "id": "m1",
+        "label": "liq",
+        "model": "gpt-3.5"
+      }
+    ]
+  },
+  {
+    "tool": "create_project",
+    "args": {
+      "branch": "main",
+      "repoUrl": "https://github.com/x/y.git"
+    },
+    "want": {
+      "blastRadius": "Creates one project container and clones the repo, then reports Ready.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Clone https://github.com/x/y.git on main?"
+    }
+  },
+  {
+    "tool": "create_harness",
+    "args": {
+      "command": "hcli",
+      "name": "H"
+    },
+    "want": {
+      "blastRadius": "Adds one registry entry. Nothing is installed yet.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Add harness H?"
+    }
+  },
+  {
+    "tool": "delete_harness",
+    "args": {
+      "id": "cline"
+    },
+    "want": {
+      "blastRadius": "Removes the registry entry. Installed binaries stay.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Delete harness cline?"
+    }
+  },
+  {
+    "tool": "update_ai_model",
+    "args": {
+      "id": "m1",
+      "label": "Liquid"
+    },
+    "want": {
+      "blastRadius": "Rewrites the label of model entry m1 (current model string gpt-3.5): \"liq\" -\u003e \"Liquid\". The model name, endpoint, and stored key stay untouched.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Rename AI model \"liq\" to \"Liquid\"?"
+    }
+  },
+  {
+    "tool": "update_ai_model",
+    "args": {
+      "id": "m1",
+      "label": "Liquid"
+    },
+    "apply": true,
+    "want": "Renamed to Liquid",
+    "wantState": {
+      "ai_models": [
+        {
+          "apiKey": "k",
+          "baseURL": "https://x",
+          "id": "m1",
+          "label": "Liquid",
+          "model": "gpt-3.5"
+        }
+      ]
+    }
+  },
+  {
+    "tool": "create_harness",
+    "args": {
+      "command": "hcli",
+      "name": "H"
+    },
+    "apply": true,
+    "want": "Added h",
+    "wantState": {
+      "harnesses": {
+        "cline": {
+          "command": "cline",
+          "id": "cline",
+          "install": "npm i -g cline",
+          "name": "Cline"
+        },
+        "freebuff": {
+          "command": "freebuff",
+          "id": "freebuff",
+          "install": "npm i -g freebuff \u0026\u0026 freebuff --version || true",
+          "name": "Freebuff"
+        },
+        "h": {
+          "command": "hcli",
+          "id": "h",
+          "name": "H"
+        },
+        "opencode": {
+          "command": "opencode",
+          "id": "opencode",
+          "install": "npm i -g opencode-ai",
+          "name": "OpenCode"
+        },
+        "terminal": {
+          "command": "bash",
+          "id": "terminal",
+          "name": "Terminal"
+        }
+      }
+    }
+  },
+  {
+    "tool": "delete_harness",
+    "args": {
+      "id": "h"
+    },
+    "apply": true,
+    "want": "Deleted.",
+    "wantState": {
+      "harnesses": {
+        "cline": {
+          "command": "cline",
+          "id": "cline",
+          "install": "npm i -g cline",
+          "name": "Cline"
+        },
+        "freebuff": {
+          "command": "freebuff",
+          "id": "freebuff",
+          "install": "npm i -g freebuff \u0026\u0026 freebuff --version || true",
+          "name": "Freebuff"
+        },
+        "opencode": {
+          "command": "opencode",
+          "id": "opencode",
+          "install": "npm i -g opencode-ai",
+          "name": "OpenCode"
+        },
+        "terminal": {
+          "command": "bash",
+          "id": "terminal",
+          "name": "Terminal"
+        }
+      }
+    }
+  },
+  {
+    "tool": "server_public_key",
+    "args": {},
+    "want": {
+      "createdAt": "2025-01-01T00:00:00Z",
+      "fingerprint": "SHA256:HxcF3z3cltfQ8FGo2ThIMUm3TmjpQtVAV0cAR2b8IyE",
+      "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBru/dX3rEKO+90Pxpp++KtL+jZC/Fqp58NrupCJcm9L pcoder-fixture"
+    }
+  }
+]

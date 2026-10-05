@@ -17,15 +17,16 @@ const (
 	butlerToolEnvNames         = "env_names"
 	butlerToolConfigStatus     = "config_status"
 	butlerToolListAIModels     = "list_ai_models"
+	butlerToolServerPublicKey  = "server_public_key"
 	butlerToolArchitecture     = "architecture"
 )
 
 // Write tools: propose-only, Confirm applies. Safe first, sensitive after.
 const (
 	butlerToolCreateProject  = "create_project"
-	butlerToolStart          = "start"
-	butlerToolStop           = "stop"
-	butlerToolRestart        = "restart"
+	butlerToolStart          = "start_project"
+	butlerToolStop           = "stop_project"
+	butlerToolRestart        = "restart_project"
 	butlerToolSessionCreate  = "session_create"
 	butlerToolSessionKill    = "session_kill"
 	butlerToolSessionRestart = "session_restart"
@@ -40,8 +41,7 @@ const (
 	butlerToolInstallHarness = "install_harness"
 	butlerToolDeleteHarness  = "delete_harness"
 	butlerToolFanoutExec     = "fanout_exec"
-	butlerToolProposeEnvFix  = "propose_env_fix"
-	butlerToolSwitchModel    = "switch_model"
+	butlerToolCreateAIModel  = "create_ai_model"
 	butlerToolUpdateAIModel  = "update_ai_model"
 	butlerToolSaveShortcut   = "save_shortcut"
 )
@@ -59,6 +59,7 @@ var butlerReadNames = []string{
 	butlerToolEnvNames,
 	butlerToolConfigStatus,
 	butlerToolListAIModels,
+	butlerToolServerPublicKey,
 	butlerToolArchitecture,
 }
 
@@ -82,8 +83,7 @@ var butlerWriteNames = []string{
 	butlerToolInstallHarness,
 	butlerToolDeleteHarness,
 	butlerToolFanoutExec,
-	butlerToolProposeEnvFix,
-	butlerToolSwitchModel,
+	butlerToolCreateAIModel,
 	butlerToolUpdateAIModel,
 	butlerToolSaveShortcut,
 }

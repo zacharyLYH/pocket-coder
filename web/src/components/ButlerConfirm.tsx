@@ -5,13 +5,13 @@ import { api, errMsg } from '@/lib/api'
 import type { ButlerConfirm as Card } from '@/lib/types'
 
 // ButlerConfirm renders one pending write with Confirm and Discard.
-// propose_env_fix adds a masked value field; the value travels only in the
+// create_ai_model adds a masked key field; the key travels only in the
 // apply body, never in chat.
 export function ButlerConfirm({ card, onDone }: { card: Card; onDone: (result: string | null) => void }) {
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const needsValue = card.tool === 'propose_env_fix'
+  const needsValue = card.tool === 'create_ai_model'
 
   async function act(path: string, body?: unknown) {
     setBusy(true)

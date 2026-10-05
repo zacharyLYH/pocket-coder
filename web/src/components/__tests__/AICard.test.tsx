@@ -101,4 +101,39 @@ describe('AICard', () => {
 
     await waitFor(() => expect(calls).toContain('PUT /api/ai/models/m1'))
   })
+
+  it('keeps Test disabled until label and a valid URL are present', async () => {
+    stub()
+    render(<AICard />)
+    await screen.findByText(/No models yet/)
+
+    // Everything but the label: still disabled, hint names it.
+    fireEvent.change(screen.getByTestId('ai-base-url'), { target: { value: 'https://x' } })
+    fireEvent.change(screen.getByTestId('ai-api-key'), { target: { value: 'k' } })
+    fireEvent.change(screen.getByTestId('ai-model'), { target: { value: 'm' } })
+    expect(screen.getByTestId('ai-test')).toBeDisabled()
+    expect(screen.getByTestId('ai-hint')).toHaveTextContent('label')
+
+    // Label added, URL broken: still disabled, hint names the URL.
+    fireEvent.change(screen.getByTestId('ai-label'), { target: { value: 'mini' } })
+    fireEvent.change(screen.getByTestId('ai-base-url'), { target: { value: 'not a url' } })
+    expect(screen.getByTestId('ai-test')).toBeDisabled()
+    expect(screen.getByTestId('ai-hint')).toHaveTextContent('base URL')
+
+    // Valid URL: lights up.
+    fireEvent.change(screen.getByTestId('ai-base-url'), { target: { value: 'http://localhost:11434/v1' } })
+    expect(screen.getByTestId('ai-test')).toBeEnabled()
+  })
+
+  it('reverts a blank rename instead of saving', async () => {
+    const calls = stub(ROW)
+    render(<AICard />)
+    const input = await screen.findByDisplayValue('mini')
+
+    fireEvent.change(input, { target: { value: '   ' } })
+    fireEvent.blur(input)
+
+    await waitFor(() => expect(input).toHaveValue('mini'))
+    expect(calls).not.toContain('PUT /api/ai/models/m1')
+  })
 })

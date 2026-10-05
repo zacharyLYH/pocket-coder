@@ -1,0 +1,390 @@
+[
+  {
+    "tool": "create_ai_model",
+    "args": {
+      "baseURL": "https://y",
+      "label": "Two",
+      "model": "gpt-4o"
+    },
+    "want": {
+      "blastRadius": "Adds one entry for model gpt-4o via https://y. The key is typed into a masked field at Confirm, never shown in chat.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Add AI model \"Two\"?"
+    }
+  },
+  {
+    "tool": "create_ai_model",
+    "args": {
+      "baseURL": "https://y",
+      "label": "Two",
+      "model": "gpt-4o"
+    },
+    "apply": true,
+    "want": "Added __ID__",
+    "wantState": {
+      "ai_models": [
+        {
+          "apiKey": "k",
+          "baseURL": "https://x",
+          "id": "m1",
+          "label": "liq",
+          "model": "gpt-3.5"
+        },
+        {
+          "apiKey": "test-key-two",
+          "baseURL": "https://y",
+          "id": "__ID__",
+          "label": "Two",
+          "model": "gpt-4o"
+        }
+      ]
+    },
+    "secret": "test-key-two"
+  },
+  {
+    "tool": "create_ai_model",
+    "args": {
+      "baseURL": "https://y",
+      "label": "Dup",
+      "model": "gpt-4o"
+    },
+    "want": "ERROR: model \"gpt-4o\" is already configured as \"Two\" — use update_ai_model to relabel it"
+  },
+  {
+    "tool": "create_ai_model",
+    "args": {
+      "baseURL": "https://z",
+      "label": "Three",
+      "model": "claude-opus"
+    },
+    "apply": true,
+    "want": "Added __ID__",
+    "wantState": {
+      "ai_models": [
+        {
+          "apiKey": "k",
+          "baseURL": "https://x",
+          "id": "m1",
+          "label": "liq",
+          "model": "gpt-3.5"
+        },
+        {
+          "apiKey": "test-key-two",
+          "baseURL": "https://y",
+          "id": "__ID__",
+          "label": "Two",
+          "model": "gpt-4o"
+        },
+        {
+          "apiKey": "test-key-three",
+          "baseURL": "https://z",
+          "id": "__ID__",
+          "label": "Three",
+          "model": "claude-opus"
+        }
+      ]
+    },
+    "secret": "test-key-three"
+  },
+  {
+    "tool": "create_ai_model",
+    "args": {
+      "model": "orphan"
+    },
+    "want": "ERROR: label, model, and baseURL are required"
+  },
+  {
+    "tool": "create_ai_model",
+    "args": {
+      "label": "Noname"
+    },
+    "want": "ERROR: label, model, and baseURL are required"
+  },
+  {
+    "tool": "update_ai_model",
+    "args": {
+      "id": "m1",
+      "label": "Liquid"
+    },
+    "apply": true,
+    "want": "Renamed to Liquid",
+    "wantState": {
+      "ai_models": [
+        {
+          "apiKey": "k",
+          "baseURL": "https://x",
+          "id": "m1",
+          "label": "Liquid",
+          "model": "gpt-3.5"
+        },
+        {
+          "apiKey": "test-key-two",
+          "baseURL": "https://y",
+          "id": "__ID__",
+          "label": "Two",
+          "model": "gpt-4o"
+        },
+        {
+          "apiKey": "test-key-three",
+          "baseURL": "https://z",
+          "id": "__ID__",
+          "label": "Three",
+          "model": "claude-opus"
+        }
+      ]
+    }
+  },
+  {
+    "tool": "list_ai_models",
+    "args": {},
+    "want": [
+      {
+        "baseURL": "https://x",
+        "hasKey": true,
+        "id": "m1",
+        "label": "Liquid",
+        "model": "gpt-3.5"
+      },
+      {
+        "baseURL": "https://y",
+        "hasKey": true,
+        "id": "__ID__",
+        "label": "Two",
+        "model": "gpt-4o"
+      },
+      {
+        "baseURL": "https://z",
+        "hasKey": true,
+        "id": "__ID__",
+        "label": "Three",
+        "model": "claude-opus"
+      }
+    ]
+  },
+  {
+    "tool": "create_ai_model",
+    "args": {
+      "baseURL": "https://y",
+      "label": "NoKey",
+      "model": "nokey-1"
+    },
+    "apply": true,
+    "want": "ERROR: value is required — type it into the masked field"
+  },
+  {
+    "tool": "session_create",
+    "args": {
+      "name": "s1",
+      "project": "itest-tier-3/repo"
+    },
+    "apply": true,
+    "want": "Created s1",
+    "wantState": {
+      "projects": {
+        "itest-tier-3/repo": {
+          "branch": "main",
+          "repo": "git://host.docker.internal:39418/itest-tier-3/repo",
+          "sessions": {
+            "s1": {}
+          }
+        }
+      }
+    }
+  },
+  {
+    "tool": "session_create",
+    "args": {
+      "name": "s2",
+      "project": "itest-tier-3/repo"
+    },
+    "apply": true,
+    "want": "Created s2",
+    "wantState": {
+      "projects": {
+        "itest-tier-3/repo": {
+          "branch": "main",
+          "repo": "git://host.docker.internal:39418/itest-tier-3/repo",
+          "sessions": {
+            "s1": {},
+            "s2": {}
+          }
+        }
+      }
+    }
+  },
+  {
+    "tool": "session_create",
+    "args": {
+      "name": "s1",
+      "project": "itest-tier-3/repo"
+    },
+    "apply": true,
+    "want": "ERROR: duplicate session: s1"
+  },
+  {
+    "tool": "session_kill",
+    "args": {
+      "name": "s1",
+      "project": "itest-tier-3/repo"
+    },
+    "apply": true,
+    "want": "Killed s1",
+    "wantState": {
+      "projects": {
+        "itest-tier-3/repo": {
+          "branch": "main",
+          "repo": "git://host.docker.internal:39418/itest-tier-3/repo",
+          "sessions": {
+            "s2": {}
+          }
+        }
+      }
+    }
+  },
+  {
+    "tool": "session_kill",
+    "args": {
+      "name": "s1",
+      "project": "itest-tier-3/repo"
+    },
+    "apply": true,
+    "want": "Killed s1"
+  },
+  {
+    "tool": "save_shortcut",
+    "args": {
+      "alias": "chain",
+      "command": "echo one",
+      "kind": "cmd",
+      "project": "itest-tier-3/repo"
+    },
+    "apply": true,
+    "want": "Saved chain",
+    "wantState": {
+      "projects": {
+        "itest-tier-3/repo": {
+          "branch": "main",
+          "repo": "git://host.docker.internal:39418/itest-tier-3/repo",
+          "sessions": {
+            "s2": {}
+          },
+          "shortcuts": [
+            {
+              "alias": "chain",
+              "command": "echo one",
+              "id": "s-chain",
+              "kind": "cmd"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "tool": "save_shortcut",
+    "args": {
+      "alias": "chain",
+      "command": "echo two",
+      "kind": "cmd",
+      "project": "itest-tier-3/repo"
+    },
+    "apply": true,
+    "want": "Saved chain",
+    "wantState": {
+      "projects": {
+        "itest-tier-3/repo": {
+          "branch": "main",
+          "repo": "git://host.docker.internal:39418/itest-tier-3/repo",
+          "sessions": {
+            "s2": {}
+          },
+          "shortcuts": [
+            {
+              "alias": "chain",
+              "command": "echo two",
+              "id": "s-chain",
+              "kind": "cmd"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "tool": "session_rename",
+    "args": {
+      "new": "x",
+      "old": "bad name!",
+      "project": "itest-tier-3/repo"
+    },
+    "want": "ERROR: project, old, and a valid new name are required"
+  },
+  {
+    "tool": "preview_start",
+    "args": {
+      "port": 0,
+      "project": "itest-tier-3/repo"
+    },
+    "want": "ERROR: project and a port 1-65535 are required"
+  },
+  {
+    "tool": "preview_start",
+    "args": {
+      "port": 70000,
+      "project": "itest-tier-3/repo"
+    },
+    "want": "ERROR: project and a port 1-65535 are required"
+  },
+  {
+    "tool": "delete_project",
+    "args": {
+      "project": "itest-tier-3/repo",
+      "scope": "bogus"
+    },
+    "want": "ERROR: invalid scope \"bogus\": container, repo, metadata, or all"
+  },
+  {
+    "tool": "git_switch",
+    "args": {
+      "project": "itest-tier-3/repo"
+    },
+    "want": "ERROR: project and branch are required"
+  },
+  {
+    "tool": "install_harness",
+    "args": {
+      "harness": "opencode",
+      "projects": []
+    },
+    "want": "ERROR: harness and at least one project are required"
+  },
+  {
+    "tool": "fanout_exec",
+    "args": {
+      "command": "echo hi",
+      "projects": []
+    },
+    "want": "ERROR: projects and command are required"
+  },
+  {
+    "tool": "create_harness",
+    "args": {
+      "name": "Only"
+    },
+    "want": "ERROR: name and command are required"
+  },
+  {
+    "tool": "create_project",
+    "args": {},
+    "want": "ERROR: repoUrl is required"
+  },
+  {
+    "tool": "create_ai_model",
+    "args": {
+      "label": "NoUrl",
+      "model": "x"
+    },
+    "want": "ERROR: label, model, and baseURL are required"
+  }
+]

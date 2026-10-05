@@ -38,9 +38,23 @@ export function AICard({ onChanged }: { onChanged?: () => void }) {
   }
 
   const body = () => JSON.stringify({ label: label.trim(), baseURL: baseURL.trim(), apiKey, model: model.trim() })
-  // Save is gated on a prior Test pass: the user must confirm the connection
-  // before the key is persisted, so a misconfigured model never silently lands.
-  const valid = baseURL.trim() !== '' && apiKey !== '' && model.trim() !== ''
+  // Every field gates Test and Save: label names the row, the endpoint must
+  // parse as http(s) (local Ollama included), the key and model are opaque
+  // strings the server probes. Save additionally needs a prior Test pass.
+  function urlOK(v: string): boolean {
+    try {
+      const u = new URL(v.trim())
+      return u.protocol === 'http:' || u.protocol === 'https:'
+    } catch {
+      return false
+    }
+  }
+  const missing: string[] = []
+  if (label.trim() === '') missing.push('label')
+  if (!urlOK(baseURL)) missing.push('base URL')
+  if (apiKey === '') missing.push('API key')
+  if (model.trim() === '') missing.push('model')
+  const valid = missing.length === 0
 
   async function test() {
     setBusy('test')
@@ -93,8 +107,13 @@ export function AICard({ onChanged }: { onChanged?: () => void }) {
 
   // Label-only edit resends the row with an empty key: the server keeps
   // the stored one and skips the probe, so a rename never burns quota.
-  async function saveLabel(m: AIModel, next: string) {
+  // A blank rename reverts instead of saving an unnamed row.
+  async function saveLabel(m: AIModel, next: string, reset: () => void) {
     if (next === (m.label || '')) return
+    if (next.trim() === '') {
+      reset()
+      return
+    }
     setBusy(m.id)
     setError(null)
     try {
@@ -147,7 +166,7 @@ export function AICard({ onChanged }: { onChanged?: () => void }) {
             placeholder="Label"
             aria-label={`Label for ${m.model}`}
             className="min-h-[44px] w-20 shrink-0 font-mono text-xs sm:w-28"
-            onBlur={(e) => { void saveLabel(m, e.target.value) }}
+            onBlur={(e) => { void saveLabel(m, e.target.value, () => { e.target.value = m.label }) }}
           />
           <Tooltip open={tooltipOpenId === m.id} onOpenChange={(o) => setTooltipOpenId(o ? m.id : null)}>
             <TooltipTrigger asChild>
@@ -175,6 +194,9 @@ export function AICard({ onChanged }: { onChanged?: () => void }) {
       <Input type="password" placeholder="API key" value={apiKey} onChange={(e) => { setApiKey(e.target.value); markDirty() }} data-testid="ai-api-key" className="min-h-[44px]" />
       <Input type="text" placeholder="Model (gpt-4o)" value={model} onChange={(e) => { setModel(e.target.value); markDirty() }} data-testid="ai-model" className="min-h-[44px]" />
       {error && <p className="text-destructive max-h-24 overflow-auto break-all text-xs" data-testid="ai-error">{error}</p>}
+      {missing.length > 0 && (label !== '' || baseURL !== '' || apiKey !== '' || model !== '') && (
+        <p className="text-xs text-muted-foreground" data-testid="ai-hint">Missing: {missing.join(', ')}.</p>
+      )}
       <div className="flex gap-2">
         <Button variant="outline" className="min-h-[44px] flex-1" disabled={busy !== null || !valid} onClick={() => void test()} data-testid="ai-test">
           <FlaskConical className="size-4" />{busy === 'test' ? 'Testing...' : 'Test'}

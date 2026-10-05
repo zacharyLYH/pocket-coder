@@ -1,0 +1,480 @@
+[
+  {
+    "tool": "list_projects",
+    "args": {},
+    "want": [
+      {
+        "branch": "main",
+        "id": "itest-tier-2/repo",
+        "status": "running"
+      }
+    ]
+  },
+  {
+    "tool": "project_detail",
+    "args": {
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "branch": "main",
+      "harnesses": 1,
+      "id": "itest-tier-2/repo",
+      "preview": "stopped",
+      "sessions": 3,
+      "status": "running"
+    }
+  },
+  {
+    "tool": "list_sessions",
+    "args": {
+      "project": "itest-tier-2/repo"
+    },
+    "want": [
+      {
+        "alive": false,
+        "name": "main"
+      },
+      {
+        "alive": false,
+        "harness": "opencode",
+        "name": "oc1"
+      },
+      {
+        "alive": true,
+        "name": "shell"
+      }
+    ]
+  },
+  {
+    "tool": "list_ai_models",
+    "args": {},
+    "want": [
+      {
+        "baseURL": "https://x",
+        "hasKey": true,
+        "id": "m1",
+        "label": "liq",
+        "model": "gpt-3.5"
+      },
+      {
+        "baseURL": "https://x",
+        "hasKey": true,
+        "id": "m2",
+        "label": "GPT-4o",
+        "model": "gpt-4o"
+      }
+    ]
+  },
+  {
+    "tool": "update_ai_model",
+    "args": {
+      "id": "m1",
+      "label": "Liquid"
+    },
+    "want": {
+      "blastRadius": "Rewrites the label of model entry m1 (current model string gpt-3.5): \"liq\" -\u003e \"Liquid\". The model name, endpoint, and stored key stay untouched.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Rename AI model \"liq\" to \"Liquid\"?"
+    }
+  },
+  {
+    "tool": "git_meta",
+    "args": {
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "ahead": 0,
+      "behind": 0,
+      "branch": "main",
+      "changedFiles": 1,
+      "detached": false,
+      "project": "itest-tier-2/repo",
+      "unborn": false,
+      "upstream": "origin/main"
+    }
+  },
+  {
+    "tool": "stop_project",
+    "args": {
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Stops its container and preview. Sessions end.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Stop project itest-tier-2/repo?"
+    }
+  },
+  {
+    "tool": "preview_state",
+    "args": {
+      "project": "itest-tier-2/repo"
+    },
+    "want": [
+      {
+        "ports": [],
+        "project": "itest-tier-2/repo",
+        "status": "stopped"
+      }
+    ]
+  },
+  {
+    "tool": "preview_state",
+    "args": {},
+    "want": [
+      {
+        "ports": [],
+        "project": "itest-tier-2/repo",
+        "status": "stopped"
+      }
+    ]
+  },
+  {
+    "tool": "start_project",
+    "args": {
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Starts its container. No data is touched.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Start project itest-tier-2/repo?"
+    }
+  },
+  {
+    "tool": "restart_project",
+    "args": {
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Stops then starts its container and preview.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Restart project itest-tier-2/repo?"
+    }
+  },
+  {
+    "tool": "session_create",
+    "args": {
+      "name": "dev",
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Adds one tmux session.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Create session dev in itest-tier-2/repo?"
+    }
+  },
+  {
+    "tool": "session_kill",
+    "args": {
+      "name": "one",
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Ends that session. Other sessions keep running.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Kill session one in itest-tier-2/repo?"
+    }
+  },
+  {
+    "tool": "session_restart",
+    "args": {
+      "name": "one",
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Kills it and relaunches the same harness or shell.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Restart session one in itest-tier-2/repo?"
+    }
+  },
+  {
+    "tool": "session_rename",
+    "args": {
+      "new": "uno",
+      "old": "one",
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Renames one session. Live attaches survive.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Rename session one to uno in itest-tier-2/repo?"
+    }
+  },
+  {
+    "tool": "preview_start",
+    "args": {
+      "port": 3000,
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Opens the preview sidecar against that port.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Preview itest-tier-2/repo on :3000?"
+    }
+  },
+  {
+    "tool": "preview_close",
+    "args": {
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Stops the preview sidecar. The app server keeps running.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Close preview for itest-tier-2/repo?"
+    }
+  },
+  {
+    "tool": "git_pull",
+    "args": {
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Runs git pull --ff-only. Never force-pushes.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Pull itest-tier-2/repo?"
+    }
+  },
+  {
+    "tool": "git_push",
+    "args": {
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Pushes the current branch with -u origin. No force.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Push itest-tier-2/repo?"
+    }
+  },
+  {
+    "tool": "git_switch",
+    "args": {
+      "branch": "dev",
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Refuses when the tree is dirty or conflicted.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Switch itest-tier-2/repo to dev?"
+    }
+  },
+  {
+    "tool": "delete_project",
+    "args": {
+      "project": "itest-tier-2/repo",
+      "scope": "container"
+    },
+    "want": {
+      "blastRadius": "This removes the container, its 1 session, and the home volume. The repo volume stays, and the project stays listed.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Delete project itest-tier-2/repo?"
+    }
+  },
+  {
+    "tool": "install_harness",
+    "args": {
+      "harness": "opencode",
+      "projects": [
+        "itest-tier-2/repo"
+      ]
+    },
+    "want": {
+      "blastRadius": "Runs its install command in each picked project.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Install opencode into 1 projects?"
+    }
+  },
+  {
+    "tool": "fanout_exec",
+    "args": {
+      "command": "echo hi",
+      "projects": [
+        "itest-tier-2/repo"
+      ]
+    },
+    "want": {
+      "blastRadius": "Runs once per picked project after Confirm. Skips stopped containers.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Run \"echo hi\" in 1 projects?"
+    }
+  },
+  {
+    "tool": "save_shortcut",
+    "args": {
+      "alias": "retest",
+      "command": "npm test",
+      "kind": "cmd",
+      "project": "itest-tier-2/repo"
+    },
+    "want": {
+      "blastRadius": "Adds or replaces one shortcut row.",
+      "confirmId": "__CONFIRM_ID__",
+      "needsConfirm": true,
+      "summary": "Save shortcut retest in itest-tier-2/repo?"
+    }
+  },
+  {
+    "tool": "session_create",
+    "args": {
+      "name": "apply-me",
+      "project": "itest-tier-2/repo"
+    },
+    "apply": true,
+    "want": "Created apply-me",
+    "wantState": {
+      "projects": {
+        "itest-tier-2/repo": {
+          "branch": "main",
+          "harnesses": {
+            "opencode": "true"
+          },
+          "repo": "git://host.docker.internal:39418/itest-tier-2/repo",
+          "sessions": {
+            "apply-me": {},
+            "main": {},
+            "oc1": {
+              "harness": "opencode"
+            },
+            "shell": {}
+          },
+          "shortcuts": [
+            {
+              "alias": "dev",
+              "command": "npm install \u0026\u0026 npm start",
+              "id": "qc-dev",
+              "kind": "cmd"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "tool": "session_kill",
+    "args": {
+      "name": "apply-me",
+      "project": "itest-tier-2/repo"
+    },
+    "apply": true,
+    "want": "Killed apply-me",
+    "wantState": {
+      "projects": {
+        "itest-tier-2/repo": {
+          "branch": "main",
+          "harnesses": {
+            "opencode": "true"
+          },
+          "repo": "git://host.docker.internal:39418/itest-tier-2/repo",
+          "sessions": {
+            "main": {},
+            "oc1": {
+              "harness": "opencode"
+            },
+            "shell": {}
+          },
+          "shortcuts": [
+            {
+              "alias": "dev",
+              "command": "npm install \u0026\u0026 npm start",
+              "id": "qc-dev",
+              "kind": "cmd"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "tool": "save_shortcut",
+    "args": {
+      "alias": "retest",
+      "command": "npm test",
+      "kind": "cmd",
+      "project": "itest-tier-2/repo"
+    },
+    "apply": true,
+    "want": "Saved retest",
+    "wantState": {
+      "projects": {
+        "itest-tier-2/repo": {
+          "branch": "main",
+          "harnesses": {
+            "opencode": "true"
+          },
+          "repo": "git://host.docker.internal:39418/itest-tier-2/repo",
+          "sessions": {
+            "main": {},
+            "oc1": {
+              "harness": "opencode"
+            },
+            "shell": {}
+          },
+          "shortcuts": [
+            {
+              "alias": "dev",
+              "command": "npm install \u0026\u0026 npm start",
+              "id": "qc-dev",
+              "kind": "cmd"
+            },
+            {
+              "alias": "retest",
+              "command": "npm test",
+              "id": "s-retest",
+              "kind": "cmd"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "tool": "fanout_exec",
+    "args": {
+      "command": "echo hi",
+      "projects": [
+        "itest-tier-2/repo"
+      ]
+    },
+    "apply": true,
+    "want": "ok=1 skipped=0 failed=0"
+  },
+  {
+    "tool": "restart_project",
+    "args": {
+      "project": "itest-tier-2/repo"
+    },
+    "apply": true,
+    "want": "Restarted."
+  },
+  {
+    "tool": "stop_project",
+    "args": {
+      "project": "itest-tier-2/repo"
+    },
+    "apply": true,
+    "want": "Stopped."
+  },
+  {
+    "tool": "delete_project",
+    "args": {
+      "project": "itest-tier-2/repo",
+      "scope": "container"
+    },
+    "apply": true,
+    "want": "Deleted itest-tier-2/repo"
+  }
+]

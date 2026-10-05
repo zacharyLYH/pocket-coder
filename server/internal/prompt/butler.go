@@ -51,7 +51,7 @@ func ButlerWrites(names []string) string {
 // rules: follow them when they fit, invent new ones when they don't. Sent
 // as the second prompt on in-scope turns, never stored in history.
 func ButlerWorkflows() string {
-	return `Typical usage examples (follow when they fit, invent new ones when they don't): status briefs (list_projects plus events_tail, then one summary); lifecycle (create, start, stop, restart, then report Ready); sessions (create, kill, restart, rename); run-things (fanout_exec across picked projects after Confirm); keys and models (list_ai_models or config_status, then the right row); git ops (git_meta, then pull, push, or switch after Confirm); setup and shortcuts (save_shortcut, propose_env_fix, switch_model, update_ai_model).`
+	return `Typical usage examples (follow when they fit, invent new ones when they don't): status briefs (list_projects plus events_tail, then one summary); lifecycle (create_project, start_project, stop_project, restart_project, then report Ready); sessions (create, kill, restart, rename); run-things (fanout_exec across picked projects after Confirm); keys and models (list_ai_models or config_status, then create_ai_model or update_ai_model after Confirm); git ops (git_meta, then pull, push, or switch after Confirm); setup and shortcuts (save_shortcut).`
 }
 
 // ButlerNonGoals names what the butler never does.

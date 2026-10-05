@@ -67,6 +67,44 @@ test.describe('butler confirm card', () => {
     expect(discarded).toEqual([])
   })
 
+  test('model card masks the key field until typed', async ({ page }) => {
+    const applied: string[] = []
+    const discarded: string[] = []
+    const modelCard = {
+      id: 'c3', tool: 'create_ai_model',
+      summary: 'Add AI model "Two"?',
+      blastRadius: 'Adds one entry for model gpt-4o via https://y. The key is typed into a masked field at Confirm.',
+    }
+    await mockButlerThreads(page)
+    await mockButlerTurn(page)
+    await page.route(/\/api\/butler\/threads\/[^/?]+$/, async (route) => {
+      await route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({
+          thread: {
+            id: 'ab12cd34ef56ab78cd90ef13', title: 'chat', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z',
+            status: applied.length > 0 ? 'ready' : 'awaiting',
+            approvals: applied.length > 0 ? [] : [modelCard],
+            turns: [{ turnId: 't0', prompt: 'add a model', answer: 'Tap Confirm to add the model.', steps: [], error: null, time: '2026-09-02T10:00:00Z' }],
+          },
+        }),
+      })
+    })
+    await mockButlerConfirms(page, applied, discarded)
+    await openSheet(page)
+    await page.getByTestId('butler-prompt').fill('add a model')
+    await page.getByTestId('butler-send').click()
+
+    const value = page.getByTestId('butler-confirm-value')
+    await expect(value).toBeVisible()
+    await expect(value).toHaveAttribute('type', 'password')
+    await expect(page.getByTestId('butler-confirm-ok')).toBeDisabled()
+    await value.fill('test-key-two')
+    await expect(page.getByTestId('butler-confirm-ok')).toBeEnabled()
+    await expect(page).toHaveScreenshot('butler-confirm-value.png')
+    expect(applied).toEqual([])
+  })
+
   test('delete blast shows before Confirm; Discard runs nothing', async ({ page }) => {
     const applied: string[] = []
     const discarded: string[] = []
