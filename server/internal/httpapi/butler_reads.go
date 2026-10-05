@@ -385,9 +385,9 @@ func butlerReadTools(d Deps) []agent.Tool {
 		},
 		butlerToolHarnessInventory: {
 			Name:        butlerToolHarnessInventory,
-			Description: "Harness names plus per-project install state. Args: {project?}.",
-			Schema:      butlerSchema(map[string]any{"project": map[string]any{"type": "string"}}),
-			Run: func(ctx context.Context, argsJSON string) (string, error) {
+			Description: "Harnesses and the projects each is installed in (recorded installs). The built-in terminal shell is excluded. No args.",
+			Schema:      noProps,
+			Run: func(_ context.Context, _ string) (string, error) {
 				if d.Harnesses == nil {
 					return "[]", nil
 				}
@@ -395,24 +395,27 @@ func butlerReadTools(d Deps) []agent.Tool {
 				if err != nil {
 					return "", err
 				}
-				id := butlerStr(butlerArgs(argsJSON), "project")
-				installed := map[string]bool{}
-				if id != "" && d.Sessions != nil {
-					cmds := make([]string, 0, len(all))
-					for _, h := range all {
-						if b := harness.Binary(h); b != "" {
-							cmds = append(cmds, b)
+				// Recorded per-project installs: harness id -> project ids.
+				byHarness := map[string][]string{}
+				if d.Projects != nil {
+					if entries, perr := d.Projects.List(); perr == nil {
+						for _, e := range entries {
+							for _, hid := range e.Harnesses {
+								byHarness[hid] = append(byHarness[hid], e.ID)
+							}
 						}
 					}
-					installed, _ = d.Sessions.Installed(ctx, project.ContainerName(id), cmds)
 				}
 				out := make([]map[string]any, 0, len(all))
 				for _, h := range all {
-					row := map[string]any{"id": h.ID, "name": h.Name, "hasInstall": h.Install != ""}
-					if id != "" {
-						row["installed"] = installed[harness.Binary(h)]
+					if harness.Binary(h) == "bash" {
+						continue // the terminal shell is not a launch target
 					}
-					out = append(out, row)
+					projects := byHarness[h.ID]
+					if projects == nil {
+						projects = []string{}
+					}
+					out = append(out, map[string]any{"id": h.ID, "name": h.Name, "installedIn": projects})
 				}
 				return butlerJSON(out), nil
 			},

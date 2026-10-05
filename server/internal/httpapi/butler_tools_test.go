@@ -12,6 +12,7 @@ import (
 
 	"pcoder/internal/agent"
 	"pcoder/internal/docker"
+	"pcoder/internal/harness"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
 	"pcoder/internal/prompt"
@@ -177,13 +178,23 @@ func TestButlerReadTools(t *testing.T) {
 		t.Fatalf("health = %s", out)
 	}
 
-	// harness_inventory: names + hasInstall, no commands.
+	// harness_inventory: harnesses plus the projects each is installed in
+	// (recorded installs only), no commands. The built-in shell is excluded.
+	if _, err := d.Harnesses.Save(harness.Harness{Name: "Terminal", Command: "bash"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Projects.RecordInstall("a/b", "fake"); err != nil {
+		t.Fatal(err)
+	}
 	out, err = byName[butlerToolHarnessInventory](context.Background(), `{}`)
 	if err != nil {
 		t.Fatalf("harness_inventory: %v", err)
 	}
-	if !strings.Contains(out, `"Fake"`) || strings.Contains(out, "fakecli") && strings.Contains(out, `"command"`) {
-		t.Fatalf("harness_inventory = %s, want names only", out)
+	if !strings.Contains(out, `"Fake"`) || !strings.Contains(out, `"a/b"`) {
+		t.Fatalf("harness_inventory = %s, want Fake installed in a/b", out)
+	}
+	if strings.Contains(out, "Terminal") || strings.Contains(out, "bash") {
+		t.Fatalf("harness_inventory must exclude the built-in shell: %s", out)
 	}
 
 	// env_names + config_status: names and booleans only — key values
