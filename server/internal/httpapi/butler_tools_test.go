@@ -309,6 +309,9 @@ func prettyJSON(raw string) string {
 // against it. Each entry is named by its tool const. Colocated so a dev
 // verifies seed + calls + outputs together.
 func TestButlerTools(t *testing.T) {
+	origProbe := probeGitHubSSH
+	probeGitHubSSH = func(ctx context.Context, kp sshkeys.Key) (string, error) { return "octocat", nil }
+	t.Cleanup(func() { probeGitHubSSH = origProbe })
 	root := filepath.Join("testdata", "butler")
 	entries, err := os.ReadDir(root)
 	if err != nil {

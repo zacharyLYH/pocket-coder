@@ -386,5 +386,154 @@
       "model": "x"
     },
     "want": "ERROR: label, model, and baseURL are required"
+  },
+  {
+    "tool": "fleet_health",
+    "args": {},
+    "want": [
+      {
+        "branch": "main",
+        "harnesses": 0,
+        "id": "itest-tier-3/repo",
+        "preview": "stopped",
+        "sessions": 1,
+        "status": "running"
+      }
+    ]
+  },
+  {
+    "tool": "ssh_probe",
+    "args": {},
+    "want": {
+      "ok": true,
+      "user": "octocat"
+    }
+  },
+  {
+    "tool": "smtp_status",
+    "args": {},
+    "want": {
+      "configured": true,
+      "host": "smtp.gmail.com",
+      "port": 587,
+      "user": "me@example.com"
+    }
+  },
+  {
+    "tool": "list_shortcuts",
+    "args": {
+      "project": "itest-tier-3/repo"
+    },
+    "want": [
+      {
+        "alias": "chain",
+        "id": "s-chain",
+        "kind": "cmd"
+      }
+    ]
+  },
+  {
+    "tool": "list_shortcuts",
+    "args": {
+      "project": "ghost/repo"
+    },
+    "want": []
+  },
+  {
+    "tool": "harness_detail",
+    "args": {},
+    "want": [
+      {
+        "command": "cline",
+        "id": "cline",
+        "install": "npm i -g cline",
+        "installedIn": [],
+        "name": "Cline"
+      },
+      {
+        "command": "freebuff",
+        "id": "freebuff",
+        "install": "npm i -g freebuff && freebuff --version || true",
+        "installedIn": [],
+        "name": "Freebuff"
+      },
+      {
+        "command": "opencode",
+        "id": "opencode",
+        "install": "npm i -g opencode-ai",
+        "installedIn": [],
+        "name": "OpenCode"
+      }
+    ]
+  },
+  {
+    "tool": "harness_detail",
+    "args": {
+      "id": "opencode"
+    },
+    "want": {
+      "command": "opencode",
+      "id": "opencode",
+      "install": "npm i -g opencode-ai",
+      "installedIn": [],
+      "name": "OpenCode"
+    }
+  },
+  {
+    "tool": "harness_detail",
+    "args": {
+      "id": "ghost"
+    },
+    "want": "ERROR: no such harness \"ghost\""
+  },
+  {
+    "tool": "thread_recap",
+    "args": {
+      "limit": 5
+    },
+    "want": {
+      "butler": [
+        {
+          "title": "test approval",
+          "turnCount": 1
+        },
+        {
+          "title": "test approval",
+          "turnCount": 1
+        },
+        {
+          "title": "test approval",
+          "turnCount": 1
+        },
+        {
+          "title": "test approval",
+          "turnCount": 1
+        },
+        {
+          "title": "test approval",
+          "turnCount": 1
+        }
+      ],
+      "codemapThreads": 0
+    }
+  },
+  {
+    "tool": "project_harnesses",
+    "args": {
+      "project": "itest-tier-3/repo"
+    },
+    "want": []
+  },
+  {
+    "tool": "project_harnesses",
+    "args": {
+      "project": "ghost/repo"
+    },
+    "want": "ERROR: no such project"
+  },
+  {
+    "tool": "project_harnesses",
+    "args": {},
+    "want": "ERROR: project is required"
   }
 ]

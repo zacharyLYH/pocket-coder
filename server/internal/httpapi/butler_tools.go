@@ -19,6 +19,13 @@ const (
 	butlerToolListAIModels     = "list_ai_models"
 	butlerToolServerPublicKey  = "server_public_key"
 	butlerToolArchitecture     = "architecture"
+	butlerToolFleetHealth      = "fleet_health"
+	butlerToolSSHProbe         = "ssh_probe"
+	butlerToolSMTPStatus       = "smtp_status"
+	butlerToolListShortcuts    = "list_shortcuts"
+	butlerToolHarnessDetail    = "harness_detail"
+	butlerToolProjectHarnesses = "project_harnesses"
+	butlerToolThreadRecap      = "thread_recap"
 )
 
 // Write tools: propose-only, Confirm applies. Safe first, sensitive after.
@@ -61,6 +68,13 @@ var butlerReadNames = []string{
 	butlerToolListAIModels,
 	butlerToolServerPublicKey,
 	butlerToolArchitecture,
+	butlerToolFleetHealth,
+	butlerToolSSHProbe,
+	butlerToolSMTPStatus,
+	butlerToolListShortcuts,
+	butlerToolHarnessDetail,
+	butlerToolProjectHarnesses,
+	butlerToolThreadRecap,
 }
 
 // butlerWriteNames is every write tool in registry order.

@@ -502,6 +502,239 @@ func butlerReadTools(d Deps) []agent.Tool {
 				return "Unknown section. Known: " + strings.Join(butlerArchSectionNames(), ", ") + ".", nil
 			},
 		},
+		butlerToolFleetHealth: {
+			Name:        butlerToolFleetHealth,
+			Description: "Every project with container status, preview slot, and recorded session/harness counts. No args.",
+			Schema:      noProps,
+			Run: func(ctx context.Context, _ string) (string, error) {
+				if d.Projects == nil {
+					return "[]", nil
+				}
+				entries, err := d.Projects.List()
+				if err != nil {
+					return "", err
+				}
+				out := make([]map[string]any, 0, len(entries))
+				for _, e := range entries {
+					row := map[string]any{"id": e.ID, "status": "unknown"}
+					sessions, harnesses := 0, 0
+					if p, st, gerr := d.Projects.Get(ctx, e.ID); gerr == nil {
+						row["status"] = st.State
+						row["branch"] = p.Branch
+						sessions = len(p.Sessions)
+						harnesses = len(p.Harnesses)
+					}
+					row["preview"] = butlerPreviewStatus(ctx, d, e.ID)
+					row["sessions"] = sessions
+					row["harnesses"] = harnesses
+					out = append(out, row)
+				}
+				sort.Slice(out, func(i, j int) bool { return out[i]["id"].(string) < out[j]["id"].(string) })
+				return butlerJSON(out), nil
+			},
+		},
+		butlerToolSSHProbe: {
+			Name:        butlerToolSSHProbe,
+			Description: "Live GitHub SSH probe with the server deploy key. Returns ok and the authed user. No args.",
+			Schema:      noProps,
+			Run: func(ctx context.Context, _ string) (string, error) {
+				if d.SSHKeys == nil {
+					return "", fmt.Errorf("server key not generated yet")
+				}
+				kp, ok := d.SSHKeys.Get()
+				if !ok {
+					return "", fmt.Errorf("server key not generated yet")
+				}
+				user, err := probeGitHubSSH(ctx, kp)
+				if err != nil {
+					return "", err
+				}
+				return butlerJSON(map[string]any{"ok": true, "user": user}), nil
+			},
+		},
+		butlerToolSMTPStatus: {
+			Name:        butlerToolSMTPStatus,
+			Description: "SMTP wiring for login PINs: configured bool plus host, port, user. Never the password. No args.",
+			Schema:      noProps,
+			Run: func(_ context.Context, _ string) (string, error) {
+				if d.State == nil {
+					return butlerJSON(map[string]any{"configured": false}), nil
+				}
+				var host, user string
+				var port int
+				var configured bool
+				d.State.View(func(doc *state.Document) {
+					if doc.SMTP != nil {
+						configured = true
+						host, port, user = doc.SMTP.Host, doc.SMTP.Port, doc.SMTP.User
+					}
+				})
+				if !configured {
+					return butlerJSON(map[string]any{"configured": false}), nil
+				}
+				return butlerJSON(map[string]any{
+					"configured": true, "host": host, "port": port, "user": user,
+				}), nil
+			},
+		},
+		butlerToolListShortcuts: {
+			Name:        butlerToolListShortcuts,
+			Description: "Shortcut aliases and kinds for one project. Names only, never command text. Args: {project}.",
+			Schema:      butlerSchema(projectProp()),
+			Run: func(_ context.Context, argsJSON string) (string, error) {
+				id := butlerStr(butlerArgs(argsJSON), "project")
+				if id == "" {
+					return "", fmt.Errorf("project is required")
+				}
+				if d.State == nil {
+					return "[]", nil
+				}
+				out := []map[string]any{}
+				d.State.View(func(doc *state.Document) {
+					if p, ok := doc.Projects[id]; ok {
+						for _, s := range p.Shortcuts {
+							out = append(out, map[string]any{"id": s.ID, "alias": s.Alias, "kind": s.Kind})
+						}
+					}
+				})
+				if out == nil {
+					return "[]", nil
+				}
+				sort.Slice(out, func(i, j int) bool { return out[i]["alias"].(string) < out[j]["alias"].(string) })
+				return butlerJSON(out), nil
+			},
+		},
+		butlerToolHarnessDetail: {
+			Name:        butlerToolHarnessDetail,
+			Description: "Harness registry detail: command, install, and installed-in projects. Never native config values. Args: {id?} — omit for all.",
+			Schema:      butlerSchema(map[string]any{"id": map[string]any{"type": "string"}}),
+			Run: func(_ context.Context, argsJSON string) (string, error) {
+				if d.Harnesses == nil {
+					return "[]", nil
+				}
+				want := butlerStr(butlerArgs(argsJSON), "id")
+				all, err := d.Harnesses.List()
+				if err != nil {
+					return "", err
+				}
+				byHarness := map[string][]string{}
+				if d.Projects != nil {
+					if entries, perr := d.Projects.List(); perr == nil {
+						for _, e := range entries {
+							for _, hid := range e.Harnesses {
+								byHarness[hid] = append(byHarness[hid], e.ID)
+							}
+						}
+					}
+				}
+				detail := func(h harness.Harness) map[string]any {
+					projects := byHarness[h.ID]
+					if projects == nil {
+						projects = []string{}
+					}
+					row := map[string]any{"id": h.ID, "name": h.Name, "command": h.Command, "installedIn": projects}
+					if h.Install != "" {
+						row["install"] = h.Install
+					}
+					return row
+				}
+				if want != "" {
+					for _, h := range all {
+						if h.ID == want {
+							return butlerJSON(detail(h)), nil
+						}
+					}
+					return "", fmt.Errorf("no such harness %q", want)
+				}
+				out := make([]map[string]any, 0, len(all))
+				for _, h := range all {
+					if harness.Binary(h) == "bash" {
+						continue
+					}
+					out = append(out, detail(h))
+				}
+				return butlerJSON(out), nil
+			},
+		},
+		butlerToolProjectHarnesses: {
+			Name:        butlerToolProjectHarnesses,
+			Description: "Harnesses downloaded in one project, probed live in its container. Only present ones are listed; empty means none or the container is stopped. Args: {project}.",
+			Schema:      butlerSchema(projectProp()),
+			Run: func(ctx context.Context, argsJSON string) (string, error) {
+				id := butlerStr(butlerArgs(argsJSON), "project")
+				if id == "" {
+					return "", fmt.Errorf("project is required")
+				}
+				if d.Harnesses == nil || d.Projects == nil || d.Sessions == nil {
+					return "", fmt.Errorf("no such project")
+				}
+				_, st, gerr := d.Projects.Get(ctx, id)
+				if gerr != nil {
+					return "", fmt.Errorf("no such project")
+				}
+				all, err := d.Harnesses.List()
+				if err != nil {
+					return "", err
+				}
+				// Live truth, one probe: only binaries present in the
+				// container are listed. Stopped containers probe nothing.
+				present := map[string]bool{}
+				if st.State == project.StateRunning {
+					cmds := make([]string, 0, len(all))
+					for _, h := range all {
+						if b := harness.Binary(h); b != "" {
+							cmds = append(cmds, b)
+						}
+					}
+					if res, perr := d.Sessions.Installed(ctx, project.ContainerName(id), cmds); perr == nil {
+						present = res
+					}
+				}
+				rows := make([]map[string]any, 0)
+				for _, h := range all {
+					if harness.Binary(h) == "bash" {
+						continue // the terminal shell ships in the image, nothing to download
+					}
+					if present[harness.Binary(h)] {
+						rows = append(rows, map[string]any{"id": h.ID, "name": h.Name})
+					}
+				}
+				return butlerJSON(rows), nil
+			},
+		},
+		butlerToolThreadRecap: {
+			Name:        butlerToolThreadRecap,
+			Description: "Recent chat titles and turn counts: last butler threads plus codemap thread counts. Titles only, never bodies. Args: {limit?} — default 5, max 20.",
+			Schema:      butlerSchema(map[string]any{"limit": map[string]any{"type": "number"}}),
+			Run: func(_ context.Context, argsJSON string) (string, error) {
+				limit := butlerInt(butlerArgs(argsJSON), "limit", 5, 20)
+				recent := []map[string]any{}
+				if d.Butler != nil {
+					if sums, err := d.Butler.List(butlerScope); err == nil {
+						for i, s := range sums {
+							if i >= limit {
+								break
+							}
+							recent = append(recent, map[string]any{"title": s.Title, "turnCount": s.TurnCount})
+						}
+					}
+				}
+				if recent == nil {
+					recent = []map[string]any{}
+				}
+				codemaps := 0
+				if d.Codemaps != nil && d.Projects != nil {
+					if entries, err := d.Projects.List(); err == nil {
+						for _, e := range entries {
+							if sums, cerr := d.Codemaps.List(e.ID); cerr == nil {
+								codemaps += len(sums)
+							}
+						}
+					}
+				}
+				return butlerJSON(map[string]any{"butler": recent, "codemapThreads": codemaps}), nil
+			},
+		},
 	}
 	out := make([]agent.Tool, 0, len(butlerReadNames))
 	for _, name := range butlerReadNames {
