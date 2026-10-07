@@ -31,8 +31,9 @@ test.describe('preview non-default port', () => {
       const token = await statusToken(request, projectID)
 
       // Frontend proof: the popup is the /preview/<id> route, not a
-      // blank tab or an auth redirect.
-      await expect(previewPage).toHaveURL(new RegExp(`/preview/${projectID}$`))
+      // blank tab or an auth redirect. The id is URL-encoded in the
+      // route (owner/repo slash becomes %2F), so match the encoded form.
+      await expect(previewPage).toHaveURL(new RegExp(`/preview/${projectURL(projectID)}$`))
 
       // Frontend proof: PreviewSurface mounted the noVNC iframe.
       const iframe = previewPage.locator('iframe[title="Remote project preview"]')

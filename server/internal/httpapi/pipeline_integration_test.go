@@ -220,7 +220,7 @@ func TestCreateRejectsBadInputBeforeDocker(t *testing.T) {
 }
 
 func TestProjectIsolationAndRestartSurvival(t *testing.T) {
-	h, _, _, pinOut, ev, st := newLiveDeps(t)
+	h, _, _, pinOut, _, st := newLiveDeps(t)
 	cookie := login(t, h, pinOut)
 
 	// one repo is one project: two distinct fixture repos, both tracked
@@ -238,8 +238,29 @@ func TestProjectIsolationAndRestartSurvival(t *testing.T) {
 		t.Fatal("delete A failed")
 	}
 	waitForStatus(t, h, cookie, idB, "running")
-	if !hasEvent(t, ev, "project.delete", idA) || hasEvent(t, ev, "project.delete", idB) {
-		t.Fatal("delete events scoped to the wrong project")
+	// A is fully gone: metadata 404s and its observe scope is wiped
+	// with it (the handler drops observe files on every successful
+	// delete, so the old events.log scoping assertion moved here).
+	// Per-project lines live in the observe store now; events.log
+	// holds just the global audit since the observability pass.
+	code, body := doJSON(t, h, cookie, http.MethodGet, projectPath(idA, ""), "")
+	if code != http.StatusNotFound {
+		t.Fatalf("deleted A still readable: %d %v", code, body)
+	}
+	code, body = doJSON(t, h, cookie, http.MethodGet, projectPath(idA, "/observe?type=project.delete"), "")
+	if code != http.StatusOK {
+		t.Fatalf("observe A delete: %d %v", code, body)
+	}
+	if logs, _ := body["logs"].([]any); len(logs) != 0 {
+		t.Fatalf("deleted A's observe scope should be wiped, got %v", logs)
+	}
+	// B's scope holds no project.delete line: the delete never bled over.
+	code, body = doJSON(t, h, cookie, http.MethodGet, projectPath(idB, "/observe?type=project.delete"), "")
+	if code != http.StatusOK {
+		t.Fatalf("observe B delete: %d %v", code, body)
+	}
+	if logs, _ := body["logs"].([]any); len(logs) != 0 {
+		t.Fatalf("B's observe scope must not hold a project.delete line, got %v", logs)
 	}
 
 	// a fresh Service over the same data dir (server restart) still sees B
@@ -254,7 +275,7 @@ func TestProjectIsolationAndRestartSurvival(t *testing.T) {
 	lc2 := testutil.NewLifecycle(t)
 	h2 := New(Deps{Events: ev2, Version: "itest", Auth: auth2,
 		Projects: project.NewService(project.Open(st), lc2.Docker())})
-	code, body := doJSON(t, h2, cookie, http.MethodGet, projectPath(idB, ""), "")
+	code, body = doJSON(t, h2, cookie, http.MethodGet, projectPath(idB, ""), "")
 	if code != http.StatusOK || body["status"] != "running" {
 		t.Fatalf("restarted server lost the project: %d %v", code, body)
 	}

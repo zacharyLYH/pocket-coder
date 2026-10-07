@@ -1,7 +1,7 @@
 import { expect, test } from './test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
-import { createReactProject, execInProject, waitForInspectContaining, statusToken, tokenHeaders } from './preview.helpers'
+import { createReactProject, execInProject, startPreview, waitForInspectContaining, statusToken, tokenHeaders } from './preview.helpers'
 
 test.describe('preview reconnect', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
@@ -15,6 +15,9 @@ test.describe('preview reconnect', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
+      // The surface never starts the sidecar itself, so start it first —
+      // statusToken below would otherwise poll 60s for a token that never comes.
+      await startPreview(request, projectID)
       const token = await statusToken(request, projectID)
 
       // ── First connection: open preview, type something ──

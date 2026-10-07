@@ -1,7 +1,7 @@
 import { expect, test } from './test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
-import { createReactProject, openPreviewFromTerminal, openSurfacePage, statusToken, surfaceToken, toolGet } from './preview.helpers'
+import { createReactProject, openPreviewFromTerminal, openSurfacePage, startPreview, statusToken, surfaceToken, toolGet } from './preview.helpers'
 
 // The compose stack defaults to PCODER_PREVIEW_TOKEN_SILENCE=20s with a 1s
 // sweep interval, so a closed surface's token dies within ~2s of these
@@ -23,12 +23,20 @@ test.describe('preview token rotation', () => {
     try {
       const projectID = await createReactProject(request)
       const page = await browser.newPage()
+      // Same ssh-probe stub as e2e/test.ts (which only covers the page
+      // fixture): without it the home SSH gate hides the project cards on
+      // raw pages and the Terminal button below never appears.
+      await page.route('**/api/ssh/test', (route) =>
+        route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, user: 'e2e' }) }),
+      )
       await page.goto('/app')
       const previewPage = await openPreviewFromTerminal(page, projectID)
       const t1 = await surfaceToken(previewPage)
       expect(await statusToken(request, projectID)).toBe(t1)
+      // Close only the surface page: it shares page's context (opened via
+      // window.open), so closing the context would kill page too, which the
+      // steps below still need. Closing the page stops its beats.
       await previewPage.close()
-      await previewPage.context().close().catch(() => {})
       // Silence past threshold + sweep margin rotates the token.
       await page.waitForTimeout(TOKEN_SILENCE_MS)
       const staleSurface = await request.get(
@@ -55,6 +63,7 @@ test.describe('preview token rotation', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
+      await startPreview(request, projectID)
       const tabA = await openSurfacePage(browser, projectID)
       const t1 = await surfaceToken(tabA)
       const tabB = await openSurfacePage(browser, projectID)
@@ -116,15 +125,20 @@ test.describe('preview token rotation', () => {
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)
+      await startPreview(request, projectID)
       const page = await browser.newPage()
       await page.goto(`/preview/${encodeURIComponent(projectID)}`)
       await expect(page.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: 60_000 })
-      // Close the only surface: with nothing beating, the token rots after
-      // the silence window and the page's heartbeat flips to the expired UI.
+      // Laptop-sleep case: the page stays open but its beats stop reaching
+      // the server, so the token rots past the silence window. (Blocking
+      // rather than closing: a closed page can't show the expired card, and
+      // live 5s beats would otherwise keep the token alive forever.)
+      await page.route('**/preview/heartbeat', (route) => route.abort())
       await page.waitForTimeout(TOKEN_SILENCE_MS)
+      await page.unroute('**/preview/heartbeat')
       await expect(
         page.getByText('Preview expired — the sidecar rotated its token.'),
-      ).toBeVisible({ timeout: 120_000 })
+      ).toBeVisible({ timeout: 60_000 })
       await expect(page).toHaveScreenshot('preview-expired.png', { fullPage: true })
       // Resume re-mints a token and reattaches to the same sidecar.
       await page.getByRole('button', { name: 'Resume' }).click()

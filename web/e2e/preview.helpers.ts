@@ -504,9 +504,16 @@ export async function createVueProject(request: APIRequestContext): Promise<stri
 }
 
 // -- preview token helpers (preview-token-rfc section 6) --
-// The surface page mints a per-sidecar token; every tools call carries it.
-// The worker starts asynchronously after project creation, so poll until
-// the status endpoint reports a token instead of single-shotting it.
+// The surface page never starts the sidecar (it says so on the stopped
+// card), so specs that open /preview/:id directly must startPreview first
+// — the same thing the Preview tab's Start button does. The worker boots
+// asynchronously, so poll until the status endpoint reports a token
+// instead of single-shotting it.
+export async function startPreview(request: APIRequestContext, id: string, port = 3000): Promise<void> {
+  const res = await request.post(`/api/projects/${projectURL(id)}/preview/start`, { data: { port } })
+  expect(res.ok()).toBeTruthy()
+}
+
 export async function statusToken(request: APIRequestContext, id: string): Promise<string> {
   let token = ''
   await expect(async () => {
