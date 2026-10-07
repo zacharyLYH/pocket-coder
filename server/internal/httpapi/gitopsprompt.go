@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"pcoder/internal/obs"
@@ -53,41 +52,17 @@ type opsContext struct {
 // unborn state. Soft failures degrade to zero values — the prompt still
 // builds, with a caveat line instead of hard numbers.
 func opsState(ctx context.Context, d Deps, container, dir string) opsContext {
-	qd := shellQuote(dir)
-	c := opsContext{}
-	branch, _ := d.Sessions.ExecCommand(ctx, container,
-		"git -C "+qd+" rev-parse --abbrev-ref HEAD")
-	branch = strings.TrimSpace(branch)
-	if branch == "" || branch == "HEAD" {
-		c.detached = true
-		if sha, _ := d.Sessions.ExecCommand(ctx, container,
-			"git -C "+qd+" rev-parse --short HEAD"); strings.TrimSpace(sha) != "" {
-			branch = strings.TrimSpace(sha)
-		} else {
-			branch = "HEAD"
-		}
-	}
-	c.branch = branch
-	if u, _ := d.Sessions.ExecCommand(ctx, container,
-		"git -C "+qd+" rev-parse --abbrev-ref @{u} 2>/dev/null"); strings.TrimSpace(u) != "" {
-		c.upstream = strings.TrimSpace(u)
-		if counts, cerr := d.Sessions.ExecCommand(ctx, container,
-			"git -C "+qd+" rev-list --left-right --count @{u}...HEAD"); cerr == nil {
-			if f := strings.Fields(counts); len(f) == 2 {
-				c.behind, _ = strconv.Atoi(f[0])
-				c.ahead, _ = strconv.Atoi(f[1])
-			}
-		}
+	m := getGitMeta(ctx, d, container, dir)
+	c := opsContext{
+		branch: m.branch, detached: m.detached,
+		upstream: m.upstream, ahead: m.ahead, behind: m.behind,
+		unborn: m.unborn,
 	}
 	if dirty, derr := dirtyTrackedUnder(ctx, d, container, dir); derr == nil {
 		c.dirty = dirty
 	}
 	if conflicted, cerr := conflictsUnder(ctx, d, container, dir); cerr == nil {
 		c.conflicted = conflicted
-	}
-	if out, _ := d.Sessions.ExecCommand(ctx, container,
-		"git -C "+qd+" rev-parse --verify --quiet HEAD >/dev/null 2>&1; echo $?"); strings.TrimSpace(out) != "0" {
-		c.unborn = true
 	}
 	return c
 }

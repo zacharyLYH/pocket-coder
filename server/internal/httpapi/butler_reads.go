@@ -269,8 +269,10 @@ func butlerReadTools(d Deps) []agent.Tool {
 					return "", err
 				}
 				qd := shellQuote(dir)
-				branch, _ := d.Sessions.ExecCommand(ctx, container, "git -C "+qd+" rev-parse --abbrev-ref HEAD")
-				branch = strings.TrimSpace(branch)
+				m := getGitMeta(ctx, d, container, dir)
+				branch, upstream := m.branch, m.upstream
+				ahead, behind := m.ahead, m.behind
+				unborn := m.unborn
 				// Sentinel first line: ExecCommand trims outer whitespace,
 				// which would eat the leading XY space of an unstaged-only
 				// first line like " M notes.txt" (same trick as git status).
@@ -286,26 +288,7 @@ func butlerReadTools(d Deps) []agent.Tool {
 						changed++
 					}
 				}
-				ahead, behind := 0, 0
-				upstream, _ := d.Sessions.ExecCommand(ctx, container,
-					"git -C "+qd+" rev-parse --abbrev-ref @{u} 2>/dev/null || true")
-				upstream = strings.TrimSpace(upstream)
-				if upstream != "" {
-					if counts, cerr := d.Sessions.ExecCommand(ctx, container,
-						"git -C "+qd+" rev-list --left-right --count @{u}...HEAD 2>/dev/null || echo '0 0'"); cerr == nil {
-						f := strings.Fields(counts)
-						if len(f) == 2 {
-							behind, _ = strconv.Atoi(f[0])
-							ahead, _ = strconv.Atoi(f[1])
-						}
-					}
-				}
-				unborn := true
-				if out, _ := d.Sessions.ExecCommand(ctx, container,
-					"git -C "+qd+" rev-parse --verify --quiet HEAD >/dev/null 2>&1; echo $?"); strings.TrimSpace(out) == "0" {
-					unborn = false
-				}
-				detached := branch == "" || branch == "HEAD"
+				detached := m.detached
 				return butlerJSON(map[string]any{
 					"project": id, "branch": branch, "upstream": upstream,
 					"changedFiles": changed, "ahead": ahead, "behind": behind,

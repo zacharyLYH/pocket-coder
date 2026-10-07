@@ -5,6 +5,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 
 	"pcoder/internal/obs"
@@ -57,6 +58,25 @@ func runInProjects(d Deps, r *http.Request, ids []string, run func(container str
 	return results
 }
 
+// fanoutCounts runs fn in each named project's container, skipping
+// non-running ones, and tallies ok/skipped/failed. The butler fan-out
+// tools share this shape; per-project bookkeeping lives in fn.
+func fanoutCounts(ctx context.Context, d Deps, ids []string, fn func(ctx context.Context, pid, container string) error) (ok, skipped, failed int) {
+	for _, pid := range ids {
+		st, cerr := d.Projects.EnsureContainer(ctx, pid)
+		if cerr != nil || st.State != project.StateRunning {
+			skipped++
+			continue
+		}
+		if ferr := fn(ctx, pid, project.ContainerName(pid)); ferr != nil {
+			failed++
+			continue
+		}
+		ok++
+	}
+	return ok, skipped, failed
+}
+
 // handleExecCommand runs an arbitrary command in the selected projects.
 // This is the general orchestration primitive — harness installs are a
 // dedicated endpoint on top of the same machinery.
@@ -88,7 +108,7 @@ func handleExecCommand(d Deps) http.HandlerFunc {
 				continue // unknown id: no project file to attach it to
 			}
 			pctx := obs.WithProject(r.Context(), res.Project)
-			data := map[string]any{"command": capData(body.Command, 500), "detail": capData(res.Detail, 2000)}
+			data := map[string]any{"command": cut(body.Command, 500), "detail": cut(res.Detail, 2000)}
 			switch res.Status {
 			case "ok":
 				obs.Info(pctx, obs.ProjectsExec, "exec ok in "+res.Project, data)

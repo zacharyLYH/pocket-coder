@@ -278,7 +278,7 @@ func executeButlerTurn(r *http.Request, d Deps, st *threads.Store, t reservedTur
 	}
 	_, _ = d.Events.Append("butler.turn", map[string]any{
 		"threadId": t.threadID, "turnId": t.turnID,
-		"prompt": capData(prompt, 500), "steps": len(steps),
+		"prompt": cut(prompt, 500), "steps": len(steps),
 	})
 }
 

@@ -118,7 +118,7 @@ func handleInstallHarness(d Deps) http.HandlerFunc {
 				continue // unknown id: no project file to attach it to
 			}
 			pctx := obs.WithProject(r.Context(), res.Project)
-			data := map[string]any{"harness": id, "detail": capData(res.Detail, 2000)}
+			data := map[string]any{"harness": id, "detail": cut(res.Detail, 2000)}
 			switch res.Status {
 			case "ok":
 				obs.Info(pctx, obs.HarnessInstall, "harness "+h.Name+" installed in "+res.Project, data)

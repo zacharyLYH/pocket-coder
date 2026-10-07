@@ -214,20 +214,18 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 	}
 }
 
-// runCodemapTurn runs the model for an already-reserved placeholder
-// turn and persists via Complete/Fail. Post-manifest errors keep
-// threadId+title so FE can open the failed placeholder. Callers hold the
-// codemapBusy slot.
 // runCodemapTurn runs the model for an already-reserved placeholder turn
-// and persists via Complete/Fail. It returns the HTTP status + body the
-// caller answers with, so the fire-and-forget explain path needs no fake
-// ResponseWriter. Callers hold the slot; ctx is detached from the request.
+// and persists via Complete/Fail. Post-manifest errors keep threadId+title
+// so FE can open the failed placeholder. It returns the HTTP status + body
+// the caller answers with, so the fire-and-forget explain path needs no
+// fake ResponseWriter. Callers hold the codemapBusy slot; ctx is detached
+// from the request.
 func runCodemapTurn(ctx context.Context, d Deps, st *threads.Store, id, container, dir string, cfg agent.Config, threadID, threadTitle string, turnN int, turnID, prompt string, history []map[string]any) (int, map[string]any) {
 	sha := repoSHA(ctx, d, container, dir)
 	runStart := time.Now()
 	toolStarts := map[string]time.Time{}
 	obs.Info(ctx, obs.CodemapStart, fmt.Sprintf("ask %s | model=%s sha=%s history=%d chars=%d: %s", turnID, cfg.Model, sha, len(history), len(prompt), excerpt2000(prompt)),
-		map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "sha": sha, "history": len(history), "prompt": capData(prompt, 500)})
+		map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "sha": sha, "history": len(history), "prompt": cut(prompt, 500)})
 	// Codemap turns are batch jobs over slow reasoning tiers: many
 	// tool rounds plus retries can run several minutes.
 	tctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -252,14 +250,14 @@ func runCodemapTurn(ctx context.Context, d Deps, st *threads.Store, id, containe
 				}
 				if ev.Err != "" {
 					obs.Error(ctx, obs.CodemapTool, fmt.Sprintf("[%s] %s failed in %dms: %s", turnID, ev.Tool, ms, excerpt2000(ev.Err)),
-						map[string]any{"turnId": turnID, "step": step, "tool": ev.Tool, "error": capData(ev.Err, 4000), "durationMs": ms})
+						map[string]any{"turnId": turnID, "step": step, "tool": ev.Tool, "error": cut(ev.Err, 4000), "durationMs": ms})
 				} else {
 					obs.Info(ctx, obs.CodemapToolResult, fmt.Sprintf("[%s] %s done in %dms (%d chars): %s", turnID, ev.Tool, ms, len(ev.Result), excerpt2000(ev.Result)),
 						map[string]any{"turnId": turnID, "step": step, "tool": ev.Tool, "chars": len(ev.Result), "durationMs": ms})
 				}
 			case "model_error":
 				obs.Error(ctx, obs.CodemapTurn, fmt.Sprintf("[%s] model=%s failed after %dms: %s", turnID, cfg.Model, time.Since(runStart).Milliseconds(), excerpt2000(ev.Err)),
-					map[string]any{"turnId": turnID, "model": cfg.Model, "error": capData(ev.Err, 4000)})
+					map[string]any{"turnId": turnID, "model": cfg.Model, "error": cut(ev.Err, 4000)})
 			case "ref_drop":
 				obs.Info(ctx, obs.CodemapRefDropped, fmt.Sprintf("[%s] ref dropped %s %s: %s", turnID, ev.Tool, excerpt2000(ev.Args), excerpt2000(ev.Result)),
 					map[string]any{"turnId": turnID, "path": ev.Tool, "range": ev.Args, "reason": ev.Result})
@@ -284,7 +282,7 @@ func runCodemapTurn(ctx context.Context, d Deps, st *threads.Store, id, containe
 	}
 	if err != nil {
 		obs.Error(ctx, obs.CodemapTurn, fmt.Sprintf("[%s] failed after %dms: %s", turnID, time.Since(runStart).Milliseconds(), excerpt2000(err.Error())),
-			map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "error": capData(err.Error(), 4000), "durationMs": time.Since(runStart).Milliseconds()})
+			map[string]any{"turnId": turnID, "threadId": threadID, "model": cfg.Model, "error": cut(err.Error(), 4000), "durationMs": time.Since(runStart).Milliseconds()})
 		// The placeholder stays visible with its error so the turn is
 		// retryable; the failure graph lands beside it in lineage.
 		now := time.Now().UTC()
@@ -342,7 +340,7 @@ func runCodemapTurn(ctx context.Context, d Deps, st *threads.Store, id, containe
 	// treat "last event is codemap.turn" as run completion.
 	_, _ = d.Events.Append("codemap.turn", map[string]any{
 		"project": id, "threadId": threadID, "turnId": turnID,
-		"prompt": capData(prompt, 500), "sections": len(res.Sections), "steps": len(steps),
+		"prompt": cut(prompt, 500), "sections": len(res.Sections), "steps": len(steps),
 	})
 	return http.StatusOK, map[string]any{
 		"turnId": turnID, "sha": sha, "sections": res.Sections, "steps": steps,
@@ -367,8 +365,6 @@ func excerpt2000(s string) string {
 	}
 	return cut(s, 2000)
 }
-
-func capData(s string, max int) string { return cut(s, max) }
 
 // parseSteps decodes Turn.Tools (flat []agent.Step, shared with butler). Threads
 // persisted before the flattening carry []ToolRound instead — read those

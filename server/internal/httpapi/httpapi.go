@@ -321,10 +321,7 @@ func handleDeleteState(d Deps) http.HandlerFunc {
 		}
 		var firstErr error
 		for _, e := range entries {
-			if d.Preview != nil {
-				_ = d.Preview.Stop(r.Context(), e.ID)
-			}
-			evictCDP(e.ID)
+			stopPreview(r.Context(), d, e.ID)
 			if derr := d.Projects.Delete(r.Context(), e.ID, project.ScopeAll); derr != nil {
 				slog.Warn("wipe: project delete failed", "id", e.ID, "err", derr)
 				if firstErr == nil {

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"pcoder/internal/obs"
@@ -76,6 +77,68 @@ func dirtyTrackedUnder(ctx context.Context, d Deps, container, dir string) ([]st
 		}
 	}
 	return files, nil
+}
+
+// gitMeta is the soft-failing branch/upstream/unborn probe batch shared by
+// status, the ops prompt, and the butler git summary. Any failed probe
+// degrades to its zero value — callers never 500 on these. (An upstream
+// probe that errors carries no stdout — 2>/dev/null — so ignoring its
+// error matches the old uerr==nil gates.)
+type gitMeta struct {
+	branch   string
+	detached bool
+	upstream string
+	ahead    int
+	behind   int
+	// counted reports whether the ahead/behind counts parsed, so status
+	// can null the whole upstream block when tracking exists but the
+	// count failed (its old behavior).
+	counted bool
+	unborn  bool
+}
+
+func getGitMeta(ctx context.Context, d Deps, container, dir string) gitMeta {
+	qd := shellQuote(dir)
+	m := gitMeta{}
+	branch, _ := d.Sessions.ExecCommand(ctx, container,
+		"git -C "+qd+" rev-parse --abbrev-ref HEAD")
+	branch = strings.TrimSpace(branch)
+	if branch == "" || branch == "HEAD" {
+		m.detached = true
+		if sha, _ := d.Sessions.ExecCommand(ctx, container,
+			"git -C "+qd+" rev-parse --short HEAD"); strings.TrimSpace(sha) != "" {
+			branch = strings.TrimSpace(sha)
+		} else {
+			branch = "HEAD"
+		}
+	}
+	m.branch = branch
+	if u, _ := d.Sessions.ExecCommand(ctx, container,
+		"git -C "+qd+" rev-parse --abbrev-ref @{u} 2>/dev/null"); strings.TrimSpace(u) != "" {
+		m.upstream = strings.TrimSpace(u)
+		if counts, cerr := d.Sessions.ExecCommand(ctx, container,
+			"git -C "+qd+" rev-list --left-right --count @{u}...HEAD"); cerr == nil {
+			if f := strings.Fields(counts); len(f) == 2 {
+				m.behind, _ = strconv.Atoi(f[0])
+				m.ahead, _ = strconv.Atoi(f[1])
+				m.counted = true
+			}
+		}
+	}
+	if out, _ := d.Sessions.ExecCommand(ctx, container,
+		"git -C "+qd+" rev-parse --verify --quiet HEAD >/dev/null 2>&1; echo $?"); strings.TrimSpace(out) != "0" {
+		m.unborn = true
+	}
+	return m
+}
+
+// gitBranch resolves just the branch for push paths, which reject detached
+// HEAD and need no upstream/unborn probes.
+func gitBranch(ctx context.Context, d Deps, container, dir string) (branch string, detached bool) {
+	branch, _ = d.Sessions.ExecCommand(ctx, container,
+		"git -C "+shellQuote(dir)+" rev-parse --abbrev-ref HEAD")
+	branch = strings.TrimSpace(branch)
+	return branch, branch == "" || branch == "HEAD"
 }
 
 func handleGitCommit(d Deps) http.HandlerFunc {
@@ -199,10 +262,8 @@ func handleGitPush(d Deps) http.HandlerFunc {
 		}
 		ctx := r.Context()
 		qd := shellQuote(dir)
-		branch, _ := d.Sessions.ExecCommand(ctx, container,
-			"git -C "+qd+" rev-parse --abbrev-ref HEAD")
-		branch = strings.TrimSpace(branch)
-		if branch == "" || branch == "HEAD" {
+		branch, detached := gitBranch(ctx, d, container, dir)
+		if branch == "" || detached {
 			err = errors.New("detached HEAD — switch to a branch before pushing")
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
@@ -384,6 +445,14 @@ func commitExists(ctx context.Context, d Deps, container, dir, sha string) bool 
 	out, _ := d.Sessions.ExecCommand(ctx, container,
 		"git -C "+shellQuote(dir)+" rev-parse --verify --quiet "+shellQuote(sha+"^{commit}")+" >/dev/null 2>&1; echo $?")
 	return strings.TrimSpace(out) == "0"
+}
+
+// commitDiff shows one commit's diff, truncated to model size. Shared by
+// the PR-body drafter and the commit-mode explainer.
+func commitDiff(ctx context.Context, d Deps, container, dir, sha string) (diff string, truncated bool) {
+	out, _ := d.Sessions.ExecCommand(ctx, container,
+		"git -C "+shellQuote(dir)+" show "+shellQuote(sha)+" --format= -U3; true")
+	return truncateDiff(out)
 }
 
 // tailLines keeps the last n lines of s (shared with AI output caps).

@@ -58,7 +58,6 @@ func handleGitExplain(d Deps) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
-		qd := shellQuote(dir)
 		var diff string
 		var truncated bool
 		switch body.Mode {
@@ -74,9 +73,7 @@ func handleGitExplain(d Deps) http.HandlerFunc {
 				writeErr(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			diff, _ = d.Sessions.ExecCommand(ctx, container,
-				"git -C "+qd+" show "+shellQuote(sha)+" --format= -U3; true")
-			diff, truncated = truncateDiff(diff)
+			diff, truncated = commitDiff(ctx, d, container, dir, sha)
 		default:
 			diff, truncated = cappedDiff(ctx, d, container, dir, true)
 			if strings.TrimSpace(diff) == "" {

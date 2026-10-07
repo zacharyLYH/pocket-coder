@@ -58,6 +58,17 @@ func evictCDPIfCurrent(projectID string, s *cdpSession) {
 	}
 }
 
+// stopPreview stops the preview sidecar and drops its CDP session, so a
+// stopped project never keeps a stale socket (the next tools call would
+// otherwise dial into the void until its 30s timeout instead of failing
+// fast). Nil-safe on d.Preview.
+func stopPreview(ctx context.Context, d Deps, projectID string) {
+	if d.Preview != nil {
+		_ = d.Preview.Stop(ctx, projectID)
+	}
+	evictCDP(projectID)
+}
+
 func isSessionDead(s *cdpSession) bool {
 	if s.done == nil {
 		return false
@@ -206,6 +217,29 @@ func cdpForRequest(d Deps, r *http.Request) (*cdpSession, error) {
 	ep := worker.Endpoint()
 	slog.Debug("cdp: got worker endpoint", "project", id, "cdp", ep.CDP, "display", ep.Display)
 	return getCDP(id, ep.CDP)
+}
+
+// withCDP runs the previewTokenWorker + optional JSON body decode +
+// cdpForRequest prologue shared by the CDP tools handlers, then calls fn
+// with the live session. A nil body skips the decode; fn's returned error
+// feeds the obs failure line.
+func withCDP(d Deps, w http.ResponseWriter, r *http.Request, event, failMsg string, body any, fn func(s *cdpSession) error) {
+	var err error
+	defer obsFailAt(r, event, failMsg, &err, nil)()
+	if _, terr := previewTokenWorker(d, w, r); terr != nil {
+		err = terr
+		return
+	}
+	if body != nil && !decodeBody(w, r, body, false) {
+		return
+	}
+	s, cerr := cdpForRequest(d, r)
+	if cerr != nil {
+		err = cerr
+		writeErr(w, http.StatusBadGateway, cerr.Error())
+		return
+	}
+	err = fn(s)
 }
 
 // previewReadyTimeout bounds the synchronous readiness check in
@@ -367,179 +401,120 @@ func decodeScreenshotPNG(raw json.RawMessage) ([]byte, error) {
 
 func handlePreviewScreenshot(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		defer obsFailAt(r, obs.PreviewScreenshot, "preview screenshot failed", &err, nil)()
-		if _, terr := previewTokenWorker(d, w, r); terr != nil {
-			err = terr
-			return
-		}
-		s, cerr := cdpForRequest(d, r)
-		if cerr != nil {
-			err = cerr
-			writeErr(w, http.StatusBadGateway, cerr.Error())
-			return
-		}
-		result, serr := s.call(r.Context(), "Page.captureScreenshot", map[string]any{"format": "png"})
-		if serr != nil {
-			err = serr
-			writeInternalErr(w, "cdp screenshot", serr)
-			return
-		}
-		pngBytes, derr := decodeScreenshotPNG(result)
-		if derr != nil {
-			err = derr
-			writeInternalErr(w, "decode screenshot", derr)
-			return
-		}
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write(pngBytes)
+		withCDP(d, w, r, obs.PreviewScreenshot, "preview screenshot failed", nil, func(s *cdpSession) error {
+			result, serr := s.call(r.Context(), "Page.captureScreenshot", map[string]any{"format": "png"})
+			if serr != nil {
+				writeInternalErr(w, "cdp screenshot", serr)
+				return serr
+			}
+			pngBytes, derr := decodeScreenshotPNG(result)
+			if derr != nil {
+				writeInternalErr(w, "decode screenshot", derr)
+				return derr
+			}
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(pngBytes)
+			return nil
+		})
 	}
 }
 
 func handlePreviewInspect(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		defer obsFailAt(r, obs.PreviewInspect, "preview inspect failed", &err, nil)()
-		if _, terr := previewTokenWorker(d, w, r); terr != nil {
-			err = terr
-			return
-		}
-		s, cerr := cdpForRequest(d, r)
-		if cerr != nil {
-			err = cerr
-			writeErr(w, http.StatusBadGateway, cerr.Error())
-			return
-		}
-		// Simple evaluate — if CDP connected to a page target this returns HTML.
-		result, serr := s.call(r.Context(), "Runtime.evaluate", map[string]any{
-			"expression":    "document.documentElement?.outerHTML || ''",
-			"returnByValue": true,
+		withCDP(d, w, r, obs.PreviewInspect, "preview inspect failed", nil, func(s *cdpSession) error {
+			// Simple evaluate — if CDP connected to a page target this returns HTML.
+			result, serr := s.call(r.Context(), "Runtime.evaluate", map[string]any{
+				"expression":    "document.documentElement?.outerHTML || ''",
+				"returnByValue": true,
+			})
+			if serr != nil {
+				writeInternalErr(w, "cdp inspect", serr)
+				return serr
+			}
+			html, derr := decodeEvaluateString(result)
+			if derr != nil {
+				writeInternalErr(w, "decode inspect", derr)
+				return derr
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"html": html})
+			return nil
 		})
-		if serr != nil {
-			err = serr
-			writeInternalErr(w, "cdp inspect", serr)
-			return
-		}
-		html, derr := decodeEvaluateString(result)
-		if derr != nil {
-			err = derr
-			writeInternalErr(w, "decode inspect", derr)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"html": html})
 	}
 }
 
 func handlePreviewConsole(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		defer obsFailAt(r, obs.PreviewConsole, "preview console failed", &err, nil)()
-		if _, terr := previewTokenWorker(d, w, r); terr != nil {
-			err = terr
-			return
-		}
-		s, cerr := cdpForRequest(d, r)
-		if cerr != nil {
-			err = cerr
-			writeErr(w, http.StatusBadGateway, cerr.Error())
-			return
-		}
-		result, serr := s.call(r.Context(), "Runtime.evaluate", map[string]any{
-			"expression":    "JSON.stringify(window.__pcoder_logs||[])",
-			"returnByValue": true,
+		withCDP(d, w, r, obs.PreviewConsole, "preview console failed", nil, func(s *cdpSession) error {
+			result, serr := s.call(r.Context(), "Runtime.evaluate", map[string]any{
+				"expression":    "JSON.stringify(window.__pcoder_logs||[])",
+				"returnByValue": true,
+			})
+			if serr != nil {
+				writeInternalErr(w, "cdp console", serr)
+				return serr
+			}
+			raw, derr := decodeEvaluateString(result)
+			if derr != nil {
+				writeInternalErr(w, "decode console", derr)
+				return derr
+			}
+			var logs []string
+			if uerr := json.Unmarshal([]byte(raw), &logs); uerr != nil {
+				writeInternalErr(w, "decode console logs", uerr)
+				return uerr
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"logs": logs})
+			return nil
 		})
-		if serr != nil {
-			err = serr
-			writeInternalErr(w, "cdp console", serr)
-			return
-		}
-		raw, derr := decodeEvaluateString(result)
-		if derr != nil {
-			err = derr
-			writeInternalErr(w, "decode console", derr)
-			return
-		}
-		var logs []string
-		if uerr := json.Unmarshal([]byte(raw), &logs); uerr != nil {
-			err = uerr
-			writeInternalErr(w, "decode console logs", uerr)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"logs": logs})
 	}
 }
 
 func handlePreviewNetwork(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		defer obsFailAt(r, obs.PreviewNetwork, "preview network failed", &err, nil)()
-		if _, terr := previewTokenWorker(d, w, r); terr != nil {
-			err = terr
-			return
-		}
-		s, cerr := cdpForRequest(d, r)
-		if cerr != nil {
-			err = cerr
-			writeErr(w, http.StatusBadGateway, cerr.Error())
-			return
-		}
-		result, serr := s.call(r.Context(), "Runtime.evaluate", map[string]any{
-			"expression":    "JSON.stringify(performance.getEntriesByType('resource').map(e=>({name:e.name,dur:e.duration})))",
-			"returnByValue": true,
+		withCDP(d, w, r, obs.PreviewNetwork, "preview network failed", nil, func(s *cdpSession) error {
+			result, serr := s.call(r.Context(), "Runtime.evaluate", map[string]any{
+				"expression":    "JSON.stringify(performance.getEntriesByType('resource').map(e=>({name:e.name,dur:e.duration})))",
+				"returnByValue": true,
+			})
+			if serr != nil {
+				writeInternalErr(w, "cdp network", serr)
+				return serr
+			}
+			raw, derr := decodeEvaluateString(result)
+			if derr != nil {
+				writeInternalErr(w, "decode network", derr)
+				return derr
+			}
+			var entries []map[string]any
+			if uerr := json.Unmarshal([]byte(raw), &entries); uerr != nil {
+				writeInternalErr(w, "decode network entries", uerr)
+				return uerr
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"requests": entries})
+			return nil
 		})
-		if serr != nil {
-			err = serr
-			writeInternalErr(w, "cdp network", serr)
-			return
-		}
-		raw, derr := decodeEvaluateString(result)
-		if derr != nil {
-			err = derr
-			writeInternalErr(w, "decode network", derr)
-			return
-		}
-		var entries []map[string]any
-		if uerr := json.Unmarshal([]byte(raw), &entries); uerr != nil {
-			err = uerr
-			writeInternalErr(w, "decode network entries", uerr)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"requests": entries})
 	}
 }
 
 func handlePreviewNavigate(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		defer obsFailAt(r, obs.PreviewNavigate, "preview navigate failed", &err, nil)()
-		if _, terr := previewTokenWorker(d, w, r); terr != nil {
-			err = terr
-			return
-		}
 		var body struct {
 			URL string `json:"url"`
 		}
-		if !decodeBody(w, r, &body, false) {
-			return
-		}
-		if !allowedNavigateURL(body.URL) {
-			err = errors.New("navigate target must be a loopback http(s) URL")
-			writeErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		s, cerr := cdpForRequest(d, r)
-		if cerr != nil {
-			err = cerr
-			writeErr(w, http.StatusBadGateway, cerr.Error())
-			return
-		}
-		if _, nerr := s.call(r.Context(), "Page.navigate", map[string]any{"url": body.URL}); nerr != nil {
-			err = nerr
-			writeInternalErr(w, "cdp navigate", nerr)
-			return
-		}
-		obs.Info(r.Context(), obs.PreviewNavigate, "Preview went to "+body.URL, map[string]any{"url": body.URL})
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		withCDP(d, w, r, obs.PreviewNavigate, "preview navigate failed", &body, func(s *cdpSession) error {
+			if !allowedNavigateURL(body.URL) {
+				err := errors.New("navigate target must be a loopback http(s) URL")
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return err
+			}
+			if _, nerr := s.call(r.Context(), "Page.navigate", map[string]any{"url": body.URL}); nerr != nil {
+				writeInternalErr(w, "cdp navigate", nerr)
+				return nerr
+			}
+			obs.Info(r.Context(), obs.PreviewNavigate, "Preview went to "+body.URL, map[string]any{"url": body.URL})
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return nil
+		})
 	}
 }
 
@@ -596,215 +571,150 @@ func typeText(ctx context.Context, s cdpCaller, text string) error {
 
 func handlePreviewClick(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		defer obsFailAt(r, obs.PreviewClick, "preview click failed", &err, nil)()
-		if _, terr := previewTokenWorker(d, w, r); terr != nil {
-			err = terr
-			return
-		}
 		var body struct {
 			Selector string `json:"selector"`
 			X        int    `json:"x"`
 			Y        int    `json:"y"`
 		}
-		if !decodeBody(w, r, &body, false) {
-			return
-		}
-		s, cerr := cdpForRequest(d, r)
-		if cerr != nil {
-			err = cerr
-			writeErr(w, http.StatusBadGateway, cerr.Error())
-			return
-		}
-		if body.Selector != "" {
-			var rerr error
-			body.X, body.Y, rerr = resolveSelector(r.Context(), s, body.Selector)
-			if rerr != nil {
-				err = rerr
-				if errors.Is(rerr, errSelectorMiss) {
-					writeErr(w, http.StatusNotFound, rerr.Error())
-					return
+		withCDP(d, w, r, obs.PreviewClick, "preview click failed", &body, func(s *cdpSession) error {
+			if body.Selector != "" {
+				var rerr error
+				body.X, body.Y, rerr = resolveSelector(r.Context(), s, body.Selector)
+				if rerr != nil {
+					if errors.Is(rerr, errSelectorMiss) {
+						writeErr(w, http.StatusNotFound, rerr.Error())
+						return rerr
+					}
+					writeInternalErr(w, "cdp resolve", rerr)
+					return rerr
 				}
-				writeInternalErr(w, "cdp resolve", rerr)
-				return
 			}
-		}
-		if cerr := clickAt(r.Context(), s, body.X, body.Y); cerr != nil {
-			err = cerr
-			// clickAt already made a best-effort release when the press
-			// landed; the op string keeps the half-press note stable in logs.
-			op := "cdp click press"
-			if strings.Contains(cerr.Error(), "release failed") {
-				op = "cdp click press succeeded but release failed"
+			if cerr := clickAt(r.Context(), s, body.X, body.Y); cerr != nil {
+				// clickAt already made a best-effort release when the press
+				// landed; the op string keeps the half-press note stable in logs.
+				op := "cdp click press"
+				if strings.Contains(cerr.Error(), "release failed") {
+					op = "cdp click press succeeded but release failed"
+				}
+				writeInternalErr(w, op, cerr)
+				return cerr
 			}
-			writeInternalErr(w, op, cerr)
-			return
-		}
-		clickMsg := fmt.Sprintf("Preview click at %d,%d", body.X, body.Y)
-		if body.Selector != "" {
-			clickMsg = "Preview click on " + body.Selector
-		}
-		obs.Info(r.Context(), obs.PreviewClick, clickMsg, map[string]any{
-			"selector": body.Selector, "x": body.X, "y": body.Y,
+			clickMsg := fmt.Sprintf("Preview click at %d,%d", body.X, body.Y)
+			if body.Selector != "" {
+				clickMsg = "Preview click on " + body.Selector
+			}
+			obs.Info(r.Context(), obs.PreviewClick, clickMsg, map[string]any{
+				"selector": body.Selector, "x": body.X, "y": body.Y,
+			})
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return nil
 		})
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
 
 func handlePreviewType(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		defer obsFailAt(r, obs.PreviewType, "preview type failed", &err, nil)()
-		if _, terr := previewTokenWorker(d, w, r); terr != nil {
-			err = terr
-			return
-		}
 		var body struct {
 			Selector string `json:"selector"`
 			Text     string `json:"text"`
 		}
-		if !decodeBody(w, r, &body, false) {
-			return
-		}
-		s, cerr := cdpForRequest(d, r)
-		if cerr != nil {
-			err = cerr
-			writeErr(w, http.StatusBadGateway, cerr.Error())
-			return
-		}
-		if body.Selector != "" {
-			if _, ferr := s.call(r.Context(), "Runtime.evaluate", map[string]any{
-				"expression": fmt.Sprintf(`document.querySelector(%q)?.focus()`, body.Selector),
-			}); ferr != nil {
-				err = ferr
-				writeInternalErr(w, "cdp type focus", ferr)
-				return
+		withCDP(d, w, r, obs.PreviewType, "preview type failed", &body, func(s *cdpSession) error {
+			if body.Selector != "" {
+				if _, ferr := s.call(r.Context(), "Runtime.evaluate", map[string]any{
+					"expression": fmt.Sprintf(`document.querySelector(%q)?.focus()`, body.Selector),
+				}); ferr != nil {
+					writeInternalErr(w, "cdp type focus", ferr)
+					return ferr
+				}
 			}
-		}
-		if terr := typeText(r.Context(), s, body.Text); terr != nil {
-			err = terr
-			op := "cdp type keyDown"
-			if strings.Contains(terr.Error(), "keyUp failed") {
-				op = "cdp type keyDown succeeded but keyUp failed"
+			if terr := typeText(r.Context(), s, body.Text); terr != nil {
+				op := "cdp type keyDown"
+				if strings.Contains(terr.Error(), "keyUp failed") {
+					op = "cdp type keyDown succeeded but keyUp failed"
+				}
+				writeInternalErr(w, op, terr)
+				return terr
 			}
-			writeInternalErr(w, op, terr)
-			return
-		}
-		// The text itself is never logged — it may hold passwords or keys.
-		typeTarget := body.Selector
-		if typeTarget == "" {
-			typeTarget = "page"
-		}
-		obs.Info(r.Context(), obs.PreviewType,
-			fmt.Sprintf("Preview typed into %s (%d chars)", typeTarget, len(body.Text)),
-			map[string]any{"selector": body.Selector, "len": len(body.Text)})
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			// The text itself is never logged — it may hold passwords or keys.
+			typeTarget := body.Selector
+			if typeTarget == "" {
+				typeTarget = "page"
+			}
+			obs.Info(r.Context(), obs.PreviewType,
+				fmt.Sprintf("Preview typed into %s (%d chars)", typeTarget, len(body.Text)),
+				map[string]any{"selector": body.Selector, "len": len(body.Text)})
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return nil
+		})
 	}
 }
 
 func handlePreviewReload(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		defer obsFailAt(r, obs.PreviewReload, "preview reload failed", &err, nil)()
-		if _, terr := previewTokenWorker(d, w, r); terr != nil {
-			err = terr
-			return
-		}
-		s, cerr := cdpForRequest(d, r)
-		if cerr != nil {
-			err = cerr
-			writeErr(w, http.StatusBadGateway, cerr.Error())
-			return
-		}
-		if _, rerr := s.call(r.Context(), "Page.reload", nil); rerr != nil {
-			err = rerr
-			writeInternalErr(w, "cdp reload", rerr)
-			return
-		}
-		obs.Info(r.Context(), obs.PreviewReload, "Preview reloaded", nil)
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		withCDP(d, w, r, obs.PreviewReload, "preview reload failed", nil, func(s *cdpSession) error {
+			if _, rerr := s.call(r.Context(), "Page.reload", nil); rerr != nil {
+				writeInternalErr(w, "cdp reload", rerr)
+				return rerr
+			}
+			obs.Info(r.Context(), obs.PreviewReload, "Preview reloaded", nil)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return nil
+		})
 	}
 }
 
 func handlePreviewScroll(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		defer obsFailAt(r, obs.PreviewScroll, "preview scroll failed", &err, nil)()
-		if _, terr := previewTokenWorker(d, w, r); terr != nil {
-			err = terr
-			return
-		}
 		var body struct {
 			DeltaX int `json:"deltaX"`
 			DeltaY int `json:"deltaY"`
 		}
-		if !decodeBody(w, r, &body, false) {
-			return
-		}
-		s, cerr := cdpForRequest(d, r)
-		if cerr != nil {
-			err = cerr
-			writeErr(w, http.StatusBadGateway, cerr.Error())
-			return
-		}
-		if _, serr := s.call(r.Context(), "Input.dispatchMouseEvent", map[string]any{
-			"type": "mouseWheel", "deltaX": body.DeltaX, "deltaY": body.DeltaY, "x": 640, "y": 400,
-		}); serr != nil {
-			err = serr
-			writeInternalErr(w, "cdp scroll", serr)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		withCDP(d, w, r, obs.PreviewScroll, "preview scroll failed", &body, func(s *cdpSession) error {
+			if _, serr := s.call(r.Context(), "Input.dispatchMouseEvent", map[string]any{
+				"type": "mouseWheel", "deltaX": body.DeltaX, "deltaY": body.DeltaY, "x": 640, "y": 400,
+			}); serr != nil {
+				writeInternalErr(w, "cdp scroll", serr)
+				return serr
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return nil
+		})
 	}
 }
 
 func handlePreviewViewport(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		defer obsFailAt(r, obs.PreviewViewport, "preview viewport failed", &err, nil)()
-		if _, terr := previewTokenWorker(d, w, r); terr != nil {
-			err = terr
-			return
-		}
 		var body struct {
 			Width  int  `json:"width"`
 			Height int  `json:"height"`
 			Mobile bool `json:"mobile"`
 		}
-		if !decodeBody(w, r, &body, false) {
-			return
-		}
-		if body.Width < 100 || body.Height < 100 {
-			err = errors.New("width and height must be at least 100")
-			writeErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		// The X screen is fixed (no window manager to grow it), so clamp:
-		// the Chromium window can never exceed the framebuffer.
-		width := min(body.Width, preview.DisplayWidth)
-		height := min(body.Height, preview.DisplayHeight)
-		s, cerr := cdpForRequest(d, r)
-		if cerr != nil {
-			err = cerr
-			writeErr(w, http.StatusBadGateway, cerr.Error())
-			return
-		}
-		if berr := setWindowBounds(r.Context(), s, width, height); berr != nil {
-			err = berr
-			writeInternalErr(w, "cdp window bounds", berr)
-			return
-		}
-		if _, verr := s.call(r.Context(), "Emulation.setDeviceMetricsOverride", map[string]any{
-			"width": width, "height": height,
-			"deviceScaleFactor": 1, "mobile": body.Mobile,
-		}); verr != nil {
-			err = verr
-			writeInternalErr(w, "cdp viewport", verr)
-			return
-		}
-		obs.Info(r.Context(), obs.PreviewViewport, "preview viewport set",
-			map[string]any{"width": width, "height": height, "mobile": body.Mobile})
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "width": width, "height": height})
+		withCDP(d, w, r, obs.PreviewViewport, "preview viewport failed", &body, func(s *cdpSession) error {
+			if body.Width < 100 || body.Height < 100 {
+				err := errors.New("width and height must be at least 100")
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return err
+			}
+			// The X screen is fixed (no window manager to grow it), so clamp:
+			// the Chromium window can never exceed the framebuffer.
+			width := min(body.Width, preview.DisplayWidth)
+			height := min(body.Height, preview.DisplayHeight)
+			if berr := setWindowBounds(r.Context(), s, width, height); berr != nil {
+				writeInternalErr(w, "cdp window bounds", berr)
+				return berr
+			}
+			if _, verr := s.call(r.Context(), "Emulation.setDeviceMetricsOverride", map[string]any{
+				"width": width, "height": height,
+				"deviceScaleFactor": 1, "mobile": body.Mobile,
+			}); verr != nil {
+				writeInternalErr(w, "cdp viewport", verr)
+				return verr
+			}
+			obs.Info(r.Context(), obs.PreviewViewport, "preview viewport set",
+				map[string]any{"width": width, "height": height, "mobile": body.Mobile})
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "width": width, "height": height})
+			return nil
+		})
 	}
 }
 

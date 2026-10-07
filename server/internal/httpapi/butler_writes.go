@@ -35,6 +35,33 @@ type butlerWriteDef struct {
 
 func strProp() map[string]any { return map[string]any{"type": "string"} }
 
+// projectLifecycleTool builds the start/stop/restart project tools: same
+// confirm shape, differing only in verbs. stopFirst drops the preview
+// before ops that tear the container down.
+func projectLifecycleTool(name, desc, verb, past, blastDetail string, stopFirst bool, op func(*project.Service, context.Context, string) error) butlerWriteDef {
+	return butlerWriteDef{
+		name: name, desc: desc,
+		schema: butlerSchema(projectProp()),
+		blast: func(_ Deps, _ context.Context, args map[string]any) (string, string, error) {
+			id := butlerStr(args, "project")
+			if id == "" {
+				return "", "", fmt.Errorf("project is required")
+			}
+			return verb + " project " + id + "?", blastDetail, nil
+		},
+		exec: func(ctx context.Context, d Deps, args map[string]any, _ string) (string, error) {
+			if d.Projects == nil {
+				return "", fmt.Errorf("no such project")
+			}
+			id := butlerStr(args, "project")
+			if stopFirst {
+				stopPreview(ctx, d, id)
+			}
+			return past, op(d.Projects, ctx, id)
+		},
+	}
+}
+
 // butlerContainer resolves a project's container + repo dir, requiring a
 // running container. Shared by every container-scoped write.
 func butlerContainer(ctx context.Context, d Deps, id string) (container, dir string, err error) {
@@ -212,67 +239,9 @@ var butlerWriteTable = []butlerWriteDef{
 			return "Ready: " + id, nil
 		},
 	},
-	{
-		name: butlerToolStart, desc: "Start one project container.",
-		schema: butlerSchema(projectProp()),
-		blast: func(_ Deps, _ context.Context, args map[string]any) (string, string, error) {
-			id := butlerStr(args, "project")
-			if id == "" {
-				return "", "", fmt.Errorf("project is required")
-			}
-			return "Start project " + id + "?", "Starts its container. No data is touched.", nil
-		},
-		exec: func(ctx context.Context, d Deps, args map[string]any, _ string) (string, error) {
-			if d.Projects == nil {
-				return "", fmt.Errorf("no such project")
-			}
-			return "Started.", d.Projects.Start(ctx, butlerStr(args, "project"))
-		},
-	},
-	{
-		name: butlerToolStop, desc: "Stop one project container.",
-		schema: butlerSchema(projectProp()),
-		blast: func(_ Deps, _ context.Context, args map[string]any) (string, string, error) {
-			id := butlerStr(args, "project")
-			if id == "" {
-				return "", "", fmt.Errorf("project is required")
-			}
-			return "Stop project " + id + "?", "Stops its container and preview. Sessions end.", nil
-		},
-		exec: func(ctx context.Context, d Deps, args map[string]any, _ string) (string, error) {
-			if d.Projects == nil {
-				return "", fmt.Errorf("no such project")
-			}
-			id := butlerStr(args, "project")
-			if d.Preview != nil {
-				_ = d.Preview.Stop(ctx, id)
-			}
-			evictCDP(id)
-			return "Stopped.", d.Projects.Stop(ctx, id)
-		},
-	},
-	{
-		name: butlerToolRestart, desc: "Restart one project container.",
-		schema: butlerSchema(projectProp()),
-		blast: func(_ Deps, _ context.Context, args map[string]any) (string, string, error) {
-			id := butlerStr(args, "project")
-			if id == "" {
-				return "", "", fmt.Errorf("project is required")
-			}
-			return "Restart project " + id + "?", "Stops then starts its container and preview.", nil
-		},
-		exec: func(ctx context.Context, d Deps, args map[string]any, _ string) (string, error) {
-			if d.Projects == nil {
-				return "", fmt.Errorf("no such project")
-			}
-			id := butlerStr(args, "project")
-			if d.Preview != nil {
-				_ = d.Preview.Stop(ctx, id)
-			}
-			evictCDP(id)
-			return "Restarted.", d.Projects.Restart(ctx, id)
-		},
-	},
+	projectLifecycleTool(butlerToolStart, "Start one project container.", "Start", "Started.", "Starts its container. No data is touched.", false, (*project.Service).Start),
+	projectLifecycleTool(butlerToolStop, "Stop one project container.", "Stop", "Stopped.", "Stops its container and preview. Sessions end.", true, (*project.Service).Stop),
+	projectLifecycleTool(butlerToolRestart, "Restart one project container.", "Restart", "Restarted.", "Stops then starts its container and preview.", true, (*project.Service).Restart),
 	{
 		name: butlerToolSessionCreate, desc: "Create a plain-shell tmux session.",
 		schema: butlerSchema(map[string]any{"project": strProp(), "name": strProp()}),
@@ -462,9 +431,8 @@ var butlerWriteTable = []butlerWriteDef{
 			if err != nil {
 				return "", err
 			}
-			branch, _ := d.Sessions.ExecCommand(ctx, container, "git -C "+shellQuote(dir)+" rev-parse --abbrev-ref HEAD")
-			branch = strings.TrimSpace(branch)
-			if branch == "" || branch == "HEAD" {
+			branch, detached := gitBranch(ctx, d, container, dir)
+			if branch == "" || detached {
 				return "", fmt.Errorf("detached HEAD — switch to a branch before pushing")
 			}
 			out, xerr := d.Sessions.ExecCommand(ctx, container,
@@ -542,10 +510,7 @@ var butlerWriteTable = []butlerWriteDef{
 			}
 			id := butlerStr(args, "project")
 			scope := project.Scope(orDefault(butlerStr(args, "scope"), "all"))
-			if d.Preview != nil {
-				_ = d.Preview.Stop(ctx, id)
-			}
-			evictCDP(id)
+			stopPreview(ctx, d, id)
 			if err := d.Projects.Delete(ctx, id, scope); err != nil {
 				return "", err
 			}
@@ -597,25 +562,18 @@ var butlerWriteTable = []butlerWriteDef{
 			if err != nil {
 				return "", err
 			}
-			ok, skipped, failed := 0, 0, 0
-			for _, pid := range butlerStrs(args, "projects") {
-				st, cerr := d.Projects.EnsureContainer(ctx, pid)
-				if cerr != nil || st.State != project.StateRunning {
-					skipped++
-					continue
-				}
+			ok, skipped, failed := fanoutCounts(ctx, d, butlerStrs(args, "projects"), func(ctx context.Context, pid, container string) error {
 				// Same installing mark as the HTTP install endpoint, so the
 				// probe reports it while this synchronous run is underway.
 				_ = d.Projects.RecordInstalling(pid, h.ID)
-				ierr := d.Sessions.InstallHarness(ctx, project.ContainerName(pid), h)
+				ierr := d.Sessions.InstallHarness(ctx, container, h)
 				_ = d.Projects.ClearInstalling(pid, h.ID)
 				if ierr != nil {
-					failed++
-					continue
+					return ierr
 				}
 				_ = d.Projects.RecordInstall(pid, h.ID)
-				ok++
-			}
+				return nil
+			})
 			return fmt.Sprintf("ok=%d skipped=%d failed=%d", ok, skipped, failed), nil
 		},
 	},
@@ -651,19 +609,10 @@ var butlerWriteTable = []butlerWriteDef{
 				return "", fmt.Errorf("not available")
 			}
 			cmd := butlerStr(args, "command")
-			ok, skipped, failed := 0, 0, 0
-			for _, pid := range butlerStrs(args, "projects") {
-				st, cerr := d.Projects.EnsureContainer(ctx, pid)
-				if cerr != nil || st.State != project.StateRunning {
-					skipped++
-					continue
-				}
-				if _, rerr := d.Sessions.ExecCommand(ctx, project.ContainerName(pid), cmd); rerr != nil {
-					failed++
-					continue
-				}
-				ok++
-			}
+			ok, skipped, failed := fanoutCounts(ctx, d, butlerStrs(args, "projects"), func(ctx context.Context, _ string, container string) error {
+				_, rerr := d.Sessions.ExecCommand(ctx, container, cmd)
+				return rerr
+			})
 			return fmt.Sprintf("ok=%d skipped=%d failed=%d", ok, skipped, failed), nil
 		},
 	},

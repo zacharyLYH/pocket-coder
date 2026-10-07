@@ -48,22 +48,31 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: wsOriginAllowed,
 }
 
+// ensureRunning requires a project's container to exist (recreating it from
+// persisted volumes if Docker lost track) and be running, writing the error
+// response on failure. Shared core of ensureProject and gitRepoDir so
+// session/harness and git routes behave identically.
+func ensureRunning(d Deps, w http.ResponseWriter, r *http.Request) (string, project.Status, bool) {
+	id := r.PathValue("id")
+	st, err := d.Projects.EnsureContainer(r.Context(), id)
+	if err != nil {
+		writeServiceErr(w, err)
+		return "", project.Status{}, false
+	}
+	if st.State != project.StateRunning {
+		writeErr(w, http.StatusConflict, "container not running")
+		return "", project.Status{}, false
+	}
+	return id, st, true
+}
+
 // ensureProject requires a project's container to exist (recreating it from
 // persisted volumes if Docker lost track) and be running. Shared by all
 // session/harness routes so they behave identically. Returns the project id
 // and whether to continue.
 func ensureProject(d Deps, w http.ResponseWriter, r *http.Request) (string, bool) {
-	id := r.PathValue("id")
-	st, err := d.Projects.EnsureContainer(r.Context(), id)
-	if err != nil {
-		writeServiceErr(w, err)
-		return "", false
-	}
-	if st.State != project.StateRunning {
-		writeErr(w, http.StatusConflict, "container not running")
-		return "", false
-	}
-	return id, true
+	id, _, ok := ensureRunning(d, w, r)
+	return id, ok
 }
 
 // handleTerminal upgrades and bridges. Layout: one goroutine runs the

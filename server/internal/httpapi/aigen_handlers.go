@@ -187,9 +187,7 @@ func handleGitPRBody(d Deps) http.HandlerFunc {
 		}
 		msg, _ := d.Sessions.ExecCommand(ctx, container,
 			"git -C "+qd+" log -1 --format=%B "+shellQuote(sha))
-		diff, _ := d.Sessions.ExecCommand(ctx, container,
-			"git -C "+qd+" show "+shellQuote(sha)+" --format= -U3; true")
-		diff, truncated := truncateDiff(diff)
+		diff, truncated := commitDiff(ctx, d, container, dir, sha)
 		if strings.TrimSpace(diff) == "" {
 			err = errors.New("commit has no diff")
 			writeErr(w, http.StatusBadRequest, err.Error())

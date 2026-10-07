@@ -52,26 +52,16 @@ func validGitPath(p string) bool {
 // gitRepoDir resolves the container and its repo dir, ensuring the project
 // exists and the container runs. It writes the error response on failure.
 func gitRepoDir(d Deps, w http.ResponseWriter, r *http.Request) (container, dir string, ok bool) {
-	id := r.PathValue("id")
 	if d.Projects == nil || d.Sessions == nil {
 		writeErr(w, http.StatusNotFound, "no such project")
 		return "", "", false
 	}
-	st, err := d.Projects.EnsureContainer(r.Context(), id)
-	if err != nil {
-		if err == project.ErrNotFound {
-			writeErr(w, http.StatusNotFound, "no such project")
-		} else {
-			writeInternalErr(w, "ensure container", err)
-		}
-		return "", "", false
-	}
-	if st.State != project.StateRunning {
-		writeErr(w, http.StatusConflict, "container not running")
+	id, _, ok := ensureRunning(d, w, r)
+	if !ok {
 		return "", "", false
 	}
 	container = project.ContainerName(id)
-	dir, err = d.Sessions.RepoTarget(r.Context(), container)
+	dir, err := d.Sessions.RepoTarget(r.Context(), container)
 	if err != nil {
 		writeInternalErr(w, "repo target", err)
 		return "", "", false
@@ -161,24 +151,11 @@ func handleGitStatus(d Deps) http.HandlerFunc {
 		if i := strings.Index(raw, "\n"); i >= 0 {
 			porcelain = raw[i+1:]
 		}
-		branch, _ := d.Sessions.ExecCommand(r.Context(), container,
-			"git -C "+qd+" rev-parse --abbrev-ref HEAD")
-		// Detached HEAD reports as the short sha (branch switching
-		// allows moving away; nothing clever).
-		if b := strings.TrimSpace(branch); b == "" || b == "HEAD" {
-			if sha, _ := d.Sessions.ExecCommand(r.Context(), container,
-				"git -C "+qd+" rev-parse --short HEAD"); strings.TrimSpace(sha) != "" {
-				branch = sha
-			}
-		}
-		// Unborn HEAD (no commits yet) gates Push: there is nothing to
-		// send, and the failure git prints is inscrutable. --quiet keeps
-		// the output to just the exit code.
-		unborn := true
-		if out, _ := d.Sessions.ExecCommand(r.Context(), container,
-			"git -C "+qd+" rev-parse --verify --quiet HEAD >/dev/null 2>&1; echo $?"); strings.TrimSpace(out) == "0" {
-			unborn = false
-		}
+		// Branch, upstream tracking, and unborn state share one probe
+		// batch (getGitMeta). Detached HEAD reports as the short sha
+		// (branch switching allows moving away; nothing clever).
+		m := getGitMeta(r.Context(), d, container, dir)
+		branch, unborn := m.branch, m.unborn
 		unstagedStat, _ := d.Sessions.ExecCommand(r.Context(), container,
 			"git -C "+qd+" diff --numstat; true")
 		stagedStat, _ := d.Sessions.ExecCommand(r.Context(), container,
@@ -194,20 +171,9 @@ func handleGitStatus(d Deps) http.HandlerFunc {
 		// Upstream tracking for the Commit & Push label + PR-row gating.
 		// Fails soft: any error → null upstream, status still 200.
 		upstream := map[string]any(nil)
-		uName, uerr := d.Sessions.ExecCommand(r.Context(), container,
-			"git -C "+qd+" rev-parse --abbrev-ref @{u} 2>/dev/null")
-		if uerr == nil && strings.TrimSpace(uName) != "" {
-			counts, cerr := d.Sessions.ExecCommand(r.Context(), container,
-				"git -C "+qd+" rev-list --left-right --count @{u}...HEAD")
-			if cerr == nil {
-				fields := strings.Fields(counts)
-				if len(fields) == 2 {
-					behind, _ := strconv.Atoi(fields[0])
-					ahead, _ := strconv.Atoi(fields[1])
-					upstream = map[string]any{
-						"name": strings.TrimSpace(uName), "ahead": ahead, "behind": behind,
-					}
-				}
+		if m.upstream != "" && m.counted {
+			upstream = map[string]any{
+				"name": m.upstream, "ahead": m.ahead, "behind": m.behind,
 			}
 		}
 

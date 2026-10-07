@@ -198,12 +198,8 @@ func handleProjectOp(d Deps, op string) http.HandlerFunc {
 		defer obsFailAt(r, key, "project "+op+" failed", &err, map[string]any{"op": op})()
 		id := r.PathValue("id")
 		ctx := r.Context()
-		if d.Preview != nil && (op == "stop" || op == "restart") {
-			_ = d.Preview.Stop(ctx, id)
-			// Drop the CDP session too: it points at the stopped worker's
-			// websocket, and the next tools call would dial into the void
-			// until its 30s timeout instead of failing fast.
-			evictCDP(id)
+		if op == "stop" || op == "restart" {
+			stopPreview(ctx, d, id)
 		}
 		switch op {
 		case "start":
@@ -228,10 +224,7 @@ func handleDeleteProject(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		defer obsFailAt(r, obs.ProjectDelete, "delete project failed", &err, nil)()
-		if d.Preview != nil {
-			_ = d.Preview.Stop(r.Context(), r.PathValue("id"))
-		}
-		evictCDP(r.PathValue("id"))
+		stopPreview(r.Context(), d, r.PathValue("id"))
 		scope := project.Scope(r.URL.Query().Get("scope"))
 		if scope == "" {
 			scope = project.ScopeAll
