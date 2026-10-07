@@ -15,22 +15,31 @@ const STATS = {
   diskUsed: 200 * 1024, diskTotal: 1000 * 1024,
 }
 
-function stubFetch(calls: string[], observeImpl?: (url: string) => unknown) {
-  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+function stubFetch(calls: string[], opts: {
+  observe?: (url: string) => unknown
+  errors?: unknown
+  health?: unknown
+} | ((url: string) => unknown) = {}) {
+  const { observe: observeImpl, errors = { groups: [] }, health } =
+    typeof opts === 'function' ? { observe: opts, errors: undefined, health: undefined } : opts
+  const fetchMock = vi.fn(async (url: string) => {
     calls.push(String(url))
     const u = String(url)
-    if (u.includes('/observe/errors')) return new Response(JSON.stringify({ groups: [] }), { status: 200 })
+    if (u.includes('/observe/errors')) return new Response(JSON.stringify(errors), { status: 200 })
     if (u.includes('/observe/stats')) return new Response(JSON.stringify(STATS), { status: 200 })
     if (u.includes('/observe/meta')) return new Response(JSON.stringify({
       auditTypes: ['project.create', 'terminal.attach', 'session.create'],
       buildTypes: ['project.create'],
     }), { status: 200 })
+    if (u.endsWith('/health') && health !== undefined) return new Response(JSON.stringify(health), { status: 200 })
     if (u.includes('/observe')) {
       if (observeImpl) return new Response(JSON.stringify(observeImpl(u)), { status: 200 })
       return new Response(JSON.stringify({ logs: LOGS, firstSeq: 1, lastSeq: 2 }), { status: 200 })
     }
     return new Response(JSON.stringify({}), { status: 200 })
-  }))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
 }
 
 describe('NerdyStuffTab', () => {
@@ -94,22 +103,13 @@ describe('NerdyStuffTab', () => {
 
   it('load older pages with the before cursor', async () => {
     const calls: string[] = []
-    stubFetch(calls, (u) => {
-      if (u.includes('before=1')) return { logs: [{ ...LOGS[0], seq: 1 }], firstSeq: 1, lastSeq: 1 }
-      return { logs: LOGS, firstSeq: 1, lastSeq: 2 }
+    stubFetch(calls, {
+      observe: (u) => {
+        // firstSeq=5 shows the button; the before page returns the older row
+        if (u.includes('before=')) return { logs: [LOGS[0]], firstSeq: 1, lastSeq: 1 }
+        return { logs: LOGS, firstSeq: 5, lastSeq: 6 }
+      },
     })
-    // firstSeq=1 hides the button; use firstSeq=5 to show it
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      calls.push(String(url))
-      const u = String(url)
-      if (u.includes('/observe/errors')) return new Response(JSON.stringify({ groups: [] }), { status: 200 })
-      if (u.includes('/observe/stats')) return new Response(JSON.stringify(STATS), { status: 200 })
-      if (u.includes('/observe/meta')) return new Response(JSON.stringify({
-        auditTypes: ['project.create', 'terminal.attach'], buildTypes: ['project.create'],
-      }), { status: 200 })
-      if (u.includes('before=')) return new Response(JSON.stringify({ logs: [LOGS[0]], firstSeq: 1, lastSeq: 1 }), { status: 200 })
-      return new Response(JSON.stringify({ logs: LOGS, firstSeq: 5, lastSeq: 6 }), { status: 200 })
-    }))
     render(<NerdyStuffTab projectId="abc" />)
     await gotoRuntime()
     await waitFor(() => expect(screen.getByTestId('nerdy-load-older')).toBeVisible())
@@ -183,19 +183,14 @@ describe('NerdyStuffTab', () => {
 
   it('error group jumps to its trace and the chip clears it', async () => {
     const calls: string[] = []
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      calls.push(String(url))
-      const u = String(url)
-      if (u.includes('/observe/errors')) return new Response(JSON.stringify({ groups: [{
-        key: 'k', type: 'clone.failed', count: 2, firstSeen: new Date().toISOString(),
-        lastSeen: new Date().toISOString(), sampleTrace: 'bbbbbbbbbbbbbbbb', sampleMsg: 'clone failed',
-      }] }), { status: 200 })
-      if (u.includes('/observe/stats')) return new Response(JSON.stringify(STATS), { status: 200 })
-      if (u.includes('/observe/meta')) return new Response(JSON.stringify({
-        auditTypes: ['project.create'], buildTypes: ['project.create'],
-      }), { status: 200 })
-      return new Response(JSON.stringify({ logs: LOGS, firstSeq: 1, lastSeq: 2 }), { status: 200 })
-    }))
+    stubFetch(calls, {
+      errors: {
+        groups: [{
+          key: 'k', type: 'clone.failed', count: 2, firstSeen: new Date().toISOString(),
+          lastSeen: new Date().toISOString(), sampleTrace: 'bbbbbbbbbbbbbbbb', sampleMsg: 'clone failed',
+        }],
+      },
+    })
     render(<NerdyStuffTab projectId="abc" />)
     await act(async () => { fireEvent.click(screen.getByTestId('nerdy-panel-errors')) })
     await waitFor(() => expect(screen.getByTestId('nerdy-error-clone.failed')).toBeVisible())
@@ -209,41 +204,29 @@ describe('NerdyStuffTab', () => {
   })
 
   it('healthcheck runs once per click and prints every divergence both ways', async () => {
-    const posts: { url: string; method: string }[] = []
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
-      const u = String(url)
-      if (u.endsWith('/health')) {
-        posts.push({ url: u, method: init?.method ?? 'GET' })
-        return new Response(JSON.stringify({
-          project: 'abc',
-          inSync: false,
-          checks: [
-            { name: 'container', status: 'ok', state: 'recorded', system: 'running' },
-            { name: 'session:ghost-1', status: 'drift', state: 'recorded harness fake', system: 'missing from tmux', detail: 'recorded but not running' },
-            { name: 'harness:fake', status: 'drift', state: 'installed', system: 'missing', detail: 'recorded installed but the binary is missing' },
-            { name: 'harness:helper', status: 'drift', state: 'not recorded', system: 'binary present', detail: 'binary present but not recorded' },
-          ],
-        }), { status: 200 })
-      }
-      if (u.includes('/observe/errors')) return new Response(JSON.stringify({ groups: [] }), { status: 200 })
-      if (u.includes('/observe/stats')) return new Response(JSON.stringify(STATS), { status: 200 })
-      if (u.includes('/observe/meta')) return new Response(JSON.stringify({
-        auditTypes: ['project.create', 'terminal.attach', 'session.create'],
-        buildTypes: ['project.create'],
-      }), { status: 200 })
-      if (u.includes('/observe')) {
-        return new Response(JSON.stringify({ logs: LOGS, firstSeq: 1, lastSeq: 2 }), { status: 200 })
-      }
-      return new Response(JSON.stringify({}), { status: 200 })
-    }))
+    const calls: string[] = []
+    const fetchMock = stubFetch(calls, {
+      health: {
+        project: 'abc',
+        inSync: false,
+        checks: [
+          { name: 'container', status: 'ok', state: 'recorded', system: 'running' },
+          { name: 'session:ghost-1', status: 'drift', state: 'recorded harness fake', system: 'missing from tmux', detail: 'recorded but not running' },
+          { name: 'harness:fake', status: 'drift', state: 'installed', system: 'missing', detail: 'recorded installed but the binary is missing' },
+          { name: 'harness:helper', status: 'drift', state: 'not recorded', system: 'binary present', detail: 'binary present but not recorded' },
+        ],
+      },
+    })
     render(<NerdyStuffTab projectId="abc" />)
     await waitFor(() => expect(screen.getByTestId('nerdy-healthcheck')).toBeVisible())
 
     // One click → exactly one synchronous run.
     await act(async () => { fireEvent.click(screen.getByTestId('nerdy-healthcheck-run')) })
     await waitFor(() => expect(screen.getByTestId('nerdy-healthcheck-report')).toBeVisible())
-    expect(posts).toHaveLength(1)
-    expect(posts[0]).toEqual({ url: '/api/projects/abc/health', method: 'POST' })
+    const healthCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/health'))
+    expect(healthCalls).toHaveLength(1)
+    const [, healthInit] = healthCalls[0] as unknown as [string, RequestInit?]
+    expect(healthInit?.method).toBe('POST')
 
     // Verdict counts the drifts; both directions are named explicitly.
     expect(screen.getByTestId('nerdy-healthcheck-verdict')).toHaveTextContent('3 drifts found')

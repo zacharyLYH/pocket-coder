@@ -232,15 +232,14 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
     )
   }
 
-  async function stageFile(path: string, unstage: boolean) {
-    const key = `file:${path}:${unstage ? 'u' : 's'}`
-    setBusy(key)
+  // stageMut posts one stage/unstage mutation, then clears the cached
+  // diffs and reloads what is still expanded. stageFile and stageHunk
+  // differ only in endpoint + payload.
+  async function stageMut(path: string, endpoint: string, payload: Record<string, unknown>, busyKey: string) {
+    setBusy(busyKey)
     setError(null)
     try {
-      await api(projectPath(projectId, `/git/${unstage ? 'unstage' : 'stage'}`), {
-        method: 'POST',
-        body: JSON.stringify({ path }),
-      })
+      await api(projectPath(projectId, endpoint), { method: 'POST', body: JSON.stringify(payload) })
       setDiffs((prev) => {
         const next = { ...prev }
         delete next[`u:${path}`]
@@ -255,28 +254,12 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
     }
   }
 
+  async function stageFile(path: string, unstage: boolean) {
+    await stageMut(path, `/git/${unstage ? 'unstage' : 'stage'}`, { path }, `file:${path}:${unstage ? 'u' : 's'}`)
+  }
+
   async function stageHunk(path: string, hunk: string, stagedSection: boolean) {
-    const reverse = stagedSection
-    const key = `hunk:${path}:${hunk.slice(0, 24)}`
-    setBusy(key)
-    setError(null)
-    try {
-      await api(projectPath(projectId, '/git/stage-hunk'), {
-        method: 'POST',
-        body: JSON.stringify({ path, patch: hunkPatch(path, hunk), reverse }),
-      })
-      setDiffs((prev) => {
-        const next = { ...prev }
-        delete next[`u:${path}`]
-        delete next[`s:${path}`]
-        return next
-      })
-      await reloadExpanded(await refresh())
-    } catch (e) {
-      setError(errMsg(e))
-    } finally {
-      setBusy(null)
-    }
+    await stageMut(path, '/git/stage-hunk', { path, patch: hunkPatch(path, hunk), reverse: stagedSection }, `hunk:${path}:${hunk.slice(0, 24)}`)
   }
 
   function quoteHunk(path: string, hunk: string) {
@@ -286,12 +269,16 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
   }
 
   // runGit wraps one git-busy action: busy flag + error slot handled once.
-  async function runGit<T>(key: string, fn: () => Promise<T>): Promise<T | null> {
+  // onErr maps the error before it lands in the slot (commit uses it to
+  // pop the identity form on a 409); the resolved value returns, or null
+  // on failure.
+  async function runGit<T>(key: string, fn: () => Promise<T>, onErr?: (e: unknown) => void): Promise<T | null> {
     setGitBusy(key)
     setGitError(null)
     try {
       return await fn()
     } catch (e) {
+      onErr?.(e)
       setGitError(errMsg(e))
       return null
     } finally {
@@ -300,26 +287,22 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
   }
 
   async function doCommit(): Promise<string | null> {
-    setGitBusy('commit')
-    setGitError(null)
-    try {
-      const d = await api<{ ok: boolean; commit: string; branch: string }>(
+    const d = await runGit('commit', () =>
+      api<{ ok: boolean; commit: string; branch: string }>(
         projectPath(projectId, '/git/commit'),
         { method: 'POST', body: JSON.stringify({ message }) },
-      )
-      setCommitSha(d.commit)
-      setMessage('')
-      await reloadExpanded(await refresh())
-      return d.commit
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409 && String(e.message).includes('identity')) {
-        setIdentityOpen(true)
-      }
-      setGitError(errMsg(e))
-      return null
-    } finally {
-      setGitBusy(null)
-    }
+      ),
+      (e) => {
+        if (e instanceof ApiError && e.status === 409 && String(e.message).includes('identity')) {
+          setIdentityOpen(true)
+        }
+      },
+    )
+    if (!d) return null
+    setCommitSha(d.commit)
+    setMessage('')
+    await reloadExpanded(await refresh())
+    return d.commit
   }
 
   async function saveIdentity() {
@@ -346,18 +329,13 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
   }
 
   async function doPush() {
-    setGitBusy('push')
-    setGitError(null)
     setPrState('pushing')
-    try {
-      await api(projectPath(projectId, '/git/push'), { method: 'POST' })
+    const ok = await runGit('push', () => api(projectPath(projectId, '/git/push'), { method: 'POST' }))
+    if (ok !== null) {
       setPrState('pushed')
       await refresh()
-    } catch (e) {
+    } else {
       setPrState('rejected')
-      setGitError(errMsg(e))
-    } finally {
-      setGitBusy(null)
     }
   }
 
@@ -405,23 +383,18 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
   }
 
   async function switchBranch(name: string, create = false) {
-    setGitBusy('switch')
-    setGitError(null)
-    try {
-      await api(projectPath(projectId, '/git/switch'), {
+    const ok = await runGit('switch', () =>
+      api(projectPath(projectId, '/git/switch'), {
         method: 'POST',
         body: JSON.stringify({ branch: name, create }),
-      })
-      setBranchOpen(false)
-      setNewBranch('')
-      setDiffs({})
-      setExpanded({})
-      await refresh()
-    } catch (e) {
-      setGitError(errMsg(e))
-    } finally {
-      setGitBusy(null)
-    }
+      }),
+    )
+    if (ok === null) return
+    setBranchOpen(false)
+    setNewBranch('')
+    setDiffs({})
+    setExpanded({})
+    await refresh()
   }
 
   async function copyNotes() {

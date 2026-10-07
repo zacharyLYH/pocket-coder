@@ -41,7 +41,6 @@ export function Home({ email, onLogout, navigate }: {
         else setSsh('fail')
       })
   }, [])
-  const loadAi = () => { void refreshAi() }
   useEffect(() => { checkSsh() }, [checkSsh])
   useEffect(() => { void refreshAi() }, [refreshAi])
   const needsAttention = !aiStatus?.configured
@@ -102,7 +101,7 @@ export function Home({ email, onLogout, navigate }: {
                 </div>
               </CardHeader>
               <CardContent className="px-2">
-                <SetupRows ai={aiStatus} onGit={checkSsh} onAi={loadAi} />
+                <SetupRows ai={aiStatus} onGit={checkSsh} onAi={() => void refreshAi()} />
               </CardContent>
             </Card>
             <RunEverywhereCard projects={projects} busy={busy} onBusy={setBusy} />

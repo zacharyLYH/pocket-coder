@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { Home } from '@/components/Home'
 import { mockFetch } from '@/test/mockFetch'
+import { stubMatchMedia } from '@/test/stubs'
 
 vi.mock('@/hooks/useProjects', () => ({
   useProjects: () => ({
@@ -20,10 +21,7 @@ vi.mock('@/hooks/useAiConfig', () => ({
 // the fetch level; the real fan-out path is covered by the Playwright suite.
 describe('Home run card', () => {
   beforeEach(() => {
-    Object.defineProperty(window, 'matchMedia', {
-      writable: true,
-      value: vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
-    })
+    stubMatchMedia()
   })
 
   function renderHome(execBody: unknown) {

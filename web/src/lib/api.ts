@@ -13,7 +13,7 @@ export function projectPath(id: string, suffix = ''): string {
 
 // PROBE_TIMEOUT_MS bounds provider probes client-side: it only fires when
 // the answer is already lost.
-export const PROBE_TIMEOUT_MS = 90_000
+const PROBE_TIMEOUT_MS = 90_000
 
 export function probeSignal(): AbortSignal {
   return AbortSignal.timeout(PROBE_TIMEOUT_MS)

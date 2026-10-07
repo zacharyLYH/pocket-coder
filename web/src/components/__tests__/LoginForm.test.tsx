@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { LoginForm } from '@/components/LoginForm'
 import { mockFetch } from '@/test/mockFetch'
+import { stubMatchMedia } from '@/test/stubs'
 
 // Unit tests for the login flow's request/verify steps and error surface.
 describe('LoginForm', () => {
@@ -54,10 +55,7 @@ describe('LoginForm PWA card', () => {
   })
 
   it('reports installed when running standalone', async () => {
-    Object.defineProperty(window, 'matchMedia', {
-      writable: true,
-      value: vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
-    })
+    stubMatchMedia(true)
     render(<LoginForm onLoggedIn={vi.fn()} />)
     expect(await screen.findByText('Installed. Open it from your home screen.')).toBeInTheDocument()
     Object.defineProperty(window, 'matchMedia', { writable: true, value: undefined })

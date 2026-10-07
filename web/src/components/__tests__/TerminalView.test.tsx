@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { TerminalView } from '@/components/terminal/TerminalView'
 import { mockFetch, type FetchCall } from '@/test/mockFetch'
+import { MockWebSocket, stubMatchMedia, stubWebSocket } from '@/test/stubs'
 
 // The real xterm touches canvas on open(), which jsdom cannot do — stub it
 // (same shape as TerminalPane.test.tsx) so tests can take the socket live
@@ -42,39 +43,13 @@ let fetchCalls: FetchCall[] = []
 // Minimal WebSocket mock that captures open/message/close. Does NOT
 // auto-open to avoid triggering xterm.js term.open().
 let wsInstances: MockWebSocket[] = []
-class MockWebSocket {
-  static CONNECTING = 0
-  static OPEN = 1
-  static CLOSING = 2
-  static CLOSED = 3
-  readyState = 0 // CONNECTING
-  onopen: (() => void) | null = null
-  onmessage: ((ev: MessageEvent) => void) | null = null
-  onclose: (() => void) | null = null
-  onerror: (() => void) | null = null
-  sent: string[] = []
-  constructor(public url: string) {
-    wsInstances.push(this)
-    // Do NOT auto-open — let tests call open() explicitly if needed.
-  }
-  open() {
-    this.readyState = 1
-    this.onopen?.()
-  }
-  send(data: string) { this.sent.push(data) }
-  close() { this.readyState = 3; this.onclose?.() }
-}
 
 beforeEach(() => {
   fetchCalls = []
-  wsInstances = []
-  vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket)
+  wsInstances = stubWebSocket()
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver)
   vi.spyOn(window.history, 'replaceState').mockImplementation(() => {})
-  Object.defineProperty(window, 'matchMedia', {
-    writable: true,
-    value: vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
-  })
+  stubMatchMedia()
 })
 
 afterEach(() => {

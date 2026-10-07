@@ -16,6 +16,16 @@ const PRESETS = [
   { label: 'New shortcut', prompt: 'Help me make a new shortcut.' },
 ]
 
+function TypingDots() {
+  return (
+    <>
+      <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground" />
+      <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:150ms]" />
+      <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:300ms]" />
+    </>
+  )
+}
+
 export function ButlerSheet({ projectHint, onClearHint, onClose }: {
   projectHint: string | null
   onClearHint: () => void
@@ -128,9 +138,7 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
                     : t.answer ? (<div data-testid="butler-answer"><Markdown className="text-sm" text={t.answer} /></div>)
                     : i === turns.length - 1 && showPending ? (
                       <div className="flex items-center gap-1 py-1" data-testid="butler-pending" aria-label="Butler is typing">
-                        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground" />
-                        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:150ms]" />
-                        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:300ms]" />
+                        <TypingDots />
                       </div>
                     )
                     : (<p className="text-sm text-muted-foreground">…</p>)}
@@ -160,9 +168,7 @@ export function ButlerSheet({ projectHint, onClearHint, onClose }: {
           <div className="flex gap-2.5" data-testid="butler-pending">
             <Avatar className="mt-0.5 size-7"><Bot className="size-4 text-muted-foreground" /></Avatar>
             <div className="flex w-fit items-center gap-1 rounded-2xl bg-muted px-4 py-3" aria-label="Butler is typing">
-              <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground" />
-              <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:150ms]" />
-              <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:300ms]" />
+              <TypingDots />
             </div>
           </div>
         )}

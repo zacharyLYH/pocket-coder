@@ -6,11 +6,11 @@ export const GITHUB_URL = 'https://github.com/zacharyLYH/pocket-coder'
 export const GITHUB_KEYS_URL = 'https://github.com/settings/keys'
 export const GMAIL_GUIDE_URL =
   'https://help.meetalfred.com/en/articles/8160682-set-up-smtp-for-gmail-app-password-guide'
-export const SETUP_SCRIPT_URL =
+const SETUP_SCRIPT_URL =
   'https://raw.githubusercontent.com/zacharyLYH/pocket-coder/main/deploy/setup.sh'
 
 // shellQuote keeps the generated installer command paste-safe.
-export function shellQuote(s: string): string {
+function shellQuote(s: string): string {
   if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) && s.length > 0) return s
   return `'${s.replace(/'/g, `'\\''`)}'`
 }

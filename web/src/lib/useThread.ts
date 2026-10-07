@@ -3,11 +3,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { errMsg } from '@/lib/api'
 import type { ThreadStatus } from '@/lib/types'
 
-export function isUnsettled(status?: string): boolean {
+function isUnsettled(status?: string): boolean {
   return status === 'running' || status === 'awaiting'
 }
 
-export function usePollWhileUnsettled(status: string | undefined, inFlight: boolean, poll: () => void): void {
+function usePollWhileUnsettled(status: string | undefined, inFlight: boolean, poll: () => void): void {
   useEffect(() => {
     if (inFlight || !isUnsettled(status)) return
     const t = setInterval(poll, 3000)
@@ -101,27 +101,45 @@ export function useThread<
 
   // Adopt the persisted result unless the user navigated away mid-run;
   // then the list refresh is enough and the visible transcript is theirs.
-  async function adopt(sendThreadId: string | undefined, threadId: string) {
+  const adopt = useCallback(async (sendThreadId: string | undefined, threadId: string) => {
     await refreshList()
     const current = threadRef.current
     if (sendThreadId == null ? current == null : current?.id === sendThreadId) {
       await openThread(threadId)
     }
-  }
+  }, [refreshList, openThread])
 
-  const sendTurn = useCallback(async (prompt: string, threadId?: string) => {
-    const p = prompt.trim()
-    if (!p) return
+  // runTurn owns the inFlight/error scaffolding both send and retry share;
+  // only the POST (post) and the failure recovery (recover) differ.
+  const runTurn = useCallback(async (
+    post: () => Promise<{ threadId: string }>,
+    threadId: string | undefined,
+    recover: (tid: string | undefined) => Promise<void>,
+  ) => {
     inFlightRef.current = true
     setInFlight(true)
     setError(null)
     try {
-      const r = await opsRef.current.send(p, threadId)
+      const r = await post()
       await adopt(threadId, r.threadId)
     } catch (e) {
       setError(errMsg(e))
-      const tid = (e as { body?: { threadId?: string } }).body?.threadId ?? threadId
-      if (tid) {
+      await recover((e as { body?: { threadId?: string } }).body?.threadId ?? threadId)
+      void refreshList()
+    } finally {
+      inFlightRef.current = false
+      setInFlight(false)
+    }
+  }, [adopt, refreshList])
+
+  const sendTurn = useCallback(async (prompt: string, threadId?: string) => {
+    const p = prompt.trim()
+    if (!p) return
+    await runTurn(
+      () => opsRef.current.send(p, threadId),
+      threadId,
+      async (tid) => {
+        if (!tid) return
         const current = threadRef.current
         if (threadId == null ? current == null : current?.id === threadId) {
           try {
@@ -130,32 +148,21 @@ export function useThread<
             // Error banner already set; a stale transcript beats none.
           }
         }
-      }
-      void refreshList()
-    } finally {
-      inFlightRef.current = false
-      setInFlight(false)
-    }
-  }, [refreshList, openThread])
+      },
+    )
+  }, [runTurn])
 
   const retryTurn = useCallback(async (threadId: string) => {
-    inFlightRef.current = true
-    setInFlight(true)
-    setError(null)
-    try {
-      const r = await opsRef.current.retry(threadId)
-      await adopt(threadId, r.threadId)
-    } catch (e) {
-      setError(errMsg(e))
-      if (threadRef.current?.id === threadId) {
-        await openThread(threadId)
-      }
-      void refreshList()
-    } finally {
-      inFlightRef.current = false
-      setInFlight(false)
-    }
-  }, [refreshList, openThread])
+    await runTurn(
+      () => opsRef.current.retry(threadId),
+      threadId,
+      async (tid) => {
+        if (tid && threadRef.current?.id === threadId) {
+          await openThread(threadId)
+        }
+      },
+    )
+  }, [runTurn, openThread])
 
   function newChat() {
     setThread(null)

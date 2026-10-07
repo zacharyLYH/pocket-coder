@@ -4,17 +4,30 @@ import { ButlerSheet } from '@/components/ButlerSheet'
 import { mockFetch } from '@/test/mockFetch'
 
 const THREAD = 'ab12cd34ef56ab78cd90ef13'
+const TS = '2026-09-02T10:00:00Z'
 
-function turnBody(answer = 'All healthy.', extra: Record<string, unknown> = {}): string {
-  return JSON.stringify({ threadId: THREAD, threadTitle: 'Brief me', turnId: 't1', answer, steps: [], time: '2026-09-02T10:00:00Z', ...extra })
+function threadSummary(status = 'ready', preview = 'Brief me') {
+  return { id: THREAD, title: 'Brief me', createdAt: TS, updatedAt: TS, turnCount: 1, preview, status }
+}
+
+function mkTurn(prompt = 'Brief me', answer?: unknown, extra: Record<string, unknown> = {}) {
+  return { turnId: 't1', prompt, answer, steps: [], time: TS, error: null, ...extra }
+}
+
+function threadBody(status = 'ready', turns: unknown[] = [mkTurn('Brief me', 'All healthy.')], approvals: unknown[] = []) {
+  return { thread: { id: THREAD, title: 'Brief me', createdAt: TS, updatedAt: TS, status, approvals, turns } }
+}
+
+function turnBody(answer = 'All healthy.', extra: Record<string, unknown> = {}) {
+  return JSON.stringify({ threadId: THREAD, threadTitle: 'Brief me', turnId: 't1', answer, steps: [], time: TS, ...extra })
 }
 
 function mockAll(body: string, threadAnswer = 'All healthy.') {
   const fetchMock = mockFetch((url, init) => {
     if (url === '/api/butler/threads' && (!init?.method || init.method === 'GET'))
-      return { status: 200, body: { threads: [{ id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', turnCount: 1, preview: 'Brief me', status: 'ready' }]} }
+      return { status: 200, body: { threads: [threadSummary()] } }
     if (url === `/api/butler/threads/${THREAD}`)
-      return { status: 200, body: { thread: { id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', status: 'ready', approvals: [], turns: [{ turnId: 't1', prompt: 'Brief me', answer: threadAnswer, steps: [], time: '2026-09-02T10:00:00Z', error: null }] } } }
+      return { status: 200, body: threadBody('ready', [mkTurn('Brief me', threadAnswer)]) }
     return undefined
   })
   const realFetch = vi.fn(async (url: string, init?: RequestInit) => {
@@ -67,11 +80,11 @@ describe('ButlerSheet', () => {
     let threadGets = 0
     const fetchMock = mockFetch((url, init) => {
       if (url === '/api/butler/threads' && (!init?.method || init.method === 'GET'))
-        return { status: 200, body: { threads: [{ id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', turnCount: 1, preview: 'Brief me', status: 'running' }] } }
+        return { status: 200, body: { threads: [threadSummary('running')] } }
       if (url === `/api/butler/threads/${THREAD}`) {
         threadGets++
         const done = threadGets >= 2
-        return { status: 200, body: { thread: { id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', status: done ? 'ready' : 'running', approvals: [], turns: [{ turnId: 't1', prompt: 'Brief me', answer: done ? 'All healthy.' : undefined, steps: [], time: '2026-09-02T10:00:00Z', error: null }] } } }
+        return { status: 200, body: threadBody(done ? 'ready' : 'running', [mkTurn('Brief me', done ? 'All healthy.' : undefined)]) }
       }
       return undefined
     })
@@ -119,7 +132,7 @@ describe('ButlerSheet', () => {
       if (url === '/api/butler/threads' && (!init?.method || init.method === 'GET'))
         return { status: 200, body: { threads: []} }
       if (url === `/api/butler/threads/${THREAD}`)
-        return { status: 200, body: { thread: { id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', status: discarded ? 'ready' : 'awaiting', approvals: discarded ? [] : [card], turns: [{ turnId: 't1', prompt: 'Stop it', answer: 'Ready to stop.', steps: [], time: '2026-09-02T10:00:00Z', error: null }] } } }
+        return { status: 200, body: threadBody(discarded ? 'ready' : 'awaiting', [mkTurn('Stop it', 'Ready to stop.')], discarded ? [] : [card]) }
       if (url === '/api/butler/confirms/c1/discard' && init?.method === 'POST') {
         discarded = true
         return { status: 200, body: { ok: true } }
@@ -146,9 +159,9 @@ describe('ButlerSheet', () => {
     const card = { id: 'c1', tool: 'stop', summary: 'Stop project?', blastRadius: 'Container stops.' }
     const fetchMock = mockFetch((url, init) => {
       if (url === '/api/butler/threads' && (!init?.method || init.method === 'GET'))
-        return { status: 200, body: { threads: [{ id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', turnCount: 1, preview: 'Stop it', status: 'awaiting' }] } }
+        return { status: 200, body: { threads: [threadSummary('awaiting', 'Stop it')] } }
       if (url === `/api/butler/threads/${THREAD}`)
-        return { status: 200, body: { thread: { id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', status: 'awaiting', approvals: [card], turns: [{ turnId: 't1', prompt: 'Stop it', steps: [], time: '2026-09-02T10:00:00Z', error: 'model blew up' }] } } }
+        return { status: 200, body: threadBody('awaiting', [{ ...mkTurn('Stop it'), error: 'model blew up', answer: undefined }], [card]) }
       return undefined
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -166,7 +179,7 @@ describe('ButlerSheet', () => {
       if (url === '/api/butler/threads' && (!init?.method || init.method === 'GET'))
         return { status: 200, body: { threads: []} }
       if (url === `/api/butler/threads/${THREAD}`)
-        return { status: 200, body: { thread: { id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', status: 'awaiting', approvals: [card], turns: [{ turnId: 't1', prompt: 'Stop it', answer: 'Ready.', steps: [], time: '2026-09-02T10:00:00Z', error: null }] } } }
+        return { status: 200, body: threadBody('awaiting', [mkTurn('Stop it', 'Ready.')], [card]) }
       return undefined
     })
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -184,9 +197,9 @@ describe('ButlerSheet', () => {
   it('blocks the composer when the open thread has a run in flight', async () => {
     const fetchMock = mockFetch((url, init) => {
       if (url === '/api/butler/threads' && (!init?.method || init.method === 'GET'))
-        return { status: 200, body: { threads: [{ id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', turnCount: 1, preview: 'Brief me', status: 'running' }]} }
+        return { status: 200, body: { threads: [threadSummary('running')] } }
       if (url === `/api/butler/threads/${THREAD}`)
-        return { status: 200, body: { thread: { id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', status: 'running', approvals: [], turns: [{ turnId: 't1', prompt: 'Brief me', answer: 'Working…', steps: [], time: '2026-09-02T10:00:00Z', error: null }] } } }
+        return { status: 200, body: threadBody('running', [mkTurn('Brief me', 'Working…')]) }
       return undefined
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -202,11 +215,11 @@ describe('ButlerSheet', () => {
     let threadGets = 0
     const fetchMock = mockFetch((url, init) => {
       if (url === '/api/butler/threads' && (!init?.method || init.method === 'GET'))
-        return { status: 200, body: { threads: [{ id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', turnCount: 1, preview: 'Brief me', status: 'running' }]} }
+        return { status: 200, body: { threads: [threadSummary('running')] } }
       if (url === `/api/butler/threads/${THREAD}`) {
         threadGets++
         const done = threadGets >= 2
-        return { status: 200, body: { thread: { id: THREAD, title: 'Brief me', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z', status: done ? 'ready' : 'running', approvals: [], turns: [{ turnId: 't1', prompt: 'Brief me', answer: done ? 'Landed.' : undefined, steps: [], time: '2026-09-02T10:00:00Z', error: null }] } } }
+        return { status: 200, body: threadBody(done ? 'ready' : 'running', [mkTurn('Brief me', done ? 'Landed.' : undefined)]) }
       }
       return undefined
     })

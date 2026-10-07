@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { api, projectPath } from '@/lib/api'
 
@@ -72,6 +72,23 @@ export function useObserve(projectId: string, filters: ObserveFilters, follow: b
 
   const key = `${filters.level}|${filters.source}|${filters.type}|${filters.trace}|${filters.q}`
 
+// usePoller runs poll immediately and every ms. Interval ticks skip
+// while the tab is hidden; the immediate run always fires (same as the
+// inline pollers it replaces — setState after unmount is a React no-op,
+// so no stop flag is needed).
+function usePoller(ms: number, poll: () => void, respectHidden = true) {
+  const pollRef = useRef(poll)
+  pollRef.current = poll
+  useEffect(() => {
+    void pollRef.current()
+    const id = setInterval(() => {
+      if (respectHidden && document.hidden) return
+      void pollRef.current()
+    }, ms)
+    return () => clearInterval(id)
+  }, [ms, respectHidden])
+}
+
   const refresh = useCallback(async () => {
     try {
       const d = await api<{ logs: ObsEntry[]; firstSeq: number; lastSeq: number }>(
@@ -120,37 +137,28 @@ export function useObserve(projectId: string, filters: ObserveFilters, follow: b
     return () => clearInterval(id)
   }, [follow, refresh])
 
-  useEffect(() => {
-    let stop = false
-    const poll = async () => {
-      try {
-        const s = await api<ResourceSample>(projectPath(projectId, '/observe/stats'))
-        if (stop) return
-        setStats(s)
-        setSamples((prev) => [...prev, s.cpuPercent ?? 0].slice(-60))
-      } catch {
-        // keep last-known
-      }
+  const pollStats = useCallback(async () => {
+    try {
+      const s = await api<ResourceSample>(projectPath(projectId, '/observe/stats'))
+      setStats(s)
+      setSamples((prev) => [...prev, s.cpuPercent ?? 0].slice(-60))
+    } catch {
+      // keep last-known
     }
-    poll()
-    const id = setInterval(() => { if (!document.hidden) void poll() }, 3000)
-    return () => { stop = true; clearInterval(id) }
   }, [projectId])
+  usePoller(3000, pollStats)
 
-  useEffect(() => {
-    let stop = false
-    const poll = async () => {
-      try {
-        const d = await api<{ groups: ErrorGroup[] }>(projectPath(projectId, '/observe/errors'))
-        if (!stop) setGroups(d.groups ?? [])
-      } catch {
-        // keep last-known
-      }
+  const pollErrors = useCallback(async () => {
+    try {
+      const d = await api<{ groups: ErrorGroup[] }>(projectPath(projectId, '/observe/errors'))
+      setGroups(d.groups ?? [])
+    } catch {
+      // keep last-known
     }
-    poll()
-    const id = setInterval(poll, 5000)
-    return () => { stop = true; clearInterval(id) }
   }, [projectId])
+  // The errors projection polls even while hidden (cheap, keeps the
+  // badge fresh) — unlike stats above.
+  usePoller(5000, pollErrors, false)
 
   return { logs, firstSeq, loadOlder, stats, samples, groups }
 }

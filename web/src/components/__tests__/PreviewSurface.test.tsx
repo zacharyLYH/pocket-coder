@@ -3,6 +3,24 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { PreviewSurface } from '@/components/PreviewSurface'
 import { PREVIEW_HEARTBEAT_MS } from '@/lib/preview'
+import { stubMatchMedia } from '@/test/stubs'
+
+// stubPreview answers the mint endpoint with token and ok:true
+// everywhere else, recording every request for assertions.
+function stubPreview(token: string) {
+  const calls: { url: string; init?: RequestInit }[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), init })
+      if (String(url).endsWith('/preview')) {
+        return new Response(JSON.stringify({ status: 'ready', token }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }),
+  )
+  return calls
+}
 
 describe('PreviewSurface', () => {
   beforeEach(() => {
@@ -11,17 +29,7 @@ describe('PreviewSurface', () => {
   })
 
   it('embeds the minted token and beats with it', async () => {
-    const calls: { url: string; init?: RequestInit }[] = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string, init?: RequestInit) => {
-        calls.push({ url: String(url), init })
-        if (String(url).endsWith('/preview')) {
-          return new Response(JSON.stringify({ status: 'ready', token: 'tok123' }), { status: 200 })
-        }
-        return new Response(JSON.stringify({ ok: true }), { status: 200 })
-      }),
-    )
+    const calls = stubPreview('tok123')
     render(<PreviewSurface projectId="project/one" />)
     const frame = await screen.findByTitle('Remote project preview')
     const src = frame.getAttribute('src') ?? ''
@@ -71,17 +79,7 @@ describe('PreviewSurface', () => {
   })
 
   it('syncs the fit only after the surface loads, with the token header', async () => {
-    const posts: { url: string; init?: RequestInit }[] = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string, init?: RequestInit) => {
-        if (String(url).endsWith('/preview')) {
-          return new Response(JSON.stringify({ status: 'ready', token: 'tok9' }), { status: 200 })
-        }
-        posts.push({ url: String(url), init })
-        return new Response(JSON.stringify({ ok: true }), { status: 200 })
-      }),
-    )
+    const posts = stubPreview('tok9')
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
       disconnect() {}
@@ -168,14 +166,7 @@ describe('PreviewSurface', () => {
 
   it('toggles the back button live on resize, without a reload', async () => {
     // Desktop touchscreen at a wide viewport: the width gate keeps it off.
-    Object.defineProperty(window, 'matchMedia', {
-      writable: true,
-      value: vi.fn().mockReturnValue({
-        matches: false,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      }),
-    })
+    stubMatchMedia(false)
     const origTouch = navigator.maxTouchPoints
     const origWidth = window.innerWidth
     Object.defineProperty(navigator, 'maxTouchPoints', { value: 1, configurable: true })
@@ -206,14 +197,7 @@ describe('PreviewSurface', () => {
   })
 
   it('back button calls history.back when history is available', async () => {
-    Object.defineProperty(window, 'matchMedia', {
-      writable: true,
-      value: vi.fn().mockReturnValue({
-        matches: true,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      }),
-    })
+    stubMatchMedia(true)
     const backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => {})
     Object.defineProperty(window.history, 'length', { value: 2, configurable: true })
 
@@ -232,14 +216,7 @@ describe('PreviewSurface', () => {
   })
 
    it('back button falls back when no history', async () => {
-    Object.defineProperty(window, 'matchMedia', {
-      writable: true,
-      value: vi.fn().mockReturnValue({
-        matches: true,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      }),
-    })
+    stubMatchMedia(true)
     Object.defineProperty(window.history, 'length', { value: 0, configurable: true })
     const backSpy = vi.spyOn(window.history, 'back')
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {

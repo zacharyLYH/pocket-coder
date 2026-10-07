@@ -290,24 +290,12 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           onError={setError}
         />
       </div>
-      {tab === 'preview' && (
+      {tab !== 'terminal' && (
         <div className="min-h-0 flex-1 w-full px-3 pb-3">
-          <PreviewTab projectId={projectId} onOpenPreview={onOpenPreview} />
-        </div>
-      )}
-      {tab === 'codemap' && (
-        <div className="min-h-0 flex-1 w-full px-3 pb-3">
-          <CodemapTab projectId={projectId} ai={aiStatus} />
-        </div>
-      )}
-      {tab === 'diff' && (
-        <div className="min-h-0 flex-1 w-full px-3 pb-3">
-          <DiffTab projectId={projectId} onSelectView={setTab} />
-        </div>
-      )}
-      {tab === 'nerdy' && (
-        <div className="min-h-0 flex-1 w-full px-3 pb-3">
-          <NerdyStuffTab projectId={projectId} />
+          {tab === 'preview' && <PreviewTab projectId={projectId} onOpenPreview={onOpenPreview} />}
+          {tab === 'codemap' && <CodemapTab projectId={projectId} ai={aiStatus} />}
+          {tab === 'diff' && <DiffTab projectId={projectId} onSelectView={setTab} />}
+          {tab === 'nerdy' && <NerdyStuffTab projectId={projectId} />}
         </div>
       )}
 

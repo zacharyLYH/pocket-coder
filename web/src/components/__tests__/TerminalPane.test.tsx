@@ -3,33 +3,13 @@ import type { RefObject } from 'react'
 import { render } from '@testing-library/react'
 import { TerminalPane } from '@/components/terminal/TerminalPane'
 import { mockFetch } from '@/test/mockFetch'
+import { MockWebSocket, stubWebSocket } from '@/test/stubs'
 
 function hostRef(): RefObject<HTMLDivElement | null> {
   return { current: document.createElement('div') }
 }
 
 let wsInstances: MockWebSocket[] = []
-class MockWebSocket {
-  static CONNECTING = 0
-  static OPEN = 1
-  static CLOSING = 2
-  static CLOSED = 3
-  readyState = 0
-  onopen: (() => void) | null = null
-  onmessage: ((ev: MessageEvent) => void) | null = null
-  onclose: (() => void) | null = null
-  onerror: (() => void) | null = null
-  sent: string[] = []
-  constructor(public url: string) {
-    wsInstances.push(this)
-  }
-  open() {
-    this.readyState = 1
-    this.onopen?.()
-  }
-  send(data: string) { this.sent.push(data) }
-  close() { this.readyState = 3; this.onclose?.() }
-}
 
 const { scrollLines, opened, opts } = vi.hoisted(() => ({
   scrollLines: vi.fn(),
@@ -61,11 +41,10 @@ vi.mock('@xterm/addon-fit', () => ({
 }))
 
 beforeEach(() => {
-  wsInstances = []
+  wsInstances = stubWebSocket()
   scrollLines.mockClear()
   opened.mockClear()
   opts.v = null
-  vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket)
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver)
   vi.stubGlobal('fetch', mockFetch((url) => {
     if (url.endsWith('/sessions')) return { status: 200, body: { sessions: [{ name: 'main' }] } }

@@ -61,7 +61,7 @@ function healthBadge(status: HealthCheck['status']): string {
   return status === 'ok' ? 'bg-emerald-500' : status === 'drift' ? 'bg-red-500' : 'bg-amber-400'
 }
 
-export function HealthCheckCard({ projectId }: { projectId: string }) {
+function HealthCheckCard({ projectId }: { projectId: string }) {
   const [report, setReport] = useState<HealthReport | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)

@@ -82,71 +82,45 @@ export default function App() {
   // Logged out: landing at /, login at /login. Deep links (/app,
   // /projects/..., /preview/...) show login; after login the same path
   // renders, so a shared terminal link lands where it points.
-  if (state === 'out') {
-    if (path === '/') {
-      return (
-        <>
-          {pulling && <PullToRefreshIndicator />}
-          <LandingPage onLogin={() => navigate('/login')} />
-        </>
-      )
-    }
-    return (
-      <>
-        {pulling && <PullToRefreshIndicator />}
-        {login}
-      </>
-    )
-  }
-
   // Logged in: / is still the landing page (with an Open app button);
   // /app is home; terminal and preview keep their URLs.
-  if (path === '/') {
-    return (
-      <>
-        {pulling && <PullToRefreshIndicator />}
-        <LandingPage onLogin={() => navigate('/app')} loggedIn />
-      </>
-    )
-  }
+  // One return keeps the pull-to-refresh indicator on every route.
   const terminal = parseTerminalPath(path)
-  if (terminal) {
-    return (
-      <>
-        {pulling && <PullToRefreshIndicator />}
-        <TerminalView
-          projectId={terminal.projectId}
-          initialSession={terminal.session}
-          onBack={() => navigate('/app')}
-            onOpenPreview={() => {
-              const url = `/preview/${encodeURIComponent(terminal.projectId)}`
-              if (isPwaStandalone()) {
-                // In a standalone PWA (mobile home-screen app), window.open
-                // with _blank stays inside the PWA — the terminal is lost.
-                // Navigate inline and let the user dismiss via native back
-                // gesture (swipe-from-edge on iOS, hardware back on Android).
-                navigate(url)
-              } else {
-                window.open(url, '_blank')
-              }
-            }}
-        />
-      </>
-    )
-  }
   const previewId = parsePreviewPath(path)
-  if (previewId !== null) {
-    return (
-      <>
-        {pulling && <PullToRefreshIndicator />}
-        <PreviewSurface projectId={previewId} />
-      </>
+  let content: React.ReactNode
+  if (state === 'out') {
+    content = path === '/' ? <LandingPage onLogin={() => navigate('/login')} /> : login
+  } else if (path === '/') {
+    content = <LandingPage onLogin={() => navigate('/app')} loggedIn />
+  } else if (terminal) {
+    content = (
+      <TerminalView
+        projectId={terminal.projectId}
+        initialSession={terminal.session}
+        onBack={() => navigate('/app')}
+          onOpenPreview={() => {
+            const url = `/preview/${encodeURIComponent(terminal.projectId)}`
+            if (isPwaStandalone()) {
+              // In a standalone PWA (mobile home-screen app), window.open
+              // with _blank stays inside the PWA — the terminal is lost.
+              // Navigate inline and let the user dismiss via native back
+              // gesture (swipe-from-edge on iOS, hardware back on Android).
+              navigate(url)
+            } else {
+              window.open(url, '_blank')
+            }
+          }}
+      />
     )
+  } else if (previewId !== null) {
+    content = <PreviewSurface projectId={previewId} />
+  } else {
+    content = home
   }
   return (
     <>
       {pulling && <PullToRefreshIndicator />}
-      {home}
+      {content}
     </>
   )
 }
