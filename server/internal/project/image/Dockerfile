@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TERM=xterm-256color
 
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends git tmux iproute2 openssh-client ca-certificates busybox curl unzip nodejs npm python3 python3-pip \
+	&& apt-get install -y --no-install-recommends git tmux iproute2 openssh-client ca-certificates busybox curl unzip universal-ctags nodejs npm python3 python3-pip \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& ln -sf "$(command -v busybox)" /usr/local/bin/vi
 

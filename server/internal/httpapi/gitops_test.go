@@ -305,7 +305,7 @@ func TestGitExplainFireAndForget(t *testing.T) {
 		codeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
 			writeCompletion(w, "tool_calls", "", []map[string]any{
-				toolCall("c1", "git_status", `{}`),
+				toolCall("c1", "git", `{"op":"status"}`),
 			})
 		},
 		func(w http.ResponseWriter, _ map[string]any) {

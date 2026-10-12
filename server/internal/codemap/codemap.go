@@ -118,6 +118,22 @@ func cutRunes(s string, max int) string {
 
 func capToolOutput(s string, max int) string { return cutRunes(s, max) }
 
+// numberLines prefixes each line with its true 1-based repo line
+// number (number, tab, text), so reads double as citable ranges for
+// refs. Numbering in Go keeps the shell command a plain sed — no new
+// container dependency and no awk dialect risk.
+func numberLines(out string, start int) string {
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	var b strings.Builder
+	for i, ln := range lines {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "%d\t%s", start+i, ln)
+	}
+	return b.String()
+}
+
 // Tools builds the read-only tools bound to one container and repo dir.
 func Tools(exec Executor, container, repoDir string) []agent.Tool {
 	return []agent.Tool{
@@ -223,7 +239,7 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 		},
 		{
 			Name:        "read_file",
-			Description: "Read exact lines of one repo file. Pass an ABSOLUTE path under the repo root named at turn start. Ranges cap at 120 lines. Omit start/end to read lines 1-50. Only read paths you have actually seen from list_dir, search_code, or the repo listing — never invent paths.",
+			Description: "Read exact lines of one repo file. Pass an ABSOLUTE path under the repo root named at turn start. Ranges cap at 120 lines. Omit start/end to read lines 1-50. Only read paths you have actually seen from list_dir, search_code, or the repo listing — never invent paths. Output lines carry their true repo line numbers (number, tab, text) so you can cite exact ranges.",
 			Schema: objectSchema(map[string]any{
 				"path":  map[string]any{"type": "string", "description": "Absolute path under the repo root"},
 				"start": map[string]any{"type": "integer", "description": "First line, 1-based (default 1)"},
@@ -294,7 +310,7 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 				if strings.TrimSpace(out) == "" {
 					return "(empty range)", nil
 				}
-				return out, nil
+				return numberLines(out, start), nil
 			},
 		},
 		{
@@ -328,35 +344,80 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 			},
 		},
 		{
-			Name:        "git_status",
-			Description: "Show working-tree status (branch, staged/unstaged files). Use for 'what changed' or 'explain the diff' questions.",
-			Schema:      objectSchema(map[string]any{}),
+			Name:        "find_symbol",
+			Description: "Find where a function, class, or type is defined: exact file, line, and signature. Powered by ctags, so results are precise static definitions rather than text mentions — use it instead of search_code when you need the definition.",
+			Schema: objectSchema(map[string]any{
+				"name": map[string]any{"type": "string", "description": "Exact symbol name, e.g. Verify or handleCodemap"},
+			}, "name"),
 			Run: func(ctx context.Context, argsJSON string) (string, error) {
-				cmd := fmt.Sprintf("git -C %s status --short --branch 2>&1 | head -50", shQuote(repoDir))
-				out, err := exec.ExecCommand(ctx, container, cmd)
-				if err != nil {
+				var args struct {
+					Name string `json:"name"`
+				}
+				if err := decodeArgs(argsJSON, &args); err != nil {
 					return "", err
 				}
-				if strings.TrimSpace(out) == "" {
-					return "(clean tree)", nil
+				name := strings.TrimSpace(args.Name)
+				if name == "" {
+					return "", fmt.Errorf("name is required")
 				}
-				return capToolOutput(out, 12*1024), nil
+				if len(name) > 200 {
+					return "", fmt.Errorf("name over 200 chars")
+				}
+				if strings.ContainsAny(name, "\n\r\x00") {
+					return "", fmt.Errorf("name must be one line")
+				}
+				// The name never reaches the shell: ctags dumps every
+				// definition and Go filters, so metacharacters are inert.
+				out, err := exec.ExecCommand(ctx, container,
+					fmt.Sprintf("cd %s && git ls-files | ctags --output-format=json --fields=+nKS -L -", shQuote(repoDir)))
+				if err != nil || strings.TrimSpace(out) == "" {
+					return "(symbol index unavailable — use search_code instead)", nil
+				}
+				var found []string
+				for _, line := range strings.Split(out, "\n") {
+					var tag struct {
+						Type      string `json:"_type"`
+						Name      string `json:"name"`
+						Path      string `json:"path"`
+						Line      int    `json:"line"`
+						Kind      string `json:"kind"`
+						Signature string `json:"signature"`
+					}
+					if json.Unmarshal([]byte(line), &tag) != nil || tag.Type != "tag" || tag.Name != name {
+						continue
+					}
+					row := fmt.Sprintf("%s:%d [%s]", tag.Path, tag.Line, tag.Kind)
+					if strings.TrimSpace(tag.Signature) != "" {
+						row += " " + strings.TrimSpace(tag.Signature)
+					}
+					found = append(found, row)
+					if len(found) >= 50 {
+						break
+					}
+				}
+				if len(found) == 0 {
+					return fmt.Sprintf("(no definition for %q — try search_code for mentions)", name), nil
+				}
+				return strings.Join(found, "\n"), nil
 			},
 		},
 		{
-			Name:        "git_diff",
-			Description: "Show the working-tree diff (unstaged plus staged). Use after git_status to explain the current diff. Optional path limits to one file.",
+			// One read-only git tool, not one per subcommand: op never
+			// reaches the shell (switch dispatch below), and path travels
+			// through normalizeRepoPath + shQuote like every other tool.
+			Name:        "git",
+			Description: "Read-only git inspection. op selects the read: status shows the branch and changed files, diff shows the working-tree diff with a stat, log shows recent commits. path limits diff and log to one file.",
 			Schema: objectSchema(map[string]any{
-				"path": map[string]any{"type": "string", "description": "Optional absolute path under the repo root to limit the diff"},
-			}),
+				"op":   map[string]any{"type": "string", "description": "One of: status, diff, log"},
+				"path": map[string]any{"type": "string", "description": "Optional absolute path under the repo root (diff and log only)"},
+			}, "op"),
 			Run: func(ctx context.Context, argsJSON string) (string, error) {
 				var args struct {
+					Op   string `json:"op"`
 					Path string `json:"path"`
 				}
-				if strings.TrimSpace(argsJSON) != "" && strings.TrimSpace(argsJSON) != "{}" {
-					if err := decodeArgs(argsJSON, &args); err != nil {
-						return "", err
-					}
+				if err := decodeArgs(argsJSON, &args); err != nil {
+					return "", err
 				}
 				target := ""
 				if strings.TrimSpace(args.Path) != "" {
@@ -366,15 +427,41 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 					}
 					target = " -- " + shQuote(p)
 				}
-				cmd := fmt.Sprintf("git -C %s diff HEAD --stat 2>&1 | head -30; echo '---'; git -C %s diff HEAD%s 2>&1 | head -400", shQuote(repoDir), shQuote(repoDir), target)
-				out, err := exec.ExecCommand(ctx, container, cmd)
-				if err != nil {
-					return "", err
+				switch strings.TrimSpace(args.Op) {
+				case "status":
+					out, err := exec.ExecCommand(ctx, container,
+						fmt.Sprintf("git -C %s status --short --branch 2>&1 | head -50", shQuote(repoDir)))
+					if err != nil {
+						return "", err
+					}
+					if strings.TrimSpace(out) == "" {
+						return "(clean tree)", nil
+					}
+					return capToolOutput(out, 12*1024), nil
+				case "diff":
+					out, err := exec.ExecCommand(ctx, container,
+						fmt.Sprintf("git -C %s diff HEAD --stat 2>&1 | head -30; echo '---'; git -C %s diff HEAD%s 2>&1 | head -400",
+							shQuote(repoDir), shQuote(repoDir), target))
+					if err != nil {
+						return "", err
+					}
+					if strings.TrimSpace(out) == "" || strings.TrimSpace(out) == "---" {
+						return "(no diff)", nil
+					}
+					return capToolOutput(out, 24*1024), nil
+				case "log":
+					out, err := exec.ExecCommand(ctx, container,
+						fmt.Sprintf("git -C %s log --oneline --decorate -25%s 2>&1 | head -40", shQuote(repoDir), target))
+					if strings.TrimSpace(out) == "" {
+						return "(no commits yet)", nil
+					}
+					if err != nil {
+						return "", err
+					}
+					return capToolOutput(out, 12*1024), nil
+				default:
+					return "", fmt.Errorf("unknown git op %q — use status, diff, or log", args.Op)
 				}
-				if strings.TrimSpace(out) == "" || strings.TrimSpace(out) == "---" {
-					return "(no diff)", nil
-				}
-				return capToolOutput(out, 24*1024), nil
 			},
 		},
 	}

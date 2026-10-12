@@ -447,3 +447,109 @@ func TestHydrateRefs(t *testing.T) {
 		t.Fatalf("drop traces = %v, want 4", drops)
 	}
 }
+
+func TestReadFileLineNumbers(t *testing.T) {
+	exec := &stubExec{out: map[string]string{"sed -n": "package main\n\nfunc main() {\n"}}
+	tools := Tools(exec, "c", "/workspace")
+	var read agent.Tool
+	for _, tool := range tools {
+		if tool.Name == "read_file" {
+			read = tool
+		}
+	}
+	out, err := read.Run(context.Background(), `{"path":"main.go","start":10,"end":12}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "10\tpackage main\n11\t\n12\tfunc main() {" {
+		t.Fatalf("numbered read = %q", out)
+	}
+}
+
+func TestGitTool(t *testing.T) {
+	exec := &stubExec{out: map[string]string{
+		"status --short": "## main\n M a.go\n",
+		"diff HEAD":      "---\n+new line\n",
+		"log --oneline":  "abc1234 first\n",
+	}}
+	tools := Tools(exec, "c", "/workspace")
+	var git agent.Tool
+	for _, tool := range tools {
+		if tool.Name == "git" {
+			git = tool
+		}
+	}
+	ctx := context.Background()
+	run := func(args string) string {
+		t.Helper()
+		out, err := git.Run(ctx, args)
+		if err != nil {
+			t.Fatalf("git %s failed: %v", args, err)
+		}
+		return out
+	}
+	if got := run(`{"op":"status"}`); !strings.Contains(got, "M a.go") {
+		t.Errorf("git status = %q", got)
+	}
+	if got := run(`{"op":"diff"}`); !strings.Contains(got, "+new line") {
+		t.Errorf("git diff = %q", got)
+	}
+	if got := run(`{"op":"log"}`); !strings.Contains(got, "abc1234") {
+		t.Errorf("git log = %q", got)
+	}
+	if _, err := git.Run(ctx, `{"op":"push"}`); err == nil {
+		t.Error("unknown op must fail")
+	}
+	if _, err := git.Run(ctx, `{"op":"diff","path":"/etc/passwd"}`); err == nil {
+		t.Error("outside-root path must fail")
+	}
+}
+
+func TestFindSymbolTool(t *testing.T) {
+	tags := `{"_type":"tag","name":"Verify","path":"server/auth.go","line":10,"kind":"function","signature":"(pin string) bool"}` + "\n" +
+		`{"_type":"tag","name":"Verify","path":"server/other.go","line":3,"kind":"variable"}` + "\n" +
+		`{"_type":"tag","name":"Other","path":"server/other.go","line":1,"kind":"class","signature":""}` + "\n"
+	exec := &stubExec{out: map[string]string{"ctags": tags}}
+	tools := Tools(exec, "c", "/workspace")
+	var find agent.Tool
+	for _, tool := range tools {
+		if tool.Name == "find_symbol" {
+			find = tool
+		}
+	}
+	ctx := context.Background()
+	out, err := find.Run(ctx, `{"name":"Verify"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "server/auth.go:10 [function] (pin string) bool\nserver/other.go:3 [variable]" {
+		t.Fatalf("find_symbol = %q", out)
+	}
+	out, err = find.Run(ctx, `{"name":"Missing"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "no definition") {
+		t.Fatalf("unknown symbol = %q", out)
+	}
+	for _, args := range []string{`{"name":""}`, `{"name":"a\nb"}`} {
+		if _, err := find.Run(ctx, args); err == nil {
+			t.Errorf("find_symbol %q must fail", args)
+		}
+	}
+	// No ctags binary: degrade to a grep hint, never a raw exec error.
+	broken := &stubExec{out: map[string]string{}}
+	tools = Tools(broken, "c", "/workspace")
+	for _, tool := range tools {
+		if tool.Name == "find_symbol" {
+			find = tool
+		}
+	}
+	out, err = find.Run(ctx, `{"name":"Verify"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "search_code") {
+		t.Fatalf("missing ctags = %q, want grep fallback hint", out)
+	}
+}
