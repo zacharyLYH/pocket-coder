@@ -58,7 +58,9 @@ export function ShortcutsModal({ projectId, open, onOpenChange, onSaved, onRun }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
+      {/* No auto-focus on open: focusing the search box would pop the
+          mobile keyboard over the list before the user asked to type. */}
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg" onOpenAutoFocus={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>Shortcuts</DialogTitle>
           <DialogDescription>Run anything in one tap. Changes save instantly — type a command, or press keys like Ctrl-C.</DialogDescription>

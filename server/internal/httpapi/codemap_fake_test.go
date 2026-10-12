@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 
@@ -127,4 +128,52 @@ func mockRepoDir(md *dockermocks.MockClient, sha string) {
 			return len(argv) == 3 && strings.Contains(argv[2], "rev-parse HEAD")
 		}), false).
 		Return(docker.ExecResult{ExitCode: 0, Output: sha + "\n"}, nil)
+}
+
+// postCodemapTurn POSTs one codemap turn and returns the reserved thread id.
+// The run detaches (butler-shaped 202): the placeholder persists at once,
+// the model finishes in the background, so callers must waitCodemapSettled
+// before asserting on the transcript or starting another run.
+func postCodemapTurn(t *testing.T, h http.Handler, cookie *http.Cookie, body string) string {
+	t.Helper()
+	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", body)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("codemap: got %d %q, want 202", rec.Code, rec.Body)
+	}
+	var got struct {
+		ThreadID string `json:"threadId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ThreadID == "" {
+		t.Fatalf("reserve response missing threadId: %s", rec.Body.String())
+	}
+	return got.ThreadID
+}
+
+// waitCodemapSettled polls the thread GET until its status leaves "running"
+// and the per-project run slot is free. Returns the thread's GET object.
+func waitCodemapSettled(t *testing.T, h http.Handler, cookie *http.Cookie, tid string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		rec := authedGet(t, h, cookie, "/api/projects/abc/codemap/threads/"+tid)
+		var body struct {
+			Thread map[string]any `json:"thread"`
+		}
+		if rec.Code == http.StatusOK {
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err == nil {
+				if status, _ := body.Thread["status"].(string); status != "running" {
+					if _, busy := codemapRuns.running("abc"); !busy {
+						return body.Thread
+					}
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("codemap thread %s never settled; last=%s", tid, rec.Body.String())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

@@ -242,7 +242,7 @@ describe('TerminalView session management', () => {
     expect(ensurePosts().length).toBe(ensureCount)
   })
 
-  it('opts the terminal root out of pull-to-refresh and leaves pan to the browser', async () => {
+  it('pull-to-refresh works on the terminal page but never inside the terminal pane', async () => {
     renderView(baseHandler())
 
     await waitFor(() => {
@@ -250,11 +250,14 @@ describe('TerminalView session management', () => {
     })
 
     // Regression pin for the mobile bug (every terminal drag reloaded the
-    // page, and one-finger scroll never reached xterm): the root must opt
-    // out of the document-level pull handler, and the pane's touch-action
-    // must leave pan-x/pan-y to the browser — NOT touch-none/manipulation.
+    // page, and one-finger scroll never reached xterm): the pane opts out
+    // of the document-level pull handler so terminal scrolls never reload,
+    // while the page root stays eligible so a pull from the header/tabs
+    // still refreshes. Pane touch-action leaves pan to the browser's
+    // touch→wheel bridge (touch-none), NOT touch-manipulation.
     const root = screen.getByTestId('terminal-root')
-    expect(root.hasAttribute('data-no-pull-refresh')).toBe(true)
+    expect(root.hasAttribute('data-no-pull-refresh')).toBe(false)
+    expect(screen.getByTestId('terminal-pane-wrap').hasAttribute('data-no-pull-refresh')).toBe(true)
     expect(root.className).not.toMatch(/touch-none/)
     expect(root.className).not.toMatch(/touch-manipulation/)
   })

@@ -72,8 +72,8 @@ func TestCodemapRetrySuccess(t *testing.T) {
 	tid, failedTurn := seedFailedLastTurn(t, d)
 
 	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap/threads/"+tid+"/retry", ``)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("retry: got %d %q, want 200", rec.Code, rec.Body)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("retry: got %d %q, want 202", rec.Code, rec.Body)
 	}
 	var body struct {
 		TurnID      string `json:"turnId"`
@@ -86,18 +86,18 @@ func TestCodemapRetrySuccess(t *testing.T) {
 	if body.TurnID != failedTurn || body.ThreadID != tid {
 		t.Fatalf("retry identity = %+v, want turn %q thread %q", body, failedTurn, tid)
 	}
+	// Async: model runs detached; wait for the slot to free.
+	thread := waitCodemapSettled(t, h, cookie, tid)
 	// No N+1: still two turns, last one now successful with the same id.
-	th, err := d.Codemaps.Get("abc", tid)
-	if err != nil {
-		t.Fatal(err)
+	turns, _ := thread["turns"].([]any)
+	if len(turns) != 2 {
+		t.Fatalf("turns = %d, want 2 (rewrite, not append)", len(turns))
 	}
-	if len(th.Turns) != 2 {
-		t.Fatalf("turns = %d, want 2 (rewrite, not append)", len(th.Turns))
+	last, _ := turns[1].(map[string]any)
+	if last["turnId"] != failedTurn || last["error"] != nil {
+		t.Fatalf("retried turn = %+v, want same id, no error", last)
 	}
-	if th.Turns[1].TurnID != failedTurn || th.Turns[1].Error != nil {
-		t.Fatalf("retried turn = %+v, want same id, no error", th.Turns[1])
-	}
-	if retried := codemapPayloadOf(th.Turns[1]); len(retried.Sections) == 0 {
+	if secs, _ := last["sections"].([]any); len(secs) == 0 {
 		t.Fatalf("retried turn has no sections")
 	}
 	// Context was turns 1..N-1 only: history holds turn 1 (prompt +
@@ -151,6 +151,10 @@ func TestCodemapRetryGuards(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("retry success: got %d %q, want 409", rec.Code, rec.Body)
 	}
+	// Guard path holds the per-project slot without a detached run
+	// (no done on this branch); free it so the next guard sees its own
+	// verdict instead of busy.
+	codemapRuns.done("abc")
 
 	// Non-terminal failed turn (a good turn follows it): never retried.
 	tid2, _, err := d.Codemaps.ReserveNewThread("abc", "first?", "s", nil)
@@ -183,6 +187,7 @@ func TestCodemapRetryGuards(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("retry non-terminal: got %d %q, want 409", rec.Code, rec.Body)
 	}
+	codemapRuns.done("abc")
 
 	// Unknown thread → 404 before burning a model call.
 	rec = authedPost(t, h, cookie, "/api/projects/abc/codemap/threads/abcdef0123456789/retry", ``)
@@ -231,16 +236,52 @@ func TestCodemapRetryBusy(t *testing.T) {
 		done <- authedPost(t, h, cookie, "/api/projects/abc/codemap",
 			`{"prompt":"follow up","threadId":"`+tid+`"}`)
 	}()
-	for i := 0; i < 200; i++ {
-		if _, busy := codemapRuns.running("abc"); busy {
+	// Async POST reserves at once (202) while the model blocks on
+	// release in the background. Wait for the 202, then poll the thread
+	// list until a row reports running.
+	var first *httptest.ResponseRecorder
+	select {
+	case first = <-done:
+	case <-time.After(10 * time.Second):
+		once.Do(func() { close(release) })
+		t.Fatal("first POST never returned")
+	}
+	if first.Code != http.StatusAccepted {
+		once.Do(func() { close(release) })
+		t.Fatalf("run: got %d %q, want 202", first.Code, first.Body)
+	}
+	var firstBody struct {
+		ThreadID string `json:"threadId"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &firstBody); err != nil {
+		once.Do(func() { close(release) })
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	running := false
+	for time.Now().Before(deadline) {
+		rec := authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
+		var listed struct {
+			Threads []map[string]any `json:"threads"`
+		}
+		if rec.Code == http.StatusOK {
+			if err := json.Unmarshal(rec.Body.Bytes(), &listed); err == nil {
+				for _, row := range listed.Threads {
+					if row["status"] == "running" {
+						running = true
+						break
+					}
+				}
+			}
+		}
+		if running {
 			break
 		}
-		select {
-		case rec := <-done:
-			t.Fatalf("run finished early: %d", rec.Code)
-		default:
-		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if !running {
+		once.Do(func() { close(release) })
+		t.Fatal("no running row while first run in flight")
 	}
 	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap/threads/"+tid+"/retry", ``)
 	if rec.Code != http.StatusConflict {
@@ -248,9 +289,7 @@ func TestCodemapRetryBusy(t *testing.T) {
 		t.Fatalf("retry during run: got %d %q, want 409", rec.Code, rec.Body)
 	}
 	once.Do(func() { close(release) })
-	if first := <-done; first.Code != http.StatusBadGateway && first.Code != http.StatusOK {
-		t.Fatalf("run: got %d %q", first.Code, first.Body)
-	}
+	waitCodemapSettled(t, h, cookie, firstBody.ThreadID)
 }
 
 // Rerun failure answers 502/504 WITH threadId so FE adopts the id and
@@ -270,8 +309,8 @@ func TestCodemapRetryFailureKeepsThread(t *testing.T) {
 	cookie := loginCookie(t, h, pinOut)
 	tid, failedTurn := seedFailedLastTurn(t, d)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap/threads/"+tid+"/retry", ``)
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("retry fail: got %d %q, want 502", rec.Code, rec.Body)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("retry fail: got %d %q, want 202", rec.Code, rec.Body)
 	}
 	var body struct {
 		ThreadID    string `json:"threadId"`
@@ -283,12 +322,14 @@ func TestCodemapRetryFailureKeepsThread(t *testing.T) {
 	if body.ThreadID != tid {
 		t.Fatalf("retry failure dropped threadId: %s", rec.Body)
 	}
-	th, err := d.Codemaps.Get("abc", tid)
-	if err != nil {
-		t.Fatal(err)
+	thread := waitCodemapSettled(t, h, cookie, tid)
+	turns, _ := thread["turns"].([]any)
+	if len(turns) != 2 {
+		t.Fatalf("rerun failure turns = %d, want 2: %+v", len(turns), turns)
 	}
-	if len(th.Turns) != 2 || th.Turns[1].TurnID != failedTurn || th.Turns[1].Error == nil {
-		t.Fatalf("rerun failure not a failed placeholder: %+v", th.Turns)
+	last, _ := turns[1].(map[string]any)
+	if last["turnId"] != failedTurn || last["error"] == nil {
+		t.Fatalf("rerun failure not a failed placeholder: %+v", last)
 	}
 }
 

@@ -62,26 +62,18 @@ func TestCodemapDeletedWithProject(t *testing.T) {
 	// One real turn through the loop: creates the thread folder with
 	// manifest.json + 1.json + 1.lineage.json inside.
 	const prompt = "Map the auth flow"
-	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"`+prompt+`"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("codemap: got %d %q, want 200", rec.Code, rec.Body)
-	}
-	var body struct {
-		ThreadID    string `json:"threadId"`
-		ThreadTitle string `json:"threadTitle"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if body.ThreadID == "" || body.ThreadTitle != prompt {
-		t.Fatalf("thread identity = %+v, want id and prompt title %q", body, prompt)
+	tid := postCodemapTurn(t, h, cookie, `{"prompt":"`+prompt+`"}`)
+	thread := waitCodemapSettled(t, h, cookie, tid)
+	title, _ := thread["title"].(string)
+	if tid == "" || title != prompt {
+		t.Fatalf("thread identity = id %q title %q, want id and prompt title %q", tid, title, prompt)
 	}
 
 	// Naming contract: thread dir is the thread ID; it holds
 	// manifest.json + 1.json + 1.lineage.json. No prompt text in any
 	// filename, no flat files directly under the project dir.
 	dir := filepath.Join(dataDir, "codemaps", "abc")
-	threadDir := filepath.Join(dir, body.ThreadID)
+	threadDir := filepath.Join(dir, tid)
 	for _, p := range []string{
 		filepath.Join(threadDir, "manifest.json"),
 		filepath.Join(threadDir, "1.json"),
@@ -112,8 +104,8 @@ func TestCodemapDeletedWithProject(t *testing.T) {
 		Model    string `json:"model"`
 		Tools    []any  `json:"tools"`
 	}
-	if err := json.Unmarshal(lineageRaw, &lineageMeta); err != nil || lineageMeta.ThreadID != body.ThreadID {
-		t.Fatalf("lineage threadId = %q (%v), want %q", lineageMeta.ThreadID, err, body.ThreadID)
+	if err := json.Unmarshal(lineageRaw, &lineageMeta); err != nil || lineageMeta.ThreadID != tid {
+		t.Fatalf("lineage threadId = %q (%v), want %q", lineageMeta.ThreadID, err, tid)
 	}
 	if lineageMeta.Model == "" || len(lineageMeta.Tools) == 0 {
 		t.Fatalf("lineage missing model/tools header: %s", lineageRaw)
@@ -132,7 +124,7 @@ func TestCodemapDeletedWithProject(t *testing.T) {
 	md.EXPECT().Remove(mock.Anything, cname, true).Return(nil)
 	md.EXPECT().RemoveVolume(mock.Anything, cname+"-home").Return(nil)
 	md.EXPECT().RemoveVolume(mock.Anything, cname+"-repo").Return(nil)
-	rec = authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc?scope=all")
+	rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc?scope=all")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delete project: got %d %q, want 200", rec.Code, rec.Body)
 	}

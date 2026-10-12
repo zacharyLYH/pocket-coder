@@ -92,7 +92,7 @@ function HealthCheckCard({ projectId }: { projectId: string }) {
       </div>
       {error && <p className="max-h-16 overflow-auto break-all pt-2 text-xs text-destructive" data-testid="nerdy-healthcheck-error">{error}</p>}
       {report && (
-        <div className="flex flex-col gap-1 pt-2" data-testid="nerdy-healthcheck-report">
+        <div className="flex max-h-64 flex-col gap-1 overflow-y-auto pt-2" data-testid="nerdy-healthcheck-report">
           <p>
             {report.inSync
               ? <Badge data-testid="nerdy-healthcheck-verdict"><span className="mr-1 inline-block size-1.5 rounded-full bg-emerald-500" />In sync</Badge>

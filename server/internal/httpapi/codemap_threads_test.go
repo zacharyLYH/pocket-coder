@@ -119,7 +119,7 @@ func TestCodemapThreadsGetListDelete(t *testing.T) {
 }
 
 // Posting a turn without a threadId implicitly creates the folder chat
-// (all 200s, no 201 anywhere).
+// (202 reserve, no 201 anywhere).
 func TestCodemapPostAutoCreatesThread(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
@@ -130,20 +130,9 @@ func TestCodemapPostAutoCreatesThread(t *testing.T) {
 	seedProject(t, st, "abc")
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"where is main?"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("codemap: got %d %q, want 200", rec.Code, rec.Body)
-	}
-	var body struct {
-		ThreadID string `json:"threadId"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if body.ThreadID == "" {
-		t.Fatalf("implicit create missing threadId: %s", rec.Body)
-	}
-	rec = authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
+	tid := postCodemapTurn(t, h, cookie, `{"prompt":"where is main?"}`)
+	waitCodemapSettled(t, h, cookie, tid)
+	rec := authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
 	var listed struct {
 		Threads []struct {
 			ID string `json:"id"`
@@ -152,7 +141,7 @@ func TestCodemapPostAutoCreatesThread(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Threads) != 1 || listed.Threads[0].ID != body.ThreadID {
+	if len(listed.Threads) != 1 || listed.Threads[0].ID != tid {
 		t.Fatalf("listed = %+v, want the implicit thread", listed)
 	}
 }
@@ -187,8 +176,28 @@ func TestCodemapRowStatusTracksRun(t *testing.T) {
 	go func() {
 		done <- authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"where is main?"}`)
 	}()
-	// Wait until the run shows as a running row, then read the thread id
-	// off GET threads (no new endpoint).
+	// POST reserves at once (202) while the model blocks on release in
+	// the background. Read the id first, then the running row must match.
+	var tid string
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusAccepted {
+			once.Do(func() { close(release) })
+			t.Fatalf("run: got %d %q, want 202", rec.Code, rec.Body)
+		}
+		var body struct {
+			ThreadID string `json:"threadId"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		tid = body.ThreadID
+	case <-time.After(5 * time.Second):
+		once.Do(func() { close(release) })
+		t.Fatalf("POST never returned 202")
+	}
+	if tid == "" {
+		once.Do(func() { close(release) })
+		t.Fatalf("reserve missing threadId")
+	}
 	var running string
 	for i := 0; i < 200; i++ {
 		rec := authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
@@ -207,29 +216,14 @@ func TestCodemapRowStatusTracksRun(t *testing.T) {
 		if running != "" {
 			break
 		}
-		select {
-		case rec := <-done:
-			t.Fatalf("run finished early: %d", rec.Code)
-		default:
-		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if running == "" {
+	if running != tid {
 		once.Do(func() { close(release) })
-		t.Fatalf("no running row during POST")
+		t.Fatalf("running row = %q, want the new thread %q", running, tid)
 	}
 	once.Do(func() { close(release) })
-	first := <-done
-	if first.Code != http.StatusOK {
-		t.Fatalf("run: got %d %q, want 200", first.Code, first.Body)
-	}
-	var body struct {
-		ThreadID string `json:"threadId"`
-	}
-	_ = json.Unmarshal(first.Body.Bytes(), &body)
-	if body.ThreadID != running {
-		t.Fatalf("running row = %q, want the new thread %q", running, body.ThreadID)
-	}
+	waitCodemapSettled(t, h, cookie, tid)
 	// Idle again: the row reads ready.
 	rec := authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
 	var idle struct {

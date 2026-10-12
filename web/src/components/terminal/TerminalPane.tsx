@@ -100,9 +100,10 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
       while (Math.abs(accum) >= PX_PER_NOTCH) {
         const step = accum > 0 ? PX_PER_NOTCH : -PX_PER_NOTCH
         accum -= step
-        // Drag down reveals earlier output: positive deltaY scrolls xterm up.
+        // Native feel: drag down reveals earlier output, push up reveals
+        // newer output — a downward drag must scroll up (negative deltaY).
         screen.dispatchEvent(new WheelEvent('wheel', {
-          deltaY: step, deltaMode: 0, clientX: t.clientX, clientY: t.clientY,
+          deltaY: -step, deltaMode: 0, clientX: t.clientX, clientY: t.clientY,
           bubbles: true, cancelable: true,
         }))
       }

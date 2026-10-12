@@ -79,10 +79,10 @@ func handleCodemap(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusConflict, "codemap busy — wait for the current run")
 			return
 		}
-		defer codemapRuns.done(id)
 
 		st := d.Codemaps
 		if st == nil {
+			codemapRuns.done(id)
 			err = errStoreUnconfigured
 			writeInternalErr(w, "codemap store", err)
 			return
@@ -96,6 +96,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 		if threadID != "" {
 			th, gerr := st.Get(id, threadID)
 			if gerr != nil {
+				codemapRuns.done(id)
 				err = errors.New("unknown thread")
 				writeUnknownThread(w)
 				return
@@ -107,6 +108,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 			sha := repoSHA(r.Context(), d, container, dir)
 			n, tid, rerr := st.ReserveFollowup(id, threadID, prompt, sha, nil)
 			if rerr != nil {
+				codemapRuns.done(id)
 				if rerr.Error() == "unknown thread" {
 					writeUnknownThread(w)
 					return
@@ -121,6 +123,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 			sha := repoSHA(r.Context(), d, container, dir)
 			tid, turn, rerr := st.ReserveNewThread(id, prompt, sha, nil)
 			if rerr != nil {
+				codemapRuns.done(id)
 				obs.Error(r.Context(), obs.CodemapTurn, "thread initialization failed: "+rerr.Error(), map[string]any{"stage": "reserve_thread", "error": rerr.Error()})
 				writeTurnErr(w, http.StatusInternalServerError, "create thread: "+rerr.Error(), "", "")
 				return
@@ -133,8 +136,19 @@ func handleCodemap(d Deps) http.HandlerFunc {
 			obs.Info(r.Context(), obs.CodemapThreadInitialized, fmt.Sprintf("[%s] thread + turn 1 reserved before generation; waiting for turn", threadID), map[string]any{"threadId": threadID, "title": threadTitle, "stage": "reserve_thread"})
 		}
 
-		tstatus, tbody := runCodemapTurn(detached(r).Context(), d, st, id, container, dir, cfg, threadID, threadTitle, turnN, turnID, prompt, history)
-		writeJSON(w, tstatus, tbody)
+		// Butler-shaped: reserve persists the prompt, the POST returns the
+		// identity at once, the model runs detached. The client polls the
+		// thread: the user bubble renders from the placeholder, then the
+		// answer lands when the run completes.
+		go func() {
+			defer codemapRuns.done(id)
+			bg := obs.WithProject(detached(r).Context(), id)
+			_, _ = runCodemapTurn(bg, d, st, id, container, dir, cfg, threadID, threadTitle, turnN, turnID, prompt, history)
+		}()
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"threadId": threadID, "threadTitle": threadTitle,
+			"turnId": turnID, "time": time.Now().UTC().Format(time.RFC3339),
+		})
 	}
 }
 
@@ -164,21 +178,23 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusConflict, "codemap busy — wait for the current run")
 			return
 		}
-		defer codemapRuns.done(id)
 
 		st := d.Codemaps
 		if st == nil {
+			codemapRuns.done(id)
 			err = errStoreUnconfigured
 			writeInternalErr(w, "codemap store", err)
 			return
 		}
 		th, gerr := st.Get(id, tid)
 		if gerr != nil {
+			codemapRuns.done(id)
 			err = errors.New("unknown thread")
 			writeUnknownThread(w)
 			return
 		}
 		if len(th.Turns) == 0 {
+			codemapRuns.done(id)
 			err = errors.New("unknown thread")
 			writeUnknownThread(w)
 			return
@@ -186,6 +202,7 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 		last := th.Turns[len(th.Turns)-1]
 		lastPayload := codemapPayloadOf(last)
 		if last.Error == nil && len(lastPayload.Sections) > 0 && string(lastPayload.Sections) != "null" {
+			codemapRuns.done(id)
 			err = errors.New("retry only failed turns")
 			writeErr(w, http.StatusConflict, err.Error())
 			return
@@ -200,6 +217,7 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 		sha := repoSHA(r.Context(), d, container, dir)
 		n, turnID, prompt, rerr := st.BeginRetry(id, tid, sha)
 		if rerr != nil {
+			codemapRuns.done(id)
 			if rerr.Error() == "unknown thread" {
 				writeUnknownThread(w)
 				return
@@ -209,8 +227,15 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 			return
 		}
 		obs.Info(r.Context(), obs.CodemapRetryReserved, fmt.Sprintf("[%s] turn %d rewritten for retry", turnID, n), map[string]any{"turnId": turnID, "threadId": tid, "turn": n, "stage": "retry_reserve"})
-		tstatus, tbody := runCodemapTurn(detached(r).Context(), d, st, id, container, dir, cfg, tid, th.Title, n, turnID, prompt, history)
-		writeJSON(w, tstatus, tbody)
+		go func() {
+			defer codemapRuns.done(id)
+			bg := obs.WithProject(detached(r).Context(), id)
+			_, _ = runCodemapTurn(bg, d, st, id, container, dir, cfg, tid, th.Title, n, turnID, prompt, history)
+		}()
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"threadId": tid, "threadTitle": th.Title,
+			"turnId": turnID, "time": time.Now().UTC().Format(time.RFC3339),
+		})
 	}
 }
 

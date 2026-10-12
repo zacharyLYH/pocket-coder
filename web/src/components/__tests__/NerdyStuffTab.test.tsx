@@ -233,5 +233,8 @@ describe('NerdyStuffTab', () => {
     expect(screen.getByTestId('nerdy-healthcheck-row-session:ghost-1')).toHaveTextContent('missing from tmux')
     expect(screen.getByTestId('nerdy-healthcheck-row-harness:fake')).toHaveTextContent('recorded installed but the binary is missing')
     expect(screen.getByTestId('nerdy-healthcheck-row-harness:helper')).toHaveTextContent('binary present but not recorded')
+    // Long drift lists scroll inside the card instead of overflowing the tab.
+    expect(screen.getByTestId('nerdy-healthcheck-report').className).toMatch(/overflow-y-auto/)
+    expect(screen.getByTestId('nerdy-healthcheck-report').className).toMatch(/max-h-64/)
   })
 })

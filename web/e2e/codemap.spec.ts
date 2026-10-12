@@ -1,7 +1,9 @@
 import { expect, test, type Page } from './test'
 
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+
 import { mockConfigured, mockProject, mockSessions } from './mocks'
-import { terminalUrl } from './helpers'
+import { createProject, e2eRepo, e2eRepoID, engineUp, projectURL, terminalUrl, waitForRunning } from './helpers'
 
 // Codemap e2e against the real backend with the model mocked at the
 // browser edge: no engine, no API key, no network model needed.
@@ -129,7 +131,7 @@ test.describe('codemap desktop', () => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(THREAD) })
     })
     await page.route('**/api/projects/*/codemap', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...TURN, threadId: 'c1', threadTitle: 'Where does login happen?', time: '2026-09-02T12:00:00Z' }) })
+      await route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ ...TURN, threadId: 'c1', threadTitle: 'Where does login happen?', time: '2026-09-02T12:00:00Z' }) })
     })
     await page.route('**/api/projects/*/file*', async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(FILE_BODY) })
@@ -439,7 +441,7 @@ test.describe('codemap desktop', () => {
       if (/\/retry$/.test(url)) {
         retried = true
         await route.fulfill({
-          status: 200, contentType: 'application/json',
+          status: 202, contentType: 'application/json',
           body: JSON.stringify({ turnId: 't1', threadId: TID, threadTitle: 'Where does login happen?', time: '2026-09-02T12:00:00Z' }),
         })
         return
@@ -505,5 +507,179 @@ test.describe('codemap phone', () => {
     await page.getByTestId('tab-codemap').click()
     await expect(page.getByTestId('codemap-prompt')).toBeVisible()
     await expect(page).toHaveScreenshot('codemap-prompt-phone.png', { fullPage: true })
+  })
+})
+
+test.describe('codemap live backend', () => {
+  // UTC pins locale timestamps so baselines match every runner.
+  test.use({ viewport: { width: 1280, height: 720 }, timezoneId: 'UTC' })
+
+  const PROMPT = 'What is in hello.txt?'
+  const FINAL_JSON = JSON.stringify({
+    sections: [{
+      title: 'Fixture files',
+      summary: 'hello.txt says hi, and the README names this fixture.',
+      refs: [{ path: 'hello.txt', startLine: 1, endLine: 1, snippet: 'hi' }],
+    }],
+  })
+
+  function completion(content: string, toolCalls?: { id: string; type: string; function: { name: string; arguments: string } }[]) {
+    const message: Record<string, unknown> = { role: 'assistant', content }
+    if (toolCalls) message.tool_calls = toolCalls
+    return {
+      id: 'chatcmpl-e2e', object: 'chat.completion', created: 1, model: 'e2e-mini',
+      choices: [{ index: 0, finish_reason: toolCalls ? 'tool_calls' : 'stop', message }],
+    }
+  }
+
+  // Scripted OpenAI-compatible stub on the host, reached via
+  // host.docker.internal (same pattern as butler.live.spec.ts): the model
+  // probe answers ok, the scope gate allows, one search round runs for
+  // real in the project container, and the final answer is held back a
+  // few seconds so the in-flight window is observable before it lands.
+  async function startFakeLLM(): Promise<{ server: Server; url: string }> {
+    let tooled = false
+    const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      if (req.method !== 'POST' || !req.url?.endsWith('/chat/completions')) {
+        res.writeHead(404).end()
+        return
+      }
+      let raw = ''
+      req.on('data', (c) => { raw += c })
+      req.on('end', () => {
+        void (async () => {
+          let body: { tools?: { function?: { name?: string } }[]; response_format?: { json_schema?: { name?: string } } } = {}
+          try { body = JSON.parse(raw) } catch { /* empty probe body */ }
+          const toolNames = (body.tools ?? []).map((t) => t.function?.name ?? '')
+          const schemaName = body.response_format?.json_schema?.name ?? ''
+          if (toolNames.length > 0 && toolNames.every((n) => n === 'ping')) {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify(completion('{"ok":true}')))
+            return
+          }
+          if (schemaName.includes('scope')) {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify(completion('{"about_code":true}')))
+            return
+          }
+          if (body.response_format) {
+            // Structured extractor: hold the answer back so the pending
+            // state is observable before short polling lands it.
+            await new Promise((r) => setTimeout(r, 4000))
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify(completion(FINAL_JSON)))
+            return
+          }
+          if (toolNames.length > 0 && !tooled) {
+            // Tool loop: one real grep in the container, answered fast.
+            // Exactly one round — repeating the identical call is deduped
+            // by the loop and burns all 8 steps.
+            tooled = true
+            await new Promise((r) => setTimeout(r, 300))
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify(completion('', [{
+              id: 'call-1', type: 'function',
+              function: { name: 'search_code', arguments: '{"pattern":"hi"}' },
+            }])))
+            return
+          }
+          // Loop follow-ups and the final-answer prompt: plain text ends
+          // the tool loop so the extractor runs.
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(completion('Search complete, ready to answer.')))
+        })()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '0.0.0.0', resolve))
+    const port = (server.address() as { port: number }).port
+    return { server, url: `http://host.docker.internal:${port}` }
+  }
+
+  test('sent message shows at once, answer lands via short polling', async ({ page }) => {
+    if (!(await engineUp(page.request))) {
+      test.skip(true, 'Docker engine unavailable — live codemap test skipped')
+    }
+    const llm = await startFakeLLM()
+    let modelId = ''
+    let projectId = ''
+    try {
+      const created = await page.request.post('/api/ai/models', {
+        data: { label: 'e2e-mini', baseURL: llm.url, apiKey: 'e2e-fake-key', model: 'e2e-mini' },
+      })
+      expect(created.status()).toBe(201)
+      modelId = ((await created.json()) as { id: string }).id
+
+      projectId = await createProject(page.request, e2eRepo(1))
+      expect(projectId).toBe(e2eRepoID(1))
+      await waitForRunning(page.request, projectId)
+
+      // Sessions stay mocked so the pane never dials; the codemap tab only
+      // needs the project to exist server-side.
+      await mockSessions(page)
+      await page.goto(terminalUrl(projectId, 'main'))
+      await page.getByTestId('tab-codemap').click()
+      await expect(page.getByText('Ask about this codebase')).toBeVisible()
+
+      await page.getByTestId('codemap-prompt').fill(PROMPT)
+      const [postResp] = await Promise.all([
+        page.waitForResponse((r) => r.url().includes('/codemap') && r.request().method() === 'POST'),
+        page.getByTestId('codemap-prompt').press('Enter'),
+      ])
+      // The async contract: the POST reserves and answers 202 with the
+      // identity only — no sections — so everything after this arrives
+      // through short polling, never the send response.
+      expect(postResp.status()).toBe(202)
+      const postBody = (await postResp.json()) as Record<string, unknown>
+      expect(postBody.threadId).toBeTruthy()
+      expect(postBody).not.toHaveProperty('sections')
+
+      // The user's own bubble renders from the reserved placeholder right
+      // away — the wait never looks like a bare loading state.
+      await expect(page.getByTestId('codemap-turn')).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId('codemap-turn')).toContainText(PROMPT)
+      await expect(page.getByTestId('codemap-spinner')).toBeVisible()
+      await expect(page).toHaveScreenshot('codemap-live-pending.png')
+
+      // Completion lands via the 3s poll with no reload: spinner gone,
+      // grounded answer in, composer re-enabled.
+      await expect(page.getByTestId('codemap-spinner')).toHaveCount(0, { timeout: 120_000 })
+      await expect(page.getByText('hello.txt says hi')).toBeVisible({ timeout: 120_000 })
+      await expect(page.getByTestId('codemap-prompt')).toBeEnabled()
+      await expect(page).toHaveScreenshot('codemap-live-answer.png')
+
+      // Server-side: one settled thread carrying the turn.
+      const listed = await page.request.get(`/api/projects/${projectURL(projectId)}/codemap/threads`)
+      expect(listed.ok()).toBeTruthy()
+      const threads = (((await listed.json()) as { threads: { id: string }[] }).threads ?? [])
+      expect(threads).toHaveLength(1)
+      const got = await page.request.get(`/api/projects/${projectURL(projectId)}/codemap/threads/${threads[0].id}`)
+      const thread = ((await got.json()) as {
+        thread: { turns: { prompt: string; sections: { title: string }[]; error: unknown }[]; status: string }
+      }).thread
+      expect(thread.status).toBe('ready')
+      expect(thread.turns).toHaveLength(1)
+      expect(thread.turns[0].prompt).toBe(PROMPT)
+      expect(thread.turns[0].error).toBeNull()
+      expect(thread.turns[0].sections).toHaveLength(1)
+    } finally {
+      try {
+        if (projectId) {
+          const listed = await page.request.get(`/api/projects/${projectURL(projectId)}/codemap/threads`)
+          if (listed.ok()) {
+            const threads = (((await listed.json()) as { threads: { id: string }[] }).threads ?? [])
+            for (const t of threads) {
+              await page.request.delete(`/api/projects/${projectURL(projectId)}/codemap/threads/${t.id}`)
+            }
+          }
+        }
+      } catch { /* cleanup must not fail the test */ }
+      try {
+        if (modelId) await page.request.delete(`/api/ai/models/${modelId}`)
+      } catch { /* cleanup must not fail the test */ }
+      try {
+        if (projectId) await page.request.delete(`/api/projects/${projectURL(projectId)}?scope=all`)
+      } catch { /* cleanup must not fail the test */ }
+      await new Promise((resolve) => llm.server.close(resolve))
+    }
   })
 })

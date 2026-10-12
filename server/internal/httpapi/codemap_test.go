@@ -308,10 +308,9 @@ func TestCodemapSuccess(t *testing.T) {
 	seedProject(t, st, "abc")
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"where is main?"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("codemap: got %d %q, want 200", rec.Code, rec.Body)
-	}
+	tid := postCodemapTurn(t, h, cookie, `{"prompt":"where is main?"}`)
+	thread := waitCodemapSettled(t, h, cookie, tid)
+	rawThread, _ := json.Marshal(thread)
 	var body struct {
 		TurnID   string `json:"turnId"`
 		ThreadID string `json:"threadId"`
@@ -328,18 +327,54 @@ func TestCodemapSuccess(t *testing.T) {
 			Output string `json:"output"`
 			Err    string `json:"error"`
 		} `json:"steps"`
+		Time string `json:"time"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+	var settled struct {
+		ID    string `json:"id"`
+		Turns []struct {
+			TurnID   string `json:"turnId"`
+			SHA      string `json:"sha"`
+			Prompt   string `json:"prompt"`
+			Sections []struct {
+				Title string `json:"title"`
+				Refs  []struct {
+					Path string `json:"path"`
+				} `json:"refs"`
+			} `json:"sections"`
+			Steps []struct {
+				Tool   string `json:"tool"`
+				Args   string `json:"args"`
+				Output string `json:"output"`
+				Err    string `json:"error"`
+			} `json:"steps"`
+			Time  string  `json:"time"`
+			Error *string `json:"error"`
+		} `json:"turns"`
+	}
+	if err := json.Unmarshal(rawThread, &settled); err != nil {
 		t.Fatal(err)
 	}
+	if len(settled.Turns) != 1 {
+		t.Fatalf("settled turns = %s", string(rawThread))
+	}
+	st0 := settled.Turns[0]
+	body.TurnID = st0.TurnID
+	body.ThreadID = settled.ID
+	body.SHA = st0.SHA
+	body.Sections = st0.Sections
+	body.Steps = st0.Steps
+	body.Time = st0.Time
 	if body.TurnID == "" || body.SHA != "abc123" {
 		t.Fatalf("turn meta = %+v, want turnId set and sha abc123", body)
 	}
-	if strings.Contains(rec.Body.String(), "extractorOutput") {
-		t.Fatalf("POST response must not carry extractorOutput: %s", rec.Body)
+	if strings.Contains(string(rawThread), "extractorOutput") {
+		t.Fatalf("settled thread must not carry extractorOutput: %s", string(rawThread))
 	}
 	if body.ThreadID == "" {
 		t.Fatalf("missing threadId in response %+v", body)
+	}
+	if body.Time == "" {
+		t.Fatalf("settled turn missing time: %s", string(rawThread))
 	}
 	if len(body.Sections) != 1 || body.Sections[0].Refs[0].Path != "main.go" {
 		t.Fatalf("sections = %+v", body.Sections)
@@ -376,7 +411,7 @@ func TestCodemapSuccess(t *testing.T) {
 	// The thread file is what the UI rebuilds off of, so assert its
 	// integrity directly from the store: prompt, sections JSON, tool
 	// steps with outputs, turnId/sha/time all present.
-	rec = authedGet(t, h, cookie, "/api/projects/abc/codemap/threads/"+body.ThreadID)
+	rec := authedGet(t, h, cookie, "/api/projects/abc/codemap/threads/"+body.ThreadID)
 	var got struct {
 		Thread struct {
 			ID    string `json:"id"`
@@ -524,20 +559,12 @@ func TestCodemapTodoLifecyclePersistsCheckedItems(t *testing.T) {
 	seedProject(t, st, "abc")
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"map the entrypoints and summarize the flow"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("codemap: got %d %q", rec.Code, rec.Body)
-	}
-	var response struct {
-		ThreadID string `json:"threadId"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || response.ThreadID == "" {
-		t.Fatalf("response = %s, err=%v", rec.Body, err)
-	}
+	tid := postCodemapTurn(t, h, cookie, `{"prompt":"map the entrypoints and summarize the flow"}`)
+	_ = waitCodemapSettled(t, h, cookie, tid)
 	if !strings.Contains(fmt.Sprint(secondRound["messages"]), "Map entrypoints") {
 		t.Fatalf("second round did not receive the first todo state: %v", secondRound["messages"])
 	}
-	raw, err := d.Codemaps.ReadTurnLineage("abc", response.ThreadID, 1)
+	raw, err := d.Codemaps.ReadTurnLineage("abc", tid, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,22 +601,22 @@ func TestCodemapModelBadJSON(t *testing.T) {
 	seedProject(t, st, "abc")
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"hi"}`)
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("bad json: got %d %q, want 502", rec.Code, rec.Body)
+	tid := postCodemapTurn(t, h, cookie, `{"prompt":"hi"}`)
+	thread := waitCodemapSettled(t, h, cookie, tid)
+	turns, _ := thread["turns"].([]any)
+	if len(turns) != 1 {
+		raw, _ := json.Marshal(thread)
+		t.Fatalf("settled turns = %s, want 1 failed placeholder", string(raw))
 	}
-	if !strings.Contains(rec.Body.String(), "not json") {
-		t.Fatalf("bad json error hides model output: %q", rec.Body)
+	turn, _ := turns[0].(map[string]any)
+	errStr, _ := turn["error"].(string)
+	if errStr == "" || !strings.Contains(errStr, "not json") {
+		raw, _ := json.Marshal(thread)
+		t.Fatalf("bad json error hides model output: %s", string(raw))
 	}
-	var failBody struct {
-		ThreadID    string `json:"threadId"`
-		ThreadTitle string `json:"threadTitle"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &failBody); err != nil {
-		t.Fatal(err)
-	}
-	if failBody.ThreadID == "" {
-		t.Fatalf("failure dropped threadId: %s", rec.Body)
+	if status, _ := thread["status"].(string); status != "failed" {
+		raw, _ := json.Marshal(thread)
+		t.Fatalf("settled status = %q, want failed: %s", status, string(raw))
 	}
 	gotTypes := map[string]int{}
 	logs, _, _ := d.Obs.Read("abc", 0, 0, 0, "", "", "", "", "")
@@ -603,7 +630,7 @@ func TestCodemapModelBadJSON(t *testing.T) {
 	if err != nil || len(threads) != 1 || threads[0].TurnCount != 1 {
 		t.Fatalf("failed turn thread record = %+v, %v; expected one failed placeholder turn", threads, err)
 	}
-	th, err := d.Codemaps.Get("abc", failBody.ThreadID)
+	th, err := d.Codemaps.Get("abc", tid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,9 +688,17 @@ func TestCodemapBusy(t *testing.T) {
 		t.Fatalf("second run: got %d %q, want 409", rec.Code, rec.Body)
 	}
 	once.Do(func() { close(release) })
-	if first := <-done; first.Code != http.StatusOK {
-		t.Fatalf("first run: got %d %q, want 200", first.Code, first.Body)
+	first := <-done
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first run: got %d %q, want 202", first.Code, first.Body)
 	}
+	var firstBody struct {
+		ThreadID string `json:"threadId"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &firstBody); err != nil || firstBody.ThreadID == "" {
+		t.Fatalf("first reserve missing threadId: %s (%v)", first.Body.String(), err)
+	}
+	_ = waitCodemapSettled(t, h, cookie, firstBody.ThreadID)
 }
 
 func TestCodemapFileValidation(t *testing.T) {

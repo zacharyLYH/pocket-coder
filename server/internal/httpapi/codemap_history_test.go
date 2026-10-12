@@ -121,29 +121,19 @@ func TestCodemapFollowupReplaysThread(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 
-	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"where is main?"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("first turn: got %d %q, want 200", rec.Code, rec.Body)
-	}
-	var first struct {
-		ThreadID string `json:"threadId"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
-		t.Fatal(err)
-	}
-	if first.ThreadID == "" {
-		t.Fatalf("missing threadId: %s", rec.Body)
-	}
+	tid := postCodemapTurn(t, h, cookie, `{"prompt":"where is main?"}`)
+	waitCodemapSettled(t, h, cookie, tid)
 
 	// Second turn needs its own HEAD lookup; the mock tolerates repeats
 	// but re-arm explicitly for clarity.
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
-	bogus := `{"prompt":"and the tests?","threadId":` + strconv.Quote(first.ThreadID) + `,"history":[{"role":"user","content":"BOGUS CLIENT HISTORY"}]}`
-	rec = authedPost(t, h, cookie, "/api/projects/abc/codemap", bogus)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("follow-up: got %d %q, want 200", rec.Code, rec.Body)
+	bogus := `{"prompt":"and the tests?","threadId":` + strconv.Quote(tid) + `,"history":[{"role":"user","content":"BOGUS CLIENT HISTORY"}]}`
+	tid2 := postCodemapTurn(t, h, cookie, bogus)
+	if tid2 != tid {
+		t.Fatalf("follow-up threadId = %q, want %q", tid2, tid)
 	}
+	waitCodemapSettled(t, h, cookie, tid)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -207,10 +197,8 @@ func TestCodemapFreshChatHasNoHistory(t *testing.T) {
 	seedProject(t, st, "abc")
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"where is main?"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("codemap: got %d %q, want 200", rec.Code, rec.Body)
-	}
+	tid := postCodemapTurn(t, h, cookie, `{"prompt":"where is main?"}`)
+	waitCodemapSettled(t, h, cookie, tid)
 	if len(bodies) != 3 {
 		t.Fatalf("model calls = %d, want 3 (loop + nudge-loop + format)", len(bodies))
 	}
@@ -300,15 +288,33 @@ func TestCodemapDeleteBusy(t *testing.T) {
 		done <- authedPost(t, h, cookie, "/api/projects/abc/codemap",
 			`{"prompt":"where is main?","threadId":"`+thA+`"}`)
 	}()
-	// Wait until the run holds the slot for thA.
+	// POST reserves at once (202) while the model blocks on release in
+	// the background. Poll the rows until thA shows running.
 	for i := 0; i < 200; i++ {
-		if running, busy := codemapRuns.running("abc"); busy && running == thA {
+		rec := authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
+		var list struct {
+			Threads []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			} `json:"threads"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &list)
+		found := false
+		for _, th := range list.Threads {
+			if th.ID == thA && th.Status == "running" {
+				found = true
+			}
+		}
+		if found {
 			break
 		}
 		select {
 		case rec := <-done:
 			t.Fatalf("run finished early: %d", rec.Code)
 		default:
+		}
+		if i == 199 {
+			t.Fatalf("thread %s never showed running", thA)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -323,10 +329,10 @@ func TestCodemapDeleteBusy(t *testing.T) {
 		t.Fatalf("delete unrelated thread during run: got %d %q, want 200", rec.Code, rec.Body)
 	}
 	once.Do(func() { close(release) })
-	if first := <-done; first.Code != http.StatusOK {
-		t.Fatalf("run: got %d %q, want 200", first.Code, first.Body)
+	if first := <-done; first.Code != http.StatusAccepted {
+		t.Fatalf("run: got %d %q, want 202", first.Code, first.Body)
 	}
-	_ = thA
+	waitCodemapSettled(t, h, cookie, thA)
 	_ = thB
 }
 
@@ -394,7 +400,7 @@ func TestThreadHistoryLegacyRounds(t *testing.T) {
 	}
 }
 
-// The POST response carries the server timestamp so the optimistic turn
+// The settled turn carries the server timestamp so the optimistic turn
 // renders its time without a reload.
 func TestCodemapResponseHasTime(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
@@ -406,22 +412,22 @@ func TestCodemapResponseHasTime(t *testing.T) {
 	seedProject(t, st, "abc")
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"where is main?"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("codemap: got %d %q, want 200", rec.Code, rec.Body)
+	tid := postCodemapTurn(t, h, cookie, `{"prompt":"where is main?"}`)
+	thread := waitCodemapSettled(t, h, cookie, tid)
+	turns, _ := thread["turns"].([]any)
+	if len(turns) != 1 {
+		t.Fatalf("turns = %d, want 1", len(turns))
 	}
-	var body struct {
-		Time string `json:"time"`
+	tm, _ := turns[0].(map[string]any)
+	ts, _ := tm["time"].(string)
+	if ts == "" {
+		raw, _ := json.Marshal(thread)
+		t.Fatalf("settled turn missing time: %s", string(raw))
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
+	if _, err := time.Parse(time.RFC3339, ts); err != nil {
+		t.Fatalf("time not RFC3339: %q (%v)", ts, err)
 	}
-	if body.Time == "" {
-		t.Fatalf("response missing time: %s", rec.Body)
-	}
-	if _, err := time.Parse(time.RFC3339, body.Time); err != nil {
-		t.Fatalf("time not RFC3339: %q (%v)", body.Time, err)
-	}
+	_ = f
 }
 
 // A provider 200 with choices:null (free-tier gateways do this) fails the
@@ -442,25 +448,22 @@ func TestCodemapNullChoicesKeepsNewThread(t *testing.T) {
 	seedProject(t, st, "abc")
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"map this repo"}`)
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("null choices: got %d %q, want 502", rec.Code, rec.Body)
+	tid := postCodemapTurn(t, h, cookie, `{"prompt":"map this repo"}`)
+	thread := waitCodemapSettled(t, h, cookie, tid)
+	turns, _ := thread["turns"].([]any)
+	if len(turns) != 1 {
+		t.Fatalf("failed new chat turns = %d, want 1 failed placeholder", len(turns))
 	}
-	var body struct {
-		Error       string `json:"error"`
-		ThreadID    string `json:"threadId"`
-		ThreadTitle string `json:"threadTitle"`
+	tm, _ := turns[0].(map[string]any)
+	errStr, _ := tm["error"].(string)
+	if !strings.Contains(errStr, "no choices") {
+		raw, _ := json.Marshal(thread)
+		t.Fatalf("placeholder error missing cause: %s", string(raw))
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
+	if secs, _ := tm["sections"].([]any); len(secs) > 0 {
+		t.Fatalf("failed placeholder must have no sections: %v", secs)
 	}
-	if !strings.Contains(body.Error, "no choices") {
-		t.Fatalf("error hides cause: %q", body.Error)
-	}
-	if body.ThreadID == "" {
-		t.Fatalf("failure dropped threadId: %s", rec.Body)
-	}
-	th, err := d.Codemaps.Get("abc", body.ThreadID)
+	th, err := d.Codemaps.Get("abc", tid)
 	if err != nil {
 		t.Fatalf("thread folder missing after failure: %v", err)
 	}
@@ -474,7 +477,7 @@ func TestCodemapNullChoicesKeepsNewThread(t *testing.T) {
 		t.Fatalf("failed placeholder must have no sections: %s", failedPayload.Sections)
 	}
 	// The failure graph lands beside the turn, never in N.json.
-	lin, err := d.Codemaps.ReadTurnLineage("abc", body.ThreadID, 1)
+	lin, err := d.Codemaps.ReadTurnLineage("abc", tid, 1)
 	if err != nil || !strings.Contains(string(lin), "no choices") {
 		t.Fatalf("lineage = %q, %v", lin, err)
 	}
@@ -505,20 +508,22 @@ func TestCodemapNullChoicesKeepsExistingThread(t *testing.T) {
 	}
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap",
+	got := postCodemapTurn(t, h, cookie,
 		`{"prompt":"follow up","threadId":"`+seeded+`"}`)
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("null choices: got %d %q, want 502", rec.Code, rec.Body)
+	if got != seeded {
+		t.Fatalf("threadId = %q, want %q", got, seeded)
 	}
-	var body struct {
-		Error    string `json:"error"`
-		ThreadID string `json:"threadId"`
+	thread := waitCodemapSettled(t, h, cookie, seeded)
+	turns, _ := thread["turns"].([]any)
+	if len(turns) != 2 {
+		raw, _ := json.Marshal(thread)
+		t.Fatalf("prior turns lost: %s", string(raw))
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if body.ThreadID != seeded {
-		t.Fatalf("threadId = %q, want %q", body.ThreadID, seeded)
+	tm, _ := turns[1].(map[string]any)
+	errStr, _ := tm["error"].(string)
+	if !strings.Contains(errStr, "no choices") {
+		raw, _ := json.Marshal(thread)
+		t.Fatalf("failed follow-up missing cause: %s", string(raw))
 	}
 	th, err := d.Codemaps.Get("abc", seeded)
 	if err != nil {

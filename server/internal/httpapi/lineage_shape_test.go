@@ -151,27 +151,22 @@ func TestLineageShapeCodemap(t *testing.T) {
 	seedProject(t, st, "abc")
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
-	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"where is main?"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("codemap: got %d %q", rec.Code, rec.Body.String())
+	tid := postCodemapTurn(t, h, cookie, `{"prompt":"where is main?"}`)
+	thread := waitCodemapSettled(t, h, cookie, tid)
+	turns, _ := thread["turns"].([]any)
+	if len(turns) != 1 {
+		t.Fatalf("turns = %v, want 1", turns)
 	}
-	var body struct {
-		ThreadID string `json:"threadId"`
-		Sections []struct {
-			Title string `json:"title"`
-		} `json:"sections"`
+	first, _ := turns[0].(map[string]any)
+	sections, _ := first["sections"].([]any)
+	if len(sections) != 1 {
+		t.Fatalf("sections = %+v, want 1", sections)
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.ThreadID == "" {
-		t.Fatalf("response = %s, err=%v", rec.Body.String(), err)
-	}
-	if len(body.Sections) != 1 {
-		t.Fatalf("sections = %+v, want 1", body.Sections)
-	}
-	th, err := d.Codemaps.Get("abc", body.ThreadID)
+	th, err := d.Codemaps.Get("abc", tid)
 	if err != nil || len(th.Turns) != 1 {
 		t.Fatalf("turns = %+v, err=%v", th.Turns, err)
 	}
-	raw, err := d.Codemaps.ReadTurnLineage("abc", body.ThreadID, 1)
+	raw, err := d.Codemaps.ReadTurnLineage("abc", tid, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

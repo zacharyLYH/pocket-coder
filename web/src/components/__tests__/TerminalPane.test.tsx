@@ -100,9 +100,10 @@ describe('TerminalPane scroll behavior', () => {
 
     expect(move.defaultPrevented).toBe(true)
     expect(deltas.length).toBeGreaterThan(0)
-    // Drag down reveals earlier output → positive wheel deltas (xterm
-    // scrolls up on positive deltaY), never Up/Down input escapes.
-    expect(deltas.every((d) => d > 0)).toBe(true)
+    // Native feel: drag down reveals earlier output (scroll up), so the
+    // bridge emits negative wheel deltas; push up emits positive. Never
+    // Up/Down input escapes.
+    expect(deltas.every((d) => d < 0)).toBe(true)
     expect(wsInstances[0]?.sent.filter((s) => s.includes('"input"'))).toEqual([])
   })
 

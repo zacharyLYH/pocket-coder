@@ -232,7 +232,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
   }
 
   return (
-    <div ref={rootRef} className="flex h-dvh w-full flex-col gap-3 bg-muted/40 p-0 pt-[env(safe-area-inset-top)]" data-no-pull-refresh data-testid="terminal-root">
+    <div ref={rootRef} className="flex h-dvh w-full flex-col gap-3 bg-muted/40 p-0 pt-[env(safe-area-inset-top)]" data-testid="terminal-root">
       <div className="px-3 pt-3">
         <TerminalHeader
           projectId={projectId}
@@ -278,7 +278,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
       <ShortcutsModal projectId={projectId} open={shortcutsOpen} onOpenChange={setShortcutsOpen} onRun={(s) => void runShortcut(s)} />
       {/* touch-action:none hands every gesture to TerminalPane's touch→wheel
           bridge; the browser must not start (and then cancel) a scroll. */}
-      <div className={`min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl [touch-action:none] ${tab === 'terminal' ? '' : 'hidden'}`}>
+      <div className={`min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl [touch-action:none] ${tab === 'terminal' ? '' : 'hidden'}`} data-no-pull-refresh data-testid="terminal-pane-wrap">
         <div ref={hostRef} className="h-full w-full [touch-action:none]" />
         <TerminalPane
           projectId={projectId}
