@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 
-import { usePullToRefresh, isPullRefreshOptOut } from '@/hooks/usePullToRefresh'
+import { usePullToRefresh, isPullRefreshOptOut, isTerminalPullAllowed } from '@/hooks/usePullToRefresh'
 
 function Probe() {
   const pulling = usePullToRefresh()
@@ -104,5 +104,47 @@ describe('usePullToRefresh + FAB edge case', () => {
     expect(screen.getByTestId('pull-state')).toHaveTextContent('idle')
     touchOn(fab, 'touchend', 200)
     expect(reload).not.toHaveBeenCalled()
+  })
+})
+
+describe('terminal pull gate', () => {
+  it('allows everything off the terminal page, gates on it', () => {
+    expect(isTerminalPullAllowed(500)).toBe(true)
+    const root = document.createElement('div')
+    root.setAttribute('data-testid', 'terminal-root')
+    const tabs = document.createElement('div')
+    tabs.setAttribute('data-testid', 'terminal-tabs')
+    vi.spyOn(tabs, 'getBoundingClientRect').mockReturnValue({ top: 120 } as DOMRect)
+    root.appendChild(tabs)
+    document.body.appendChild(root)
+    try {
+      expect(isTerminalPullAllowed(80)).toBe(true)
+      expect(isTerminalPullAllowed(120)).toBe(false)
+      expect(isTerminalPullAllowed(300)).toBe(false)
+    } finally {
+      root.remove()
+    }
+  })
+
+  it('terminal page: pull starting below tabs never reloads', () => {
+    render(<Probe />)
+    const reloadSpy = (window.location as unknown as { reload: ReturnType<typeof vi.fn> }).reload
+    const root = document.createElement('div')
+    root.setAttribute('data-testid', 'terminal-root')
+    const tabs = document.createElement('div')
+    tabs.setAttribute('data-testid', 'terminal-tabs')
+    vi.spyOn(tabs, 'getBoundingClientRect').mockReturnValue({ top: 120 } as DOMRect)
+    root.appendChild(tabs)
+    document.body.appendChild(root)
+    try {
+      touchOn(document.body, 'touchstart', 300)
+      touchOn(document.body, 'touchmove', 500)
+      touchOn(document.body, 'touchmove', 650)
+      expect(screen.getByTestId('pull-state')).toHaveTextContent('idle')
+      touchOn(document.body, 'touchend', 650)
+      expect(reloadSpy).not.toHaveBeenCalled()
+    } finally {
+      root.remove()
+    }
   })
 })

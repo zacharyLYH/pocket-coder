@@ -242,20 +242,19 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
   return (
     <Card className="flex h-full w-full flex-col gap-0 overflow-hidden py-0 shadow-sm" data-testid="codemap-tab">
       <CardHeader className="shrink-0 px-3 py-2">
-        <div className="flex items-center justify-between gap-1">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Chat history"
-                  data-testid="codemap-history-toggle"
-                  className="size-7 shrink-0 text-muted-foreground"
-                >
-                  <History className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
+        <div className="flex items-center gap-1">
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Chat history"
+                data-testid="codemap-history-toggle"
+                className="size-7 shrink-0 text-muted-foreground"
+              >
+                <History className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-72" data-testid="codemap-thread-list">
                 <DropdownMenuLabel>Chats</DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -291,9 +290,16 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
-            <Sparkles className="size-4 shrink-0 text-muted-foreground" />
-            <CardTitle className="truncate text-base">{thread?.title || 'Codemap'}</CardTitle>
-          </div>
+            <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5">
+              <Sparkles className="size-4 shrink-0 text-muted-foreground" />
+              <CardTitle
+                className="min-w-0 flex-1 truncate text-center text-base"
+                title={thread?.title || 'Codemap'}
+                data-testid="codemap-title"
+              >
+                {thread?.title || 'Codemap'}
+              </CardTitle>
+            </div>
           <Button variant="ghost" size="sm" onClick={newChat} disabled={inFlight} className="h-7 shrink-0 px-2 text-xs text-muted-foreground" data-testid="codemap-new-chat">
             <Plus className="size-3.5" />
             New chat

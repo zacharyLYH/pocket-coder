@@ -32,7 +32,7 @@ export function TerminalTabs({ sessions, current, view, showCodemap, onSelectSes
     { id: 'nerdy', label: 'Nerdy Stuff', testid: 'tab-nerdy' },
   ]
   return (
-    <div role="tablist" aria-label="Sessions and views" className="flex items-center gap-1.5 overflow-x-auto px-3 py-1">
+    <div role="tablist" aria-label="Sessions and views" data-testid="terminal-tabs" className="flex items-center gap-1.5 overflow-x-auto px-3 py-1">
       {sessions.map((s) => {
         const active = view === 'terminal' && s.name === current
         return (

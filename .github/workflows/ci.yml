@@ -51,6 +51,9 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: E2E tests (parallel)
         run: npm run test:e2e:parallel
+      - name: Fix e2e artifact permissions (compose server runs as root)
+        if: failure()
+        run: sudo chown -R $USER:$USER web/test-results || true
       - name: Upload e2e logs & reports on failure
         if: failure()
         uses: actions/upload-artifact@v4

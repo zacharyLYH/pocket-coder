@@ -101,7 +101,8 @@ test.describe('pull-to-refresh (mobile)', () => {
     await page.mouse.move(box!.x + box!.width / 2, 40, { steps: 10 })
     await page.mouse.up()
     const topBox = await fab.boundingBox()
-    expect(topBox!.y).toBeLessThan(50)
+    // Top snap stops TOP_CLEARANCE (= 76) below the viewport top.
+    expect(topBox!.y).toBeLessThan(90)
 
     // Stamp a marker on window; reload clears it.
     const stamp = Date.now()

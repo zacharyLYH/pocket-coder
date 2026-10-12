@@ -184,11 +184,12 @@ test.describe('butler phone', () => {
 
     await page.mouse.up()
 
-    // After release, the FAB snaps to the top-right corner,
+    // After release, the FAB snaps to the top-right corner (TOP_CLEARANCE
+    // = 76 below the viewport top, clear of the notch/shade zone),
     // and a drag must not open the sheet.
     const endBox = await fab.boundingBox()
     expect(endBox!.x).toBeGreaterThan(290)
-    expect(endBox!.y).toBeLessThan(50)
+    expect(endBox!.y).toBeLessThan(90)
     await expect(page.getByTestId('butler-sheet')).toHaveCount(0)
 
     // No persistence: a reload starts back at the bottom-right default.
