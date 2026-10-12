@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -39,5 +40,24 @@ func TestLineageTodosJSONField(t *testing.T) {
 	raw, err := json.Marshal(Lineage{Todos: []Todo{{Content: "x", Status: "completed", Priority: "low"}}})
 	if err != nil || !strings.Contains(string(raw), `"todos"`) {
 		t.Fatalf("lineage = %s, err=%v", raw, err)
+	}
+}
+
+func TestTodoToolConcurrentWrites(t *testing.T) {
+	// Batched todo calls share one Lineage: concurrent replaces must
+	// not race (run with -race); last writer wins.
+	lin := &Lineage{}
+	tool := TodoTool(lin)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = tool.Run(context.Background(), `{"todos":[{"content":"w","status":"pending","priority":"low"}]}`)
+		}()
+	}
+	wg.Wait()
+	if len(lin.Todos) != 1 || lin.Todos[0].Content != "w" {
+		t.Fatalf("lineage todos = %+v", lin.Todos)
 	}
 }

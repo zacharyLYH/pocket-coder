@@ -527,10 +527,10 @@ func TestCodemapSuccess(t *testing.T) {
 	}
 }
 
-// A codemap turn uses the same replace-in-place todo lifecycle as Butler:
-// the model creates the list, sees the tool result on the next round, and
-// checks both items off before the final structured answer is formatted.
-func TestCodemapTodoLifecyclePersistsCheckedItems(t *testing.T) {
+// Codemap turns carry no todo checklist (single question, not a plan):
+// a model reaching for it gets "unknown tool" and the turn still
+// completes off the repo tools.
+func TestCodemapHasNoTodoTool(t *testing.T) {
 	d, md, pinOut, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "go.mod\ninternal/\n")
@@ -539,13 +539,10 @@ func TestCodemapTodoLifecyclePersistsCheckedItems(t *testing.T) {
 	f := newFakeModel(t,
 		codeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
-			writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("todo-1", "todo", `{"todos":[{"content":"Map entrypoints","status":"in_progress","priority":"high"},{"content":"Summarize flow","status":"pending","priority":"medium"}]}`)})
+			writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("todo-1", "todo", `{"todos":[{"content":"Map entrypoints","status":"in_progress","priority":"high"}]}`)})
 		},
 		func(w http.ResponseWriter, body map[string]any) {
 			secondRound = body
-			writeCompletion(w, "tool_calls", "", []map[string]any{toolCall("todo-2", "todo", `{"todos":[{"content":"Map entrypoints","status":"completed","priority":"high"},{"content":"Summarize flow","status":"completed","priority":"medium"}]}`)})
-		},
-		func(w http.ResponseWriter, _ map[string]any) {
 			writeCompletion(w, "stop", finalCodemapJSON(), nil)
 		},
 		func(w http.ResponseWriter, body map[string]any) {
@@ -560,9 +557,13 @@ func TestCodemapTodoLifecyclePersistsCheckedItems(t *testing.T) {
 	h := New(d)
 	cookie := loginCookie(t, h, pinOut)
 	tid := postCodemapTurn(t, h, cookie, `{"prompt":"map the entrypoints and summarize the flow"}`)
-	_ = waitCodemapSettled(t, h, cookie, tid)
-	if !strings.Contains(fmt.Sprint(secondRound["messages"]), "Map entrypoints") {
-		t.Fatalf("second round did not receive the first todo state: %v", secondRound["messages"])
+	th := waitCodemapSettled(t, h, cookie, tid)
+	turns, _ := th["turns"].([]any)
+	if len(turns) != 1 {
+		t.Fatalf("turns = %d, want the completed turn", len(turns))
+	}
+	if !strings.Contains(fmt.Sprint(secondRound["messages"]), "unknown tool todo") {
+		t.Fatalf("todo call must answer unknown tool, got: %v", secondRound["messages"])
 	}
 	raw, err := d.Codemaps.ReadTurnLineage("abc", tid, 1)
 	if err != nil {
@@ -576,8 +577,8 @@ func TestCodemapTodoLifecyclePersistsCheckedItems(t *testing.T) {
 	if err := json.Unmarshal(raw, &lineage); err != nil {
 		t.Fatal(err)
 	}
-	if len(lineage.Todos) != 2 || lineage.Todos[0].Status != "completed" || lineage.Todos[1].Status != "completed" {
-		t.Fatalf("persisted todos = %+v, want both checked off", lineage.Todos)
+	if len(lineage.Todos) != 0 {
+		t.Fatalf("persisted todos = %+v, want none", lineage.Todos)
 	}
 }
 

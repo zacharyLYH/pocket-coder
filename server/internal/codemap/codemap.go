@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -120,6 +121,65 @@ func capToolOutput(s string, max int) string { return cutRunes(s, max) }
 // Tools builds the read-only tools bound to one container and repo dir.
 func Tools(exec Executor, container, repoDir string) []agent.Tool {
 	return []agent.Tool{
+		{
+			Name:        "glob",
+			Description: "Find files by name pattern, paths only (no contents). Cheap: use it before grep when you need files, not text. `*` matches within a directory, `**` crosses directories, `?` matches one char. A pattern without `/` matches the file name at any depth.", Schema: objectSchema(map[string]any{
+				"pattern": map[string]any{"type": "string", "description": "Glob pattern like `**/*.go` or `src/*_test.go`"},
+			}, "pattern"),
+			Run: func(ctx context.Context, argsJSON string) (string, error) {
+				var args struct {
+					Pattern string `json:"pattern"`
+				}
+				if err := decodeArgs(argsJSON, &args); err != nil {
+					return "", err
+				}
+				pattern := strings.TrimSpace(args.Pattern)
+				if pattern == "" {
+					return "", fmt.Errorf("pattern is required")
+				}
+				if len(pattern) > 200 {
+					return "", fmt.Errorf("pattern over 200 chars")
+				}
+				if strings.ContainsAny(pattern, "\n\r\x00") {
+					return "", fmt.Errorf("pattern must be one line")
+				}
+				re, basenameOnly, rerr := globToRegexp(pattern)
+				if rerr != nil {
+					return "", rerr
+				}
+				// Tracked files only: gitignore-aware by construction, no
+				// new binary needed in the container.
+				out, err := exec.ExecCommand(ctx, container,
+					fmt.Sprintf("git -C %s ls-files -z", shQuote(repoDir)))
+				if err != nil {
+					return "", err
+				}
+				var matched []string
+				for _, f := range strings.Split(out, "\x00") {
+					f = strings.TrimSpace(f)
+					if f == "" {
+						continue
+					}
+					name := f[strings.LastIndex(f, "/")+1:]
+					if !basenameOnly {
+						name = f
+					}
+					if re.MatchString(name) {
+						matched = append(matched, f)
+					}
+				}
+				if len(matched) == 0 {
+					return "(no files match)", nil
+				}
+				// git ls-files already sorts; cap like the other tools.
+				const maxGlobFiles = 100
+				if len(matched) > maxGlobFiles {
+					return strings.Join(matched[:maxGlobFiles], "\n") +
+						fmt.Sprintf("\n…(%d more — narrow the pattern)", len(matched)-maxGlobFiles), nil
+				}
+				return strings.Join(matched, "\n"), nil
+			},
+		},
 		{
 			Name:        "search_code",
 			Description: "Search repo text with grep. Returns file:line matches. Do not pass shell metacharacters; plain pattern only.",
@@ -320,6 +380,49 @@ func Tools(exec Executor, container, repoDir string) []agent.Tool {
 	}
 }
 
+// globToRegexp compiles a file glob (`*` within a directory, `**`
+// across directories, `?` one char) to a regexp. It also reports
+// whether the pattern holds no `/`: like .gitignore, such a pattern
+// matches the base name at any depth, so `*.go` finds nested files
+// instead of only top-level ones.
+func globToRegexp(pattern string) (*regexp.Regexp, bool, error) {
+	var b strings.Builder
+	b.WriteString("^")
+	i := 0
+	for i < len(pattern) {
+		c := pattern[i]
+		switch c {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				// `**/` eats whole directories (optional, so `**/x`
+				// also matches top-level x); bare `**` eats all.
+				if i+2 < len(pattern) && pattern[i+2] == '/' {
+					b.WriteString("(?:.*/)?")
+					i += 3
+				} else {
+					b.WriteString(".*")
+					i += 2
+				}
+			} else {
+				b.WriteString("[^/]*")
+				i++
+			}
+		case '?':
+			b.WriteString("[^/]")
+			i++
+		default:
+			b.WriteString(regexp.QuoteMeta(string([]byte{c})))
+			i++
+		}
+	}
+	b.WriteString("$")
+	re, err := regexp.Compile(b.String())
+	if err != nil {
+		return nil, false, fmt.Errorf("bad pattern %q", pattern)
+	}
+	return re, !strings.Contains(pattern, "/"), nil
+}
+
 // normalizeRepoPath maps a model-supplied path onto a repo-relative path
 // for the shell. The convention is absolute-under-root (the root is named
 // in the turn system prompt, so the model copies one exact string instead
@@ -447,7 +550,9 @@ func Ask(ctx context.Context, cfg agent.Config, exec Executor, container, repoDi
 	if listing := repoOrientation(exec, ctx, container, repoDir); listing != "" {
 		sys += "\n\nRepo root orientation (top-level files/dirs of this project — use it to pick stack-appropriate first searches, e.g. package.json/src means JS, not Python):\n" + listing
 	}
-	tools := append([]agent.Tool{agent.TodoTool(lin)}, Tools(exec, container, repoDir)...)
+	// No todo checklist: a codemap turn answers one question, it does
+	// not work a multi-step plan (Butler keeps the tool for that).
+	tools := Tools(exec, container, repoDir)
 	pipe := agent.Pipeline{
 		Scope: &agent.ScopeGate{
 			Prompt: prompt.CodemapScopePrompt(), SchemaName: "codemap_scope", Schema: prompt.CodemapScopeSchema(),

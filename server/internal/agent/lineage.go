@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"sync"
 	"time"
 )
 
@@ -75,6 +76,22 @@ type Lineage struct {
 	Events   []LineageEvent `json:"events"`
 	Todos    []Todo         `json:"todos,omitempty"`
 	Error    string         `json:"error,omitempty"`
+
+	// mu guards Todos: tool bodies run concurrently and TodoTool
+	// replaces the checklist in place. Events stays main-goroutine
+	// only (loop bookkeeping), so record needs no lock.
+	mu sync.Mutex
+}
+
+// SetTodos replaces the checklist (TodoTool's write path): safe for
+// concurrent tool bodies, last writer wins like any same-round repeat.
+func (l *Lineage) SetTodos(todos []Todo) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.Todos = todos
 }
 
 func (l *Lineage) record(kind string, fill func(*LineageEvent)) {

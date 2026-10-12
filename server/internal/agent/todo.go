@@ -66,7 +66,7 @@ func TodoTool(lin *Lineage) Tool {
 				return "", fmt.Errorf("todo list may have only one in_progress item")
 			}
 			if lin != nil {
-				lin.Todos = args.Todos
+				lin.SetTodos(args.Todos)
 			}
 			out, _ := json.Marshal(args.Todos)
 			return string(out), nil

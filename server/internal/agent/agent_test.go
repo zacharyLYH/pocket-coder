@@ -592,3 +592,92 @@ func TestRunGroundingNudgeSkipsEscape(t *testing.T) {
 		t.Fatalf("calls = %d, want 1 (no nudge for escape hatch)", calls)
 	}
 }
+
+func TestRunExecutesBatchedCallsConcurrently(t *testing.T) {
+	// One assistant message carrying two calls must overlap them: slow
+	// waits for fast to start (timing out when run serially), and both
+	// replies still commit in model order.
+	fastStarted := make(chan struct{})
+	var once sync.Once
+	var fmu sync.Mutex
+	fired := map[string]int{}
+	mark := func(name string) {
+		fmu.Lock()
+		fired[name]++
+		fmu.Unlock()
+	}
+	slow := Tool{Name: "slow", Description: "s", Schema: map[string]any{"type": "object"},
+		Run: func(_ context.Context, _ string) (string, error) {
+			mark("slow")
+			select {
+			case <-fastStarted:
+				return "slow-out", nil
+			case <-time.After(10 * time.Second):
+				return "", errors.New("slow never overlapped fast")
+			}
+		}}
+	fast := Tool{Name: "fast", Description: "f", Schema: map[string]any{"type": "object"},
+		Run: func(_ context.Context, _ string) (string, error) {
+			mark("fast")
+			once.Do(func() { close(fastStarted) })
+			return "fast-out", nil
+		}}
+	var bodies []map[string]any
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		n := len(bodies)
+		raw, _ := json.Marshal(body)
+		var cp map[string]any
+		_ = json.Unmarshal(raw, &cp)
+		bodies = append(bodies, cp)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		var resp string
+		switch {
+		case n == 0:
+			resp = `{"id":"x","object":"chat.completion","created":1,"model":"fake","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"slow","arguments":"{}"}},{"id":"c2","type":"function","function":{"name":"fast","arguments":"{}"}}]}}]}`
+		case body["response_format"] != nil:
+			resp = `{"id":"x","object":"chat.completion","created":1,"model":"fake","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]}`
+		default:
+			resp = `{"id":"x","object":"chat.completion","created":1,"model":"fake","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"gathered"}}]}`
+		}
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+	out, err := Run(context.Background(),
+		Config{BaseURL: srv.URL, APIKey: "k", Model: "m"},
+		"sys", "hi", nil, []Tool{slow, fast}, "s", map[string]any{"type": "object"}, 4, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "done" {
+		t.Fatalf("out = %q, want done", out)
+	}
+	// Every call in the model's batch fired exactly once — nothing
+	// dropped, nothing repeated.
+	fmu.Lock()
+	slowFired, fastFired := fired["slow"], fired["fast"]
+	fmu.Unlock()
+	if slowFired != 1 || fastFired != 1 {
+		t.Fatalf("fired slow=%d fast=%d, want 1 and 1", slowFired, fastFired)
+	}
+	// The tool replies ride the second request in model order even
+	// though fast finishes first.
+	msgs, _ := bodies[1]["messages"].([]any)
+	var order []string
+	for _, m := range msgs {
+		mm, _ := m.(map[string]any)
+		if mm["role"] != "tool" {
+			continue
+		}
+		id, _ := mm["tool_call_id"].(string)
+		content, _ := mm["content"].(string)
+		order = append(order, id+"="+content)
+	}
+	if got, want := strings.Join(order, ","), "c1=slow-out,c2=fast-out"; got != want {
+		t.Fatalf("tool replies = %q, want %q", got, want)
+	}
+}

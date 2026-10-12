@@ -142,4 +142,54 @@ test.describe('butler confirm card', () => {
     expect(applied).toEqual([])
     expect(discarded).toEqual(['c2'])
   })
+
+  test('two pending approvals render stacked; resolving one leaves the other', async ({ page }) => {
+    const applied: string[] = []
+    const discarded: string[] = []
+    const cards = [stopCard, {
+      id: 'c2', tool: 'delete_project',
+      summary: 'Delete project a/b?',
+      blastRadius: 'This removes the container, its 3 sessions, both volumes, and the project record.',
+    }]
+    await mockButlerThreads(page)
+    await mockButlerTurn(page)
+    // Server truth: both cards live on the thread until each resolves.
+    await page.route(/\/api\/butler\/threads\/[^/?]+$/, async (route) => {
+      const live = cards.filter((c) => !applied.includes(c.id) && !discarded.includes(c.id))
+      await route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({
+          thread: {
+            id: 'ab12cd34ef56ab78cd90ef13', title: 'chat', createdAt: '2026-09-02T10:00:00Z', updatedAt: '2026-09-02T10:00:00Z',
+            status: live.length > 0 ? 'awaiting' : 'ready',
+            approvals: live,
+            turns: [{ turnId: 't0', prompt: 'stop and delete the api project', answer: 'Two writes need confirmation.', steps: [], error: null, time: '2026-09-02T10:00:00Z' }],
+          },
+        }),
+      })
+    })
+    await mockButlerConfirms(page, applied, discarded)
+    await openSheet(page)
+    await page.getByTestId('butler-prompt').fill('stop and delete the api project')
+    await page.getByTestId('butler-send').click()
+
+    // Both cards render at once — no one-at-a-time queue in the UI.
+    await expect(page.getByTestId('butler-confirm')).toHaveCount(2)
+    await expect(page).toHaveScreenshot('butler-confirm-stack.png')
+
+    // Resolving one refreshes the thread; the other stays put.
+    // The mock route records every apply/discard POST, so these asserts
+    // pin that the backend hears about each resolution immediately.
+    await page.getByTestId('butler-confirm-ok').first().click()
+    await expect(page.getByTestId('butler-confirm')).toHaveCount(1)
+    await expect(page.getByTestId('butler-confirm-summary')).toContainText('Delete project a/b?')
+    expect(applied).toEqual(['c1'])
+    expect(discarded).toEqual([])
+
+    await page.getByTestId('butler-confirm-no').first().click()
+    await expect(page.getByTestId('butler-confirm')).toHaveCount(0)
+    await expect(page.getByTestId('butler-prompt')).toBeEnabled()
+    expect(applied).toEqual(['c1'])
+    expect(discarded).toEqual(['c2'])
+  })
 })

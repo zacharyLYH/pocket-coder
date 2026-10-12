@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -228,6 +229,61 @@ func TestRepoOrientation(t *testing.T) {
 	bad := &stubExec{out: map[string]string{}}
 	if got := repoOrientation(bad, context.Background(), "c", "/workspace"); got != "" {
 		t.Fatalf("failed ls must yield empty orientation, got %q", got)
+	}
+}
+
+func TestGlobTool(t *testing.T) {
+	files := "main.go\x00src/app.go\x00src/app_test.go\x00web/index.html\x00README.md\x00"
+	exec := &stubExec{out: map[string]string{"ls-files": files}}
+	tools := Tools(exec, "c", "/workspace")
+	var glob agent.Tool
+	for _, tool := range tools {
+		if tool.Name == "glob" {
+			glob = tool
+		}
+	}
+	if glob.Name == "" {
+		t.Fatal("Tools must include glob")
+	}
+	ctx := context.Background()
+	run := func(pattern string) string {
+		t.Helper()
+		out, err := glob.Run(ctx, `{"pattern":`+strconv.Quote(pattern)+`}`)
+		if err != nil {
+			t.Fatalf("glob %q failed: %v", pattern, err)
+		}
+		return out
+	}
+	// No slash: base name at any depth (gitignore-style). `**`
+	// crosses directories.
+	for pattern, want := range map[string]string{
+		"*.go":          "main.go\nsrc/app.go\nsrc/app_test.go",
+		"*.md":          "README.md",
+		"src/**/*.go":   "src/app.go\nsrc/app_test.go",
+		"**/*.html":     "web/index.html",
+		"src/*_test.go": "src/app_test.go",
+		"READ??.md":     "README.md",
+		"nope*.zz":      "(no files match)",
+	} {
+		if got := run(pattern); got != want {
+			t.Errorf("glob %q = %q, want %q", pattern, got, want)
+		}
+	}
+	for _, pattern := range []string{"", "a\nb", strings.Repeat("x", 201)} {
+		if _, err := glob.Run(ctx, `{"pattern":`+strconv.Quote(pattern)+`}`); err == nil {
+			t.Errorf("glob %q must fail", pattern)
+		}
+	}
+	// Cap: 100 paths plus a narrowing hint, never the full dump.
+	var many strings.Builder
+	for i := 0; i < 150; i++ {
+		many.WriteString("f" + strconv.Itoa(i) + ".go\x00")
+	}
+	exec.out["ls-files"] = many.String()
+	got := run("*.go")
+	lines := strings.Split(got, "\n")
+	if len(lines) != 101 || !strings.Contains(lines[100], "50 more") {
+		t.Fatalf("capped glob = %d lines, last %q", len(lines), lines[len(lines)-1])
 	}
 }
 

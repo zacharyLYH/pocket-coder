@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/openai/openai-go/v2"
@@ -186,6 +187,9 @@ func (l *loop) settleText(step int, text string) (answer string, nudge bool, err
 
 // answerTools echoes the assistant turn (keeping the call ids the tool
 // replies reference) and executes each call, appending fresh replies.
+// Executable calls dispatch concurrently and commit back in model order;
+// tracing and lineage stay on the caller goroutine, so workers only run
+// tool.Run and touch no shared harness state.
 func (l *loop) answerTools(ctx context.Context, step int, msg openai.ChatCompletionMessage) {
 	echo := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(msg.ToolCalls))
 	for _, tc := range msg.ToolCalls {
@@ -201,11 +205,89 @@ func (l *loop) answerTools(ctx context.Context, step int, msg openai.ChatComplet
 	l.trace(TraceEvent{Kind: "round", Round: step, Text: text})
 	l.roundsDone++
 	l.msgs = append(l.msgs, assistantCallsMsg(text, echo))
+
+	type call struct {
+		id, name, args string
+		tool           Tool
+		run            bool // executable (not a blocked repeat / unknown)
+		out            string
+		rerr           error
+		started        time.Time
+	}
+	calls := make([]call, 0, len(msg.ToolCalls))
+	prev := l.lastCall
 	for _, tc := range msg.ToolCalls {
 		if tc.Type != "function" {
 			continue
 		}
-		l.msgs = append(l.msgs, l.execTool(ctx, time.Now(), step, tc.Function.Name, tc.Function.Arguments, tc.ID))
+		name, args, id := tc.Function.Name, tc.Function.Arguments, tc.ID
+		key := name + "\x00" + args
+		if key == prev {
+			msg := "error: identical to the previous tool call (" + name + ") — not executed. Do not repeat it: change the tool or arguments, or answer with what you have."
+			l.trace(TraceEvent{Kind: "tool_start", Round: step, Tool: name, Args: args})
+			l.trace(TraceEvent{Kind: "tool_done", Round: step, Tool: name, Args: args, Err: "blocked consecutive repeat"})
+			l.lin.record(LineageToolStart, func(ev *LineageEvent) {
+				ev.Step, ev.Tool, ev.Args = step, name, capLine(args, 2000)
+			})
+			l.lin.record(LineageToolDone, func(ev *LineageEvent) {
+				ev.Step, ev.Tool, ev.Args = step, name, capLine(args, 2000)
+				ev.Err = "blocked consecutive repeat"
+			})
+			calls = append(calls, call{id: id, out: msg})
+			continue
+		}
+		tool, ok := l.byName[name]
+		if !ok {
+			calls = append(calls, call{id: id, out: "unknown tool " + name})
+			continue
+		}
+		prev = key
+		l.trace(TraceEvent{Kind: "tool_start", Round: step, Tool: name, Args: args})
+		l.lin.record(LineageToolStart, func(ev *LineageEvent) {
+			ev.Step, ev.Tool, ev.Args = step, name, capLine(args, 2000)
+		})
+		calls = append(calls, call{id: id, name: name, args: args, tool: tool, run: true})
+	}
+	l.lastCall = prev
+
+	var wg sync.WaitGroup
+	for i := range calls {
+		if !calls[i].run {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			calls[i].started = time.Now()
+			calls[i].out, calls[i].rerr = calls[i].tool.Run(ctx, calls[i].args)
+		}()
+	}
+	wg.Wait()
+
+	for _, c := range calls {
+		if !c.run {
+			l.msgs = append(l.msgs, toolReply(c.id, c.out))
+			continue
+		}
+		out := c.out
+		if c.rerr != nil {
+			out = "error: " + c.rerr.Error()
+		}
+		ev := TraceEvent{Kind: "tool_done", Round: step, Tool: c.name, Args: c.args, Result: out}
+		if c.rerr != nil {
+			ev.Err = c.rerr.Error()
+		}
+		l.trace(ev)
+		l.lin.record(LineageToolDone, func(ev *LineageEvent) {
+			ev.Step, ev.Tool, ev.Args = step, c.name, capLine(c.args, 2000)
+			ev.Output, ev.DurationMs = capLine(out, 8000), time.Since(c.started).Milliseconds()
+			if c.rerr != nil {
+				ev.Err = capLine(c.rerr.Error(), 4000)
+			}
+		})
+		// The reply is what the next request pays context for: cap it here.
+		// Lineage and N.json keep their own (higher) caps above.
+		l.msgs = append(l.msgs, toolReply(c.id, capMsg(out)))
 	}
 }
 
@@ -223,56 +305,6 @@ func capMsg(s string) string {
 		return string(r[:maxMsgToolChars]) + "\n…(output truncated — narrow the range or pattern instead of repeating this call)"
 	}
 	return s
-}
-
-// execTool runs one call, tracing both sides. Unknown tools and failures
-// feed back as tool text (never Go errors) so the model can recover.
-// A consecutive identical call is blocked without executing: the reply is
-// a short shape error, so repeats cost ~100 chars of context instead of
-// another full output appended forever.
-func (l *loop) execTool(ctx context.Context, toolStart time.Time, step int, name, args, id string) openai.ChatCompletionMessageParamUnion {
-	key := name + "\x00" + args
-	if key == l.lastCall {
-		msg := "error: identical to the previous tool call (" + name + ") — not executed. Do not repeat it: change the tool or arguments, or answer with what you have."
-		l.trace(TraceEvent{Kind: "tool_start", Round: step, Tool: name, Args: args})
-		l.trace(TraceEvent{Kind: "tool_done", Round: step, Tool: name, Args: args, Err: "blocked consecutive repeat"})
-		l.lin.record(LineageToolStart, func(ev *LineageEvent) {
-			ev.Step, ev.Tool, ev.Args = step, name, capLine(args, 2000)
-		})
-		l.lin.record(LineageToolDone, func(ev *LineageEvent) {
-			ev.Step, ev.Tool, ev.Args = step, name, capLine(args, 2000)
-			ev.Err = "blocked consecutive repeat"
-		})
-		return toolReply(id, msg)
-	}
-	l.lastCall = key
-	tool, ok := l.byName[name]
-	if !ok {
-		return toolReply(id, "unknown tool "+name)
-	}
-	l.trace(TraceEvent{Kind: "tool_start", Round: step, Tool: name, Args: args})
-	l.lin.record(LineageToolStart, func(ev *LineageEvent) {
-		ev.Step, ev.Tool, ev.Args = step, name, capLine(args, 2000)
-	})
-	out, rerr := tool.Run(ctx, args)
-	if rerr != nil {
-		out = "error: " + rerr.Error()
-	}
-	ev := TraceEvent{Kind: "tool_done", Round: step, Tool: name, Args: args, Result: out}
-	if rerr != nil {
-		ev.Err = rerr.Error()
-	}
-	l.trace(ev)
-	l.lin.record(LineageToolDone, func(ev *LineageEvent) {
-		ev.Step, ev.Tool, ev.Args = step, name, capLine(args, 2000)
-		ev.Output, ev.DurationMs = capLine(out, 8000), time.Since(toolStart).Milliseconds()
-		if rerr != nil {
-			ev.Err = capLine(rerr.Error(), 4000)
-		}
-	})
-	// The reply is what the next request pays context for: cap it here.
-	// Lineage and N.json keep their own (higher) caps above.
-	return toolReply(id, capMsg(out))
 }
 
 // closeOut spends one tools-free call to convert grounding into an
