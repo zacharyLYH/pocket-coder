@@ -66,21 +66,16 @@ describe('TerminalPane scroll behavior', () => {
   // after xterm's own handler (that double-handled the gesture and leaked
   // Up/Down arrows into the shell). A wheel over the host sends nothing and
   // scrolls nothing by itself — xterm + tmux mouse mode own the gesture.
-  // xterm has no touch scrolling of its own, so a one-finger drag must be
-  // bridged into the wheel events xterm already understands. The handler
-  // owns the gesture (preventDefault) so the browser cannot cancel it.
-  it('bridges a vertical touch drag into wheel events on .xterm-screen', async () => {
+  // xterm has no touch scrolling of its own, so a one-finger drag drives
+  // xterm's scrollLines API directly (synthetic WheelEvents are swallowed by
+  // xterm 6's smooth-scroll pipeline, so a wheel-bridge never scrolled). The
+  // handler owns the gesture (preventDefault) so the browser cannot cancel it.
+  it('bridges a vertical touch drag into scrollLines (negative = earlier output)', async () => {
     const host = hostRef()
     render(<TerminalPane projectId="abc" session="main" redial={0} fontSize={14} hostRef={host} onStatus={vi.fn()} onError={vi.fn()} />)
     await new Promise((r) => setTimeout(r, 50))
     wsInstances[0]?.open()
     await new Promise((r) => setTimeout(r, 10))
-
-    const screen = document.createElement('div')
-    screen.className = 'xterm-screen'
-    host.current!.appendChild(screen)
-    const deltas: number[] = []
-    screen.addEventListener('wheel', (e) => deltas.push((e as WheelEvent).deltaY))
 
     const fire = (type: 'touchstart' | 'touchmove' | 'touchend', y: number) => {
       const ev = new Event(type, { bubbles: true, cancelable: true }) as Event & {
@@ -99,11 +94,10 @@ describe('TerminalPane scroll behavior', () => {
     fire('touchend', 170)
 
     expect(move.defaultPrevented).toBe(true)
-    expect(deltas.length).toBeGreaterThan(0)
-    // Native feel: drag down reveals earlier output (scroll up), so the
-    // bridge emits negative wheel deltas; push up emits positive. Never
-    // Up/Down input escapes.
-    expect(deltas.every((d) => d < 0)).toBe(true)
+    expect(scrollLines).toHaveBeenCalled()
+    // Native feel: drag down reveals earlier output (negative), push up
+    // reveals newer (positive). Never Up/Down input escapes.
+    expect(scrollLines.mock.calls.every(([n]) => (n as number) < 0)).toBe(true)
     expect(wsInstances[0]?.sent.filter((s) => s.includes('"input"'))).toEqual([])
   })
 

@@ -77,8 +77,8 @@ test.describe('terminal scroll', () => {
 })
 
 // Regression pin for the mobile bug: xterm has no touch scrolling of its
-// own, so the pane bridges a one-finger drag into wheel events — and the
-// terminal opts out of the document-level pull handler so the drag never
+// own, so the pane bridges a one-finger drag into scrollLines calls — and
+// the terminal opts out of the document-level pull handler so the drag never
 // reloads the page.
 test.describe('terminal scroll (mobile)', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })

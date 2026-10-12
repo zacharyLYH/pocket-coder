@@ -276,7 +276,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
         <p className="mx-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs break-all text-destructive">{shortcutError}</p>
       )}
       <ShortcutsModal projectId={projectId} open={shortcutsOpen} onOpenChange={setShortcutsOpen} onRun={(s) => void runShortcut(s)} />
-      {/* touch-action:none hands every gesture to TerminalPane's touch→wheel
+      {/* touch-action:none hands every gesture to TerminalPane's touch→scroll
           bridge; the browser must not start (and then cancel) a scroll. */}
       <div className={`min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl [touch-action:none] ${tab === 'terminal' ? '' : 'hidden'}`} data-no-pull-refresh data-testid="terminal-pane-wrap">
         <div ref={hostRef} className="h-full w-full [touch-action:none]" />

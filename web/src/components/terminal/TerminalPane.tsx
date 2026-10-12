@@ -64,14 +64,14 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
 
   // Mobile scroll: xterm.js has no touch handling of its own — the pane is
   // a custom scroll element driven by wheel events only, so a one-finger
-  // drag did nothing. Translate a vertical drag into synthetic wheel events
-  // dispatched at .xterm-screen (the scroll element's node): xterm then
-  // handles the gesture exactly like a real wheel, including forwarding it
-  // to tmux as a mouse-wheel when mouse mode is active. Desktop wheel is
-  // untouched (no wheel listener here) — only touch is bridged.
+  // drag did nothing. Translate a vertical drag into xterm's own scrollLines
+  // API (negative = earlier output, positive = newer). This deliberately
+  // does NOT synthesize WheelEvents: xterm 6's smooth-scroll pipeline drops
+  // untrusted wheel events, so the old wheel-bridge never scrolled. Desktop
+  // wheel is untouched (no wheel listener here) — only touch is bridged.
   useEffect(() => {
-    const host = hostRef.current
-    if (!host) return
+    if (!hostRef.current) return
+    const host: HTMLDivElement = hostRef.current
     const PX_PER_NOTCH = 26
     let active = false
     let startX = 0
@@ -95,17 +95,18 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
       e.preventDefault()
       accum += t.clientY - lastY
       lastY = t.clientY
-      const screen = host?.querySelector('.xterm-screen')
-      if (!screen) return
+      const term = termRef.current
+      if (!term) return
+      // Match finger travel to text lines from live geometry.
+      const rows = term.rows || 1
+      const pxPerLine = host.clientHeight / rows || 13
       while (Math.abs(accum) >= PX_PER_NOTCH) {
         const step = accum > 0 ? PX_PER_NOTCH : -PX_PER_NOTCH
         accum -= step
         // Native feel: drag down reveals earlier output, push up reveals
-        // newer output — a downward drag must scroll up (negative deltaY).
-        screen.dispatchEvent(new WheelEvent('wheel', {
-          deltaY: -step, deltaMode: 0, clientX: t.clientX, clientY: t.clientY,
-          bubbles: true, cancelable: true,
-        }))
+        // newer output.
+        const lines = Math.max(1, Math.round(PX_PER_NOTCH / pxPerLine))
+        term.scrollLines(step > 0 ? -lines : lines)
       }
     }
     function onTouchEnd() { active = false; accum = 0 }

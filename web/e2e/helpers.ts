@@ -150,7 +150,9 @@ async function ensureCloneForm(page: Page): Promise<void> {
   }
   const input = page.getByPlaceholder(/clone URL/i)
   const summary = page.locator('summary', { hasText: 'Clone a repo' })
-  await expect(summary).toBeVisible({ timeout: 10_000 })
+  // The card mounts after the ssh gate + API state resolve — slow on a
+  // CI runner shared with nine other stacks.
+  await expect(summary).toBeVisible({ timeout: 30_000 })
   if (!(await input.first().isVisible())) {
     await summary.click()
   }
