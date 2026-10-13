@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { SERVER_LOG } from './env'
 import { deleteAllProjects, engineUp, fetchEvents } from './helpers'
@@ -19,7 +19,7 @@ test.describe('boot bootstrap from seeded state', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('seeded project terminal works straight after boot', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -45,13 +45,13 @@ test.describe('boot bootstrap from seeded state', () => {
       // pre-warming, no install call, nothing. Any lazy install left in the
       // launch pipeline would fail this with "not installed in this project".
       await page.goto('/projects/e2eboost/terminal/oc1')
-      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 30_000 })
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 30_000 })
+      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(30_000) })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(30_000) })
 
       // The session runs `opencode || echo "[opencode exited: $?]"` — a
       // missing binary would paint the failure line instead of the TUI.
       await expect
-        .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 120_000 })
+        .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: ciTimeout(120_000) })
         .toMatch(/Build|Connect|Ask anything/)
 
       // Belt and suspenders: the session-create API reports no validation

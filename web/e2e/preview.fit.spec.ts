@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createResponsiveProject, openPreviewFromTerminal, waitForChromiumFit, statusToken, tokenHeaders } from './preview.helpers'
@@ -16,7 +16,7 @@ test.describe('preview window fit', () => {
   test.use({ viewport: { width: 1280, height: 720 }, hasTouch: true })
 
   test('responsive page reflows: desktop vs phone styles', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -43,7 +43,7 @@ test.describe('preview window fit', () => {
       const phoneRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
       expect(phoneRes.ok()).toBeTruthy()
       expect(((await phoneRes.json()) as { html: string }).html).toContain('data-mode="phone"')
-      await expect(previewPage.getByRole('button', { name: 'Back to terminal' })).toBeVisible({ timeout: 10_000 })
+      await expect(previewPage.getByRole('button', { name: 'Back to terminal' })).toBeVisible({ timeout: ciTimeout(10_000) })
       await expect(previewPage).toHaveScreenshot('preview-fit-phone.png', { fullPage: true })
 
       await previewPage.close()

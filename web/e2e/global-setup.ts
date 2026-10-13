@@ -2,7 +2,7 @@ import { execFile, execFileSync, spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { GIT_PORT, RUN_DIR, RUN_SLUG } from './env'
+import { ciTimeout, GIT_PORT, RUN_DIR, RUN_SLUG } from './env'
 
 // sweepOwnOrphans removes this run's leftover project containers/volumes
 // from killed runs. Project names are deterministic (owner/repo), so an
@@ -13,7 +13,7 @@ import { GIT_PORT, RUN_DIR, RUN_SLUG } from './env'
 async function sweepOwnOrphans(): Promise<void> {
   const run = (args: string[]): Promise<string> =>
     new Promise((resolveOut) => {
-      execFile('docker', args, { timeout: 30_000 }, (err, stdout) => {
+      execFile('docker', args, { timeout: ciTimeout(30_000) }, (err, stdout) => {
         resolveOut(err ? '' : stdout)
       })
     })

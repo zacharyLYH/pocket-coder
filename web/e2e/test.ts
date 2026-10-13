@@ -1,5 +1,7 @@
 import { expect, test as base } from '@playwright/test'
 
+import { ciTimeout } from './env'
+
 // The ssh gate: Home refuses to render projects until POST /api/ssh/test
 // answers, and that probe talks to GitHub for real — which always rejects
 // the per-run key, gating every test behind the setup card. So each test
@@ -18,5 +20,6 @@ export const test = base.extend<{ sshProbe: void }>({
 })
 
 export { expect }
+export { ciTimeout } // CI-aware timeout budget: see env.ts
 // specs keep importing their helper types from the same one place
 export type { APIRequestContext, Browser, BrowserContext, Locator, Page, Route } from '@playwright/test'

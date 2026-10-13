@@ -1,4 +1,4 @@
-import { expect, test, type Page } from './test'
+import { ciTimeout, expect, test, type Page } from './test'
 import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp } from './helpers'
 
 // Mobile typing is the whole requirement: tap the terminal on a phone
@@ -10,8 +10,8 @@ async function openShellTerminal(page: Page) {
   await page.goto('/app')
   await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
   await page.getByRole('button', { name: 'Terminal' }).click()
-  await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
+  await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(10_000) })
 }
 
 async function terminalText(page: Page): Promise<string> {
@@ -34,7 +34,7 @@ test.describe('mobile typing (shell)', () => {
     await openShellTerminal(page)
     await page.locator('.xterm-screen').tap()
     await page.keyboard.type('echo mobile-type-7\n')
-    await expect.poll(() => terminalText(page), { timeout: 15_000 }).toContain('mobile-type-7')
+    await expect.poll(() => terminalText(page), { timeout: ciTimeout(15_000) }).toContain('mobile-type-7')
   })
 })
 
@@ -51,7 +51,7 @@ test.describe('mobile typing (opencode TUI)', () => {
   })
 
   test('tap focuses and typed text reaches the opencode prompt', async ({ page }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     await page.goto('/app')
     const id = await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
 
@@ -61,23 +61,23 @@ test.describe('mobile typing (opencode TUI)', () => {
     const row = hdialog.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
     // Scoped dialog: Install hits this project directly, no picker.
     await row.getByRole('button', { name: 'Install', exact: true }).click()
-    await expect(hdialog.getByText('Installed.')).toBeVisible({ timeout: 300_000 })
+    await expect(hdialog.getByText('Installed.')).toBeVisible({ timeout: ciTimeout(300_000) })
     await page.keyboard.press('Escape')
-    await expect(hdialog).not.toBeVisible({ timeout: 5_000 })
+    await expect(hdialog).not.toBeVisible({ timeout: ciTimeout(5_000) })
 
     await page.getByRole('button', { name: 'Terminal' }).click()
-    await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(15_000) })
     await page.getByTestId('tab-new').click()
     const dialog = page.getByRole('dialog')
     await dialog.getByPlaceholder(/Tab name/).fill('opencode-mobile')
     await dialog.locator('select').selectOption('opencode')
     await dialog.getByRole('button', { name: 'Create & Attach' }).click()
-    await expect(dialog).not.toBeVisible({ timeout: 240_000 })
-    await expect.poll(() => terminalText(page), { timeout: 60_000 }).toMatch(/Build|Connect|Ask anything/)
+    await expect(dialog).not.toBeVisible({ timeout: ciTimeout(240_000) })
+    await expect.poll(() => terminalText(page), { timeout: ciTimeout(60_000) }).toMatch(/Build|Connect|Ask anything/)
 
     // The TUI prompt is live: typed text lands in its input, visible on screen.
     await page.locator('.xterm-screen').tap()
     await page.keyboard.type('hello mobile')
-    await expect.poll(() => terminalText(page), { timeout: 15_000 }).toContain('hello mobile')
+    await expect.poll(() => terminalText(page), { timeout: ciTimeout(15_000) }).toContain('hello mobile')
   })
 })

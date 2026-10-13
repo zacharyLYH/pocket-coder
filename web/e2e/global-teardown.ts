@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 
-import { COMPOSE_PROJECT, DATA_DIR } from './env'
+import { ciTimeout, COMPOSE_PROJECT, DATA_DIR } from './env'
 import { stopDaemon } from './global-setup'
 
 // Runs after every test in the process, even when tests fail: stops this
@@ -21,7 +21,7 @@ export default function globalTeardown(): void {
       ['compose', '-f', '../docker-compose.yml', '-f', '../docker-compose.e2e.yml', '-p', COMPOSE_PROJECT, 'down'],
       {
         stdio: 'ignore',
-        timeout: 60_000,
+        timeout: ciTimeout(60_000),
         // Absolute data dir: compose resolves relative bind sources against
         // the compose file's directory and rejects missing ones outright.
         env: { ...process.env, PCODER_E2E_DATA_DIR: resolve(DATA_DIR), PCODER_E2E_API_PORT: '1' },

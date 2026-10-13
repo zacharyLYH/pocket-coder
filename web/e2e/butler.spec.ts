@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { mockConfigured, mockProject } from './mocks'
 import { TID, mockButlerThreads } from './threadMocks'
@@ -78,7 +78,7 @@ test.describe('butler desktop', () => {
     await expect(page.getByTestId('butler-pending')).toBeVisible()
     await expect(page).toHaveScreenshot('butler-running-prompt.png')
     answered = true
-    await expect(page.getByTestId('butler-answer')).toContainText('All three projects are healthy.', { timeout: 10_000 })
+    await expect(page.getByTestId('butler-answer')).toContainText('All three projects are healthy.', { timeout: ciTimeout(10_000) })
     await expect(page).toHaveScreenshot('butler-answer.png')
   })
 

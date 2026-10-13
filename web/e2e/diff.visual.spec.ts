@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 import { createProject, deleteAllProjects, engineUp, projectURL, waitForRunning } from './helpers'
 
 // Visual + behavioral tests for the Diff tab against the real backend:
@@ -31,7 +31,7 @@ async function openDiffTab(
   if (seed) await seedDirtyRepo(request, id)
   await page.goto(`/projects/${projectURL(id)}/terminal/main`)
   await page.getByTestId('tab-diff').click()
-  await expect(page.getByTestId('diff-tab')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId('diff-tab')).toBeVisible({ timeout: ciTimeout(30_000) })
   return id
 }
 
@@ -60,7 +60,7 @@ test.describe('diff tab empty', () => {
       // a fresh clone is a clean tree — no seeding needed
       await page.goto(`/projects/${projectURL(id)}/terminal/main`)
       await page.getByTestId('tab-diff').click()
-      await expect(page.getByTestId('diff-empty')).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId('diff-empty')).toBeVisible({ timeout: ciTimeout(30_000) })
       await expect(page.getByText('No changes')).toBeVisible()
       await shotDiffTab(page, 'diff-empty.png')
     } finally {
@@ -82,28 +82,28 @@ test.describe('diff tab with changes', () => {
   })
 
   test('file list, expanded diff, quote, and stage flow', async ({ page, request }) => {
-    test.setTimeout(300_000)
+    test.setTimeout(ciTimeout(300_000))
     const id = await openDiffTab(page, request, true)
     try {
       // File list shows both the modified and the untracked file.
-      await expect(page.getByTestId('diff-file-list')).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId('diff-file-list')).toBeVisible({ timeout: ciTimeout(30_000) })
       await shotDiffTab(page, 'diff-file-list.png')
-      await expect(page.getByText('hello.txt')).toBeVisible({ timeout: 15_000 })
-      await expect(page.getByText('untracked.txt')).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByText('hello.txt')).toBeVisible({ timeout: ciTimeout(15_000) })
+      await expect(page.getByText('untracked.txt')).toBeVisible({ timeout: ciTimeout(15_000) })
 
       // Expand the modified file: hunks render with per-hunk actions. The
       // viewer builds row structure before filling line text, so wait for
       // the added line's text (not just the row boxes) before screenshotting.
       await page.getByText('hello.txt').click()
-      await expect(page.getByTestId('diff-stage-hunk').first()).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId('diff-stage-hunk').first()).toBeVisible({ timeout: ciTimeout(30_000) })
       await expect(
         page.getByTestId('diff-file').locator('.diff-table-body').getByText('world').first(),
-      ).toBeVisible({ timeout: 30_000 })
+      ).toBeVisible({ timeout: ciTimeout(30_000) })
       await shotDiffTab(page, 'diff-file-open.png')
 
       // Quote a hunk into the notepad.
       await page.getByTestId('diff-quote-hunk').first().click()
-      await expect(page.getByTestId('diff-notes')).toContainText('hello.txt', { timeout: 10_000 })
+      await expect(page.getByTestId('diff-notes')).toContainText('hello.txt', { timeout: ciTimeout(10_000) })
       await shotDiffTab(page, 'diff-notepad.png')
 
       // Close the notepad so the file list regains full height: with the
@@ -116,12 +116,12 @@ test.describe('diff tab with changes', () => {
       // staged hunk button exists only once staged hunks arrive, so the
       // row wait below can never match the stale unstaged table.
       await page.getByTestId('diff-stage-file').first().click()
-      await expect(page.getByTestId('diff-unstage-file').first()).toBeVisible({ timeout: 30_000 })
-      await expect(page.getByTestId('diff-unstage-hunk').first()).toBeVisible({ timeout: 30_000 })
-      await expect(page.getByText('Loading diff…')).toHaveCount(0, { timeout: 30_000 })
+      await expect(page.getByTestId('diff-unstage-file').first()).toBeVisible({ timeout: ciTimeout(30_000) })
+      await expect(page.getByTestId('diff-unstage-hunk').first()).toBeVisible({ timeout: ciTimeout(30_000) })
+      await expect(page.getByText('Loading diff…')).toHaveCount(0, { timeout: ciTimeout(30_000) })
       await expect(
         page.getByTestId('diff-file').locator('.diff-table-body').getByText('world').first(),
-      ).toBeVisible({ timeout: 30_000 })
+      ).toBeVisible({ timeout: ciTimeout(30_000) })
       await shotDiffTab(page, 'diff-staged.png')
       void id
     } finally {
@@ -143,10 +143,10 @@ test.describe('diff tab phone', () => {
   })
 
   test('diff list renders on a phone viewport', async ({ page, request }) => {
-    test.setTimeout(300_000)
+    test.setTimeout(ciTimeout(300_000))
     await openDiffTab(page, request, true)
     try {
-      await expect(page.getByTestId('diff-file-list')).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId('diff-file-list')).toBeVisible({ timeout: ciTimeout(30_000) })
       await expect(page.getByText('hello.txt')).toBeVisible()
       await shotDiffTab(page, 'diff-phone.png')
     } finally {

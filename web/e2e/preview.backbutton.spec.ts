@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { deleteAllProjects, engineUp } from './helpers'
 import { createVanillaProject } from './preview.helpers'
@@ -14,7 +14,7 @@ test.describe('preview surface back button (mobile only)', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
 
   test('shows back button on a phone viewport', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -27,25 +27,25 @@ test.describe('preview surface back button (mobile only)', () => {
       // Open preview through terminal → Preview tab → Open in new tab.
       const card = page.getByTestId(`project-card-${projectID}`)
       await card.getByRole('button', { name: 'Terminal' }).click()
-      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
       await page.getByTestId('tab-preview').click()
       const portBtn = page.getByTestId('preview-port-3000')
-      await expect(portBtn).toBeVisible({ timeout: 60_000 })
+      await expect(portBtn).toBeVisible({ timeout: ciTimeout(60_000) })
       await portBtn.click()
       const openBtn = page.getByTestId('preview-open-3000')
-      await expect(openBtn).toBeVisible({ timeout: 30_000 })
+      await expect(openBtn).toBeVisible({ timeout: ciTimeout(30_000) })
       const [previewPage] = await Promise.all([
         page.context().waitForEvent('page'),
         openBtn.click(),
       ])
 
       // Wait for the iframe + noVNC surface to load.
-      await expect(previewPage.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: 60_000 })
+      await expect(previewPage.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: ciTimeout(60_000) })
       await previewPage.waitForTimeout(5_000)
 
       // On touch devices, the back button should be visible.
       const backBtn = previewPage.locator('button[aria-label="Back to terminal"]')
-      await expect(backBtn).toBeVisible({ timeout: 10_000 })
+      await expect(backBtn).toBeVisible({ timeout: ciTimeout(10_000) })
       await expect(previewPage).toHaveScreenshot('preview-back-button-phone.png', { fullPage: true })
 
       await previewPage.close()
@@ -55,7 +55,7 @@ test.describe('preview surface back button (mobile only)', () => {
   })
 
   test('back button navigates back or to /app', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -67,23 +67,23 @@ test.describe('preview surface back button (mobile only)', () => {
 
       const card = page.getByTestId(`project-card-${projectID}`)
       await card.getByRole('button', { name: 'Terminal' }).click()
-      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
       await page.getByTestId('tab-preview').click()
       const portBtn = page.getByTestId('preview-port-3000')
-      await expect(portBtn).toBeVisible({ timeout: 60_000 })
+      await expect(portBtn).toBeVisible({ timeout: ciTimeout(60_000) })
       await portBtn.click()
       const openBtn = page.getByTestId('preview-open-3000')
-      await expect(openBtn).toBeVisible({ timeout: 30_000 })
+      await expect(openBtn).toBeVisible({ timeout: ciTimeout(30_000) })
       const [previewPage] = await Promise.all([
         page.context().waitForEvent('page'),
         openBtn.click(),
       ])
 
-      await expect(previewPage.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: 60_000 })
+      await expect(previewPage.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: ciTimeout(60_000) })
       await previewPage.waitForTimeout(5_000)
 
       const backBtn = previewPage.locator('button[aria-label="Back to terminal"]')
-      await expect(backBtn).toBeVisible({ timeout: 10_000 })
+      await expect(backBtn).toBeVisible({ timeout: ciTimeout(10_000) })
 
       // Capture the page's current URL before clicking back.
       const beforeURL = previewPage.url()
@@ -96,10 +96,10 @@ test.describe('preview surface back button (mobile only)', () => {
       await expect(async () => {
         const afterURL = previewPage.url()
         expect(afterURL).not.toBe(beforeURL)
-      }).toPass({ timeout: 10_000 })
+      }).toPass({ timeout: ciTimeout(10_000) })
 
       // The preview page should no longer show the iframe.
-      await expect(previewPage.locator('iframe[title="Remote project preview"]')).toHaveCount(0, { timeout: 5_000 })
+      await expect(previewPage.locator('iframe[title="Remote project preview"]')).toHaveCount(0, { timeout: ciTimeout(5_000) })
     } finally {
       await deleteAllProjects(request)
     }

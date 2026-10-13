@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createReactProject, openPreviewFromTerminal, openSurfacePage, startPreview, statusToken, surfaceToken, toolGet } from './preview.helpers'
@@ -12,7 +12,7 @@ const TOKEN_SILENCE_MS = 25_000
 // persistence, fast tools gating (no waiting), and the expired-surface UI.
 test.describe('preview token rotation', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
-  test.setTimeout(600_000)
+  test.setTimeout(ciTimeout(600_000))
 
   test('single-tab rotation: stale token dies, status mints a successor', async ({ browser, request }) => {
     if (!(await engineUp(request))) {
@@ -47,7 +47,7 @@ test.describe('preview token rotation', () => {
       expect(t2).not.toBe(t1)
       // Reopen attaches with the successor.
       await page.goto(`/preview/${encodeURIComponent(projectID)}`)
-      await expect(page.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: 60_000 })
+      await expect(page.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: ciTimeout(60_000) })
       expect(await surfaceToken(page)).toBe(t2)
       await page.close()
     } finally {
@@ -128,7 +128,7 @@ test.describe('preview token rotation', () => {
       await startPreview(request, projectID)
       const page = await browser.newPage()
       await page.goto(`/preview/${encodeURIComponent(projectID)}`)
-      await expect(page.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: 60_000 })
+      await expect(page.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: ciTimeout(60_000) })
       // Laptop-sleep case: the page stays open but its beats stop reaching
       // the server, so the token rots past the silence window. (Blocking
       // rather than closing: a closed page can't show the expired card, and
@@ -138,11 +138,11 @@ test.describe('preview token rotation', () => {
       await page.unroute('**/preview/heartbeat')
       await expect(
         page.getByText('Preview expired — the sidecar rotated its token.'),
-      ).toBeVisible({ timeout: 60_000 })
+      ).toBeVisible({ timeout: ciTimeout(60_000) })
       await expect(page).toHaveScreenshot('preview-expired.png', { fullPage: true })
       // Resume re-mints a token and reattaches to the same sidecar.
       await page.getByRole('button', { name: 'Resume' }).click()
-      await expect(page.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: 60_000 })
+      await expect(page.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: ciTimeout(60_000) })
       await page.close()
     } finally {
       await deleteAllProjects(request)

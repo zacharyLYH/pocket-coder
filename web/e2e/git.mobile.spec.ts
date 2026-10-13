@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { mockGit, resetGitState, PROJECT } from './git.fixtures'
 import { terminalUrl } from './helpers'
@@ -12,7 +12,7 @@ async function openGitTab(page: import('@playwright/test').Page, opts?: Paramete
   await mockGit(page, opts)
   await page.goto(terminalUrl(PROJECT, 'main'))
   await page.getByTestId('tab-diff').click()
-  await expect(page.getByTestId('diff-tab')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByTestId('diff-tab')).toBeVisible({ timeout: ciTimeout(10_000) })
 }
 
 test.describe('git tab (mobile)', () => {
@@ -51,7 +51,7 @@ test.describe('git tab (mobile)', () => {
     // Push ships it, then the AI description is copy-only.
     await page.getByTestId('git-push').click()
     await expect(page.getByTestId('git-push-state')).toContainText('Pushed ✓')
-    await expect(page.getByTestId('diff-tab')).toHaveScreenshot('git-mobile-shipped.png', { timeout: 20_000 })
+    await expect(page.getByTestId('diff-tab')).toHaveScreenshot('git-mobile-shipped.png', { timeout: ciTimeout(20_000) })
 
     await page.getByTestId('git-draft-desc').click()
     await expect(page.getByTestId('git-pr-desc')).toContainText('Add world greeting')

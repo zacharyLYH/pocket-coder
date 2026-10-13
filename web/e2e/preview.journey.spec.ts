@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createPrecreatedProject, execInProject, waitForInspectContaining, statusToken, tokenHeaders } from './preview.helpers'
 
@@ -6,7 +6,7 @@ test.describe('preview user journey', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('full journey: precreated project → inject start → Preview tab → Open → HMR → backend check', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -15,9 +15,9 @@ test.describe('preview user journey', () => {
     try {
       const projectID = await createPrecreatedProject(request)
       await page.goto('/app')
-      await expect(page.getByTestId(`project-card-${projectID}`)).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByTestId(`project-card-${projectID}`)).toBeVisible({ timeout: ciTimeout(10_000) })
       await page.getByTestId(`project-card-${projectID}`).getByRole('button', { name: 'Terminal' }).click()
-      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
       // inject start commands via shortcuts (backend + vite)
       await page.getByTestId('tab-shortcuts').click()
       await page.getByTestId('sc-row-backend').click()
@@ -32,24 +32,24 @@ test.describe('preview user journey', () => {
         expect(r.ok()).toBeTruthy()
         const { ports } = (await r.json()) as { ports: { port: number }[] }
         expect(ports.map((p) => p.port)).toContain(3000)
-      }).toPass({ timeout: 60_000 })
+      }).toPass({ timeout: ciTimeout(60_000) })
       await page.waitForTimeout(1000)
       await expect(page).toHaveScreenshot('preview-journey-terminal-after-inject.png', { fullPage: true })
       // Preview tab
       await page.getByTestId('tab-preview').click()
       await page.getByTestId('preview-refresh').click()
       const portBtn = page.getByTestId('preview-port-3000')
-      await expect(portBtn).toBeVisible({ timeout: 60_000 })
+      await expect(portBtn).toBeVisible({ timeout: ciTimeout(60_000) })
       await expect(page).toHaveScreenshot('preview-journey-ports.png', { fullPage: true })
       await portBtn.click()
       const openBtn = page.getByTestId('preview-open-3000')
-      await expect(openBtn).toBeVisible({ timeout: 30_000 })
+      await expect(openBtn).toBeVisible({ timeout: ciTimeout(30_000) })
       const [previewPage] = await Promise.all([
         page.context().waitForEvent('page'),
         openBtn.click(),
       ])
       const frame = previewPage.locator('iframe[title="Remote project preview"]')
-      await expect(frame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
+      await expect(frame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: ciTimeout(60_000) })
       await previewPage.waitForTimeout(5000)
       await expect(previewPage).toHaveScreenshot('preview-journey-open.png', { fullPage: true })
       // verify backend state via slots and preview status
@@ -71,7 +71,7 @@ test.describe('preview user journey', () => {
   })
 
   test('multi preview: two ports → two previews', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -81,7 +81,7 @@ test.describe('preview user journey', () => {
       const projectID = await createPrecreatedProject(request)
       await page.goto('/app')
       await page.getByTestId(`project-card-${projectID}`).getByRole('button', { name: 'Terminal' }).click()
-      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
       await page.getByTestId('tab-shortcuts').click()
       await page.getByTestId('sc-row-backend').click()
       await page.waitForTimeout(2000)
@@ -90,27 +90,27 @@ test.describe('preview user journey', () => {
       await page.waitForTimeout(8000)
       await page.getByTestId('tab-preview').click()
       await page.getByTestId('preview-refresh').click()
-      await expect(page.getByTestId('preview-port-3000')).toBeVisible({ timeout: 60_000 })
+      await expect(page.getByTestId('preview-port-3000')).toBeVisible({ timeout: ciTimeout(60_000) })
       await expect(page).toHaveScreenshot('preview-multi-ports.png', { fullPage: true })
       // start preview
       await page.getByTestId('preview-port-3000').click()
-      await expect(page.getByTestId('preview-open-3000')).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId('preview-open-3000')).toBeVisible({ timeout: ciTimeout(30_000) })
       const [previewPage2] = await Promise.all([
         page.context().waitForEvent('page'),
         page.getByTestId('preview-open-3000').click(),
       ])
-      await expect(previewPage2.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: 30_000 })
+      await expect(previewPage2.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: ciTimeout(30_000) })
       // The iframe element exists before noVNC connects — wait for its
       // canvas (surface connected) and for the app inside the sidecar,
       // otherwise the shot enshrines a gray "Loading" frame.
-      await expect(previewPage2.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
+      await expect(previewPage2.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: ciTimeout(60_000) })
       // the worker (and its token) exists only once the preview is up
       const token = await statusToken(request, projectID)
       await expect(async () => {
         const r = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
         expect(r.ok()).toBeTruthy()
         expect(((await r.json()) as { html: string }).html).toContain('Full-Stack App')
-      }).toPass({ timeout: 60_000 })
+      }).toPass({ timeout: ciTimeout(60_000) })
       await expect(previewPage2).toHaveScreenshot('preview-multi-first.png', { fullPage: true })
       await expect(page).toHaveScreenshot('preview-multi-second-ready.png', { fullPage: true })
       const portsRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/ports`)
@@ -121,7 +121,7 @@ test.describe('preview user journey', () => {
   })
 
   test('preview close: terminate and backend cleared', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -131,7 +131,7 @@ test.describe('preview user journey', () => {
       const projectID = await createPrecreatedProject(request)
       await page.goto('/app')
       await page.getByTestId(`project-card-${projectID}`).getByRole('button', { name: 'Terminal' }).click()
-      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
       await page.getByTestId('tab-shortcuts').click()
       await page.getByTestId('sc-row-backend').click()
       await page.waitForTimeout(2000)
@@ -140,25 +140,25 @@ test.describe('preview user journey', () => {
       await page.waitForTimeout(8000)
       await page.getByTestId('tab-preview').click()
       await page.getByTestId('preview-refresh').click()
-      await expect(page.getByTestId('preview-port-3000')).toBeVisible({ timeout: 60_000 })
+      await expect(page.getByTestId('preview-port-3000')).toBeVisible({ timeout: ciTimeout(60_000) })
       await page.getByTestId('preview-port-3000').click()
-      await expect(page.getByTestId('preview-open-3000')).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId('preview-open-3000')).toBeVisible({ timeout: ciTimeout(30_000) })
       const [previewPage3] = await Promise.all([
         page.context().waitForEvent('page'),
         page.getByTestId('preview-open-3000').click(),
       ])
-      await expect(previewPage3.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: 30_000 })
+      await expect(previewPage3.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: ciTimeout(30_000) })
       // Wait for the surface (canvas) and the app inside the sidecar before
       // screenshotting — otherwise the baseline enshrines a black
       // "Connecting" frame and flakes with sidecar startup speed.
-      await expect(previewPage3.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
+      await expect(previewPage3.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: ciTimeout(60_000) })
       // the worker (and its token) exists only once the preview is up
       const token = await statusToken(request, projectID)
       await expect(async () => {
         const r = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))
         expect(r.ok()).toBeTruthy()
         expect(((await r.json()) as { html: string }).html).toContain('Full-Stack App')
-      }).toPass({ timeout: 60_000 })
+      }).toPass({ timeout: ciTimeout(60_000) })
       await expect(previewPage3).toHaveScreenshot('preview-close-before.png', { fullPage: true })
       await page.getByTestId('preview-close-3000').click()
       await page.waitForTimeout(2000)

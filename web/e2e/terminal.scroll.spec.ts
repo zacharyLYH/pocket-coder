@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { mockSessions } from './mocks'
 import { terminalUrl } from './helpers'
@@ -42,10 +42,10 @@ test.describe('terminal scroll', () => {
     })
 
     await page.goto(terminalUrl(FAKE_ID, 'main'))
-    await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
 
     const rows = page.locator('.xterm-rows')
-    await expect.poll(() => rows.innerText(), { timeout: 15_000 }).toContain('SCROLL-LINE-200')
+    await expect.poll(() => rows.innerText(), { timeout: ciTimeout(15_000) }).toContain('SCROLL-LINE-200')
 
     const bottomText = await rows.innerText()
     expect(bottomText).toContain('SCROLL-LINE-200')
@@ -57,7 +57,7 @@ test.describe('terminal scroll', () => {
     const framesBefore = clientFrames.length
     await page.mouse.wheel(0, -1200)
     await expect
-      .poll(async () => rows.innerText(), { timeout: 10_000 })
+      .poll(async () => rows.innerText(), { timeout: ciTimeout(10_000) })
       .not.toEqual(bottomText)
     const topText = await rows.innerText()
     expect(topText).not.toContain('SCROLL-LINE-200')
@@ -65,7 +65,7 @@ test.describe('terminal scroll', () => {
 
     // Scroll back down: the latest output returns.
     await page.mouse.wheel(0, 1200)
-    await expect.poll(() => rows.innerText(), { timeout: 10_000 }).toContain('SCROLL-LINE-200')
+    await expect.poll(() => rows.innerText(), { timeout: ciTimeout(10_000) }).toContain('SCROLL-LINE-200')
 
     // The bug was wheel → Up/Down arrows (shell history recall). No input
     // frames carrying arrow escapes may escape during the scroll gestures.
@@ -114,9 +114,9 @@ test.describe('terminal scroll (mobile)', () => {
     })
 
     await page.goto(terminalUrl(FAKE_ID, 'main'))
-    await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
     const rows = page.locator('.xterm-rows')
-    await expect.poll(() => rows.innerText(), { timeout: 15_000 }).toContain('SCROLL-LINE-200')
+    await expect.poll(() => rows.innerText(), { timeout: ciTimeout(15_000) }).toContain('SCROLL-LINE-200')
     const bottomText = await rows.innerText()
 
     // The pane opts out of the document-level pull handler.
@@ -125,13 +125,13 @@ test.describe('terminal scroll (mobile)', () => {
 
     // Drag down reveals earlier output…
     await touchDrag(page, 300)
-    await expect.poll(() => rows.innerText(), { timeout: 10_000 }).not.toEqual(bottomText)
+    await expect.poll(() => rows.innerText(), { timeout: ciTimeout(10_000) }).not.toEqual(bottomText)
     const scrolledText = await rows.innerText()
     expect(scrolledText).not.toContain('SCROLL-LINE-200')
     await expect(page).toHaveScreenshot('terminal-scroll-mobile.png')
 
     // …and dragging back down returns to the latest output.
     await touchDrag(page, -300)
-    await expect.poll(() => rows.innerText(), { timeout: 10_000 }).toContain('SCROLL-LINE-200')
+    await expect.poll(() => rows.innerText(), { timeout: ciTimeout(10_000) }).toContain('SCROLL-LINE-200')
   })
 })

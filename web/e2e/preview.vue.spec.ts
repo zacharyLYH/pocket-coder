@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createVueProject, execInProject, openPreviewFromTerminal, waitForInspectContaining, statusToken, tokenHeaders } from './preview.helpers'
 
@@ -6,7 +6,7 @@ test.describe('preview Vue.js', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('Vue SPA with HMR and backend', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return

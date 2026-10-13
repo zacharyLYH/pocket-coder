@@ -1,5 +1,6 @@
 import { expect, type APIRequestContext, type Page } from '@playwright/test'
 import { createProject, e2eRepo, projectURL } from './helpers'
+import { ciTimeout } from './env'
 
 // Real full-stack fixture per devin-clone.md section 6.3:
 //   frontend: localhost:3000, backend: localhost:4000
@@ -247,13 +248,13 @@ async function waitForProjectAppOnPort(request: APIRequestContext, id: string, p
 export async function openPreviewFromTerminal(page: Page, projectId: string, port = 3000): Promise<Page> {
   const card = page.getByTestId(`project-card-${projectId}`)
   await card.getByRole('button', { name: 'Terminal' }).click()
-  await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
   await page.getByTestId('tab-preview').click()
   const portBtn = page.getByTestId(`preview-port-${port}`)
-  await expect(portBtn).toBeVisible({ timeout: 60_000 })
+  await expect(portBtn).toBeVisible({ timeout: ciTimeout(60_000) })
   await portBtn.click()
   const openBtn = page.getByTestId(`preview-open-${port}`)
-  await expect(openBtn).toBeVisible({ timeout: 30_000 })
+  await expect(openBtn).toBeVisible({ timeout: ciTimeout(30_000) })
   const [previewPage] = await Promise.all([
     page.context().waitForEvent('page'),
     openBtn.click(),
@@ -268,9 +269,9 @@ export async function openPreviewFromTerminal(page: Page, projectId: string, por
 
 async function waitForPreview(page: Page) {
   const frame = page.locator('iframe[title="Remote project preview"]')
-  await expect(frame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
+  await expect(frame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: ciTimeout(60_000) })
   const connectBtn = frame.contentFrame().locator('text=Connect')
-  if (await connectBtn.isVisible({ timeout: 5_000 }).catch(() => false)) {
+  if (await connectBtn.isVisible({ timeout: ciTimeout(5_000) }).catch(() => false)) {
     await connectBtn.click()
   }
   await page.waitForTimeout(5000)
@@ -291,7 +292,7 @@ export async function waitForChromiumFit(page: Page, request: APIRequestContext,
   await page.bringToFront()
   await expect(async () => {
     expect(await page.evaluate(() => document.visibilityState)).toBe('visible')
-  }).toPass({ timeout: 10_000 })
+  }).toPass({ timeout: ciTimeout(10_000) })
   const box = await page.locator('iframe[title="Remote project preview"]').boundingBox()
   const want = { width: Math.round(box?.width ?? 0), height: Math.round(box?.height ?? 0) }
   await expect(async () => {
@@ -300,7 +301,7 @@ export async function waitForChromiumFit(page: Page, request: APIRequestContext,
     const { width, height } = pngSize(Buffer.from(await res.body()))
     expect(Math.abs(width - want.width) <= 4).toBe(true)
     expect(Math.abs(height - want.height) <= 4).toBe(true)
-  }).toPass({ timeout: 60_000 })
+  }).toPass({ timeout: ciTimeout(60_000) })
   return want
 }
 
@@ -522,7 +523,7 @@ export async function statusToken(request: APIRequestContext, id: string): Promi
     const body = (await res.json()) as { token?: string }
     expect(body.token).toBeTruthy()
     token = body.token as string
-  }).toPass({ timeout: 60_000 })
+  }).toPass({ timeout: ciTimeout(60_000) })
   return token
 }
 
@@ -545,6 +546,6 @@ export async function openSurfacePage(browser: import("@playwright/test").Browse
   const ctx = await browser.newContext()
   const tab = await ctx.newPage()
   await tab.goto(`/preview/${encodeURIComponent(id)}`)
-  await expect(tab.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: 60_000 })
+  await expect(tab.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: ciTimeout(60_000) })
   return tab
 }

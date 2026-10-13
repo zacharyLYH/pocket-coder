@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createReactProject, execInProject, startPreview, waitForInspectContaining, statusToken, tokenHeaders } from './preview.helpers'
@@ -7,7 +7,7 @@ test.describe('preview reconnect', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('project survives phone disconnect and reconnect preserves browser state', async ({ page, request }) => {
-    test.setTimeout(300_000)
+    test.setTimeout(ciTimeout(300_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -23,7 +23,7 @@ test.describe('preview reconnect', () => {
       // ── First connection: open preview, type something ──
       await page.goto(`/preview/${encodeURIComponent(projectID)}`)
       const frame = page.locator('iframe[title="Remote project preview"]')
-      await expect(frame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
+      await expect(frame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: ciTimeout(60_000) })
 
       // Add an input to the fixture for state persistence testing
       const inputApp = [
@@ -73,7 +73,7 @@ test.describe('preview reconnect', () => {
       const newPage = await ctx.newPage()
       await newPage.goto(`/preview/${encodeURIComponent(projectID)}`)
       const newFrame = newPage.locator('iframe[title="Remote project preview"]')
-      await expect(newFrame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: 60_000 })
+      await expect(newFrame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: ciTimeout(60_000) })
 
       // The browser state (typed text) must persist through the disconnect
       inspectRes = await request.get(`/api/projects/${projectURL(projectID)}/preview/tools/inspect`, tokenHeaders(token))

@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createReactProject, execInProject, openPreviewFromTerminal, waitForInspectContaining, statusToken, tokenHeaders } from './preview.helpers'
@@ -8,7 +8,7 @@ test.describe('preview HMR', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('full HMR E2E: terminal → Preview tab → Open, before shot, edit file, after shot', async ({ page, request }, testInfo) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -18,7 +18,7 @@ test.describe('preview HMR', () => {
       // ── Step 1: Create a real full-stack project ──
       const projectID = await createReactProject(request)
       await page.goto('/app')
-      await expect(page.getByTestId(`project-card-${projectID}`)).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId(`project-card-${projectID}`)).toBeVisible({ timeout: ciTimeout(30_000) })
 
       // ── Step 2: Open preview via terminal → Preview tab → Open (new tab) ──
       const previewPage = await openPreviewFromTerminal(page, projectID)
@@ -146,7 +146,7 @@ test.describe('preview HMR', () => {
   })
 
   test('section 6.5: user and AI share one browser', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return

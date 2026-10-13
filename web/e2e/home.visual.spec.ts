@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 import { FAKE_HARNESS_NAME, createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, ensureFakeHarness, resetHarnessRegistry, engineUp } from './helpers'
 
 // Visual + behavioral tests for the home screen against the real backend:
@@ -138,7 +138,7 @@ test.describe('home screen', () => {
       await expect(row.getByRole('button', { name: 'Install', exact: true })).toBeVisible()
       await expect(page).toHaveScreenshot('harness-install-dialog.png', { fullPage: true })
       await row.getByRole('button', { name: 'Install', exact: true }).click()
-      await expect(dialog.getByText('Installed.')).toBeVisible({ timeout: 120_000 })
+      await expect(dialog.getByText('Installed.')).toBeVisible({ timeout: ciTimeout(120_000) })
     } finally {
       await deleteAllProjects(page.request)
     }
@@ -165,7 +165,7 @@ test.describe('home screen', () => {
       // one click installs into this project; the mocked 2s round-trip keeps
       // the busy label up long enough to capture it
       await row.getByRole('button', { name: 'Install', exact: true }).click()
-      await expect(dialog.getByRole('button', { name: 'Installing…' })).toBeVisible({ timeout: 10_000 })
+      await expect(dialog.getByRole('button', { name: 'Installing…' })).toBeVisible({ timeout: ciTimeout(10_000) })
       await expect(page).toHaveScreenshot('home-busy-installing.png')
     } finally {
       await deleteAllProjects(page.request)

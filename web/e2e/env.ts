@@ -12,6 +12,25 @@ function intEnv(name: string, def: number): number {
   return Number.isFinite(v) && v > 0 ? v : def
 }
 
+// CI runners (shared GitHub-hosted hosts) are materially slower than a dev
+// Mac: e2e-parallel.sh stacks FOUR backend+Vite+browser groups on one machine,
+// and Docker image builds, npm installs, and Vite cold starts all take longer.
+// GitHub Actions exports CI=true automatically (the config already keys the
+// browser channel on it), so every timeout budget is scaled up here — local
+// runs keep the tight budget (multiplier 1) so failures surface fast, while CI
+// gets the headroom it needs. Tune the multiplier here to fix CI flakiness in
+// one place instead of per-test.
+export const CI_TIMEOUT_MULTIPLIER = process.env.CI ? 2 : 1
+
+// ciTimeout scales a timeout for CI. Locally it returns the value unchanged;
+// under CI it returns value * CI_TIMEOUT_MULTIPLIER. Wrap every test-level
+// budget (config `timeout`, webServer boot, `test.setTimeout`) and every
+// explicit `expect(...).toBeVisible({ timeout })` / `.toPass({ timeout })` wait
+// with it so a slow CI runner doesn't flake while locals stay snappy.
+export function ciTimeout(ms: number): number {
+  return ms * CI_TIMEOUT_MULTIPLIER
+}
+
 export const API_PORT = intEnv('E2E_API_PORT', 8081)
 export const WEB_PORT = intEnv('E2E_WEB_PORT', 5174)
 

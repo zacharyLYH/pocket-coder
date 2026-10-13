@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createHtmxProject, openPreviewFromTerminal, statusToken, tokenHeaders } from './preview.helpers'
 
@@ -9,7 +9,7 @@ test.describe('preview htmx', () => {
   // and flow ("precreated + inject" never actually used the precreated
   // path). This pins render + backend content + both screenshots.
   test('htmx full-stack renders with backend content', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return

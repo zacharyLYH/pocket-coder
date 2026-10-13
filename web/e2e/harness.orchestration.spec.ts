@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, type Page, test } from './test'
+import { ciTimeout, expect, type APIRequestContext, type Page, test } from './test'
 import { FAKE_HARNESS_ID, FAKE_HARNESS_NAME, createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp, ensureFakeHarness, resetHarnessRegistry, projectURL } from './helpers'
 
 async function fetchState(request: APIRequestContext) {
@@ -25,7 +25,7 @@ test.describe('harness installs are desired state', () => {
     page,
     request,
   }) => {
-    test.setTimeout(240_000)
+    test.setTimeout(ciTimeout(240_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -79,7 +79,7 @@ test.describe('harness installs are desired state', () => {
           const row = hd.locator('div.flex.items-center.justify-between', { hasText: h.name })
           await expect(row).toBeVisible()
           await row.getByRole('button', { name: 'Install', exact: true }).click()
-          await expect(hd.getByTestId(`harness-installed-${h.id}`)).toBeVisible({ timeout: 60_000 })
+          await expect(hd.getByTestId(`harness-installed-${h.id}`)).toBeVisible({ timeout: ciTimeout(60_000) })
         }
         return hd
       }
@@ -88,11 +88,11 @@ test.describe('harness installs are desired state', () => {
       // Installed shows for this project immediately; reopening proves it.
       await gateShot(page, 'gate1-installed')
       await page.keyboard.press('Escape')
-      await expect(hdialog).not.toBeVisible({ timeout: 5_000 })
+      await expect(hdialog).not.toBeVisible({ timeout: ciTimeout(5_000) })
 
       await installInto(idBeta)
       await page.keyboard.press('Escape')
-      await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5_000 })
+      await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: ciTimeout(5_000) })
 
       const state1 = await fetchState(request)
       expect(state1.projects[idAlpha].harnesses).toEqual({ [FAKE_HARNESS_ID]: 'true', helper: 'true' })
@@ -101,8 +101,8 @@ test.describe('harness installs are desired state', () => {
       expect(state1.harnesses['helper']).toBeTruthy()
 
       await page.getByRole('button', { name: 'Terminal' }).nth(idxAlpha).click()
-      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
+      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(15_000) })
       await gateShot(page, 'gate2-terminal-open')
 
       await page.getByTestId('tab-new').click()
@@ -133,13 +133,13 @@ test.describe('harness installs are desired state', () => {
       await d1.getByPlaceholder(/Tab name/).fill('shared-name')
       await d1.locator('select').selectOption('shell')
       await d1.getByRole('button', { name: 'Create & Attach' }).click()
-      await expect(d1).not.toBeVisible({ timeout: 15_000 })
-      await expect(page.getByTestId('tab-session-shared-name')).toContainText('shared-name', { timeout: 10_000 })
+      await expect(d1).not.toBeVisible({ timeout: ciTimeout(15_000) })
+      await expect(page.getByTestId('tab-session-shared-name')).toContainText('shared-name', { timeout: ciTimeout(10_000) })
 
       const bSessions1 = await request.get(`/api/projects/${projectURL(idBeta)}/sessions`)
       const bBody1 = (await bSessions1.json()) as { sessions: { name: string }[] }
       expect(bBody1.sessions.map((s) => s.name)).not.toContain('shared-name')
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(10_000) })
       await gateShot(page, 'gate3-shell-session')
 
       await page.getByTestId('tab-new').click()
@@ -147,16 +147,16 @@ test.describe('harness installs are desired state', () => {
       await d2.getByPlaceholder(/Tab name/).fill('shared-name')
       await d2.locator('select').selectOption(FAKE_HARNESS_ID)
       await d2.getByRole('button', { name: 'Create & Attach' }).click()
-      await expect(d2.getByText(/already exists|duplicate/i)).toBeVisible({ timeout: 10_000 })
+      await expect(d2.getByText(/already exists|duplicate/i)).toBeVisible({ timeout: ciTimeout(10_000) })
       await expect(d2).toBeVisible()
       await d2.getByPlaceholder(/Tab name/).fill('my-fake')
       const createBtn = d2.getByRole('button', { name: 'Create & Attach' })
       await createBtn.click()
-      await expect(d2.getByText('Launching my-fake')).toBeVisible({ timeout: 5_000 })
+      await expect(d2.getByText('Launching my-fake')).toBeVisible({ timeout: ciTimeout(5_000) })
       await expect(d2.getByText('Installing harness')).not.toBeVisible()
-      await expect(d2).not.toBeVisible({ timeout: 15_000 })
-      await expect(page.getByTestId('tab-session-my-fake')).toContainText('my-fake', { timeout: 10_000 })
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+      await expect(d2).not.toBeVisible({ timeout: ciTimeout(15_000) })
+      await expect(page.getByTestId('tab-session-my-fake')).toContainText('my-fake', { timeout: ciTimeout(10_000) })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(10_000) })
       await gateShot(page, 'gate3-harness-session')
 
       await page.getByTestId('tab-new').click()
@@ -164,13 +164,13 @@ test.describe('harness installs are desired state', () => {
       await dHelper.getByPlaceholder(/Tab name/).fill('my-helper')
       await dHelper.locator('select').selectOption('helper')
       await dHelper.getByRole('button', { name: 'Create & Attach' }).click()
-      await expect(dHelper).not.toBeVisible({ timeout: 15_000 })
+      await expect(dHelper).not.toBeVisible({ timeout: ciTimeout(15_000) })
       await expect(page.getByTestId('tab-session-my-helper')).toContainText('my-helper')
       const bSessions2 = await request.get(`/api/projects/${projectURL(idBeta)}/sessions`)
       const bBody2 = (await bSessions2.json()) as { sessions: { name: string }[] }
       expect(bBody2.sessions.map((s) => s.name)).not.toContain('my-helper')
 
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(10_000) })
       await page.getByTestId('terminal-actions-trigger').click()
       await page.getByTestId('terminal-action-rename').click()
       const renameDialog = page.getByRole('dialog', { name: /Rename session/ })
@@ -185,7 +185,7 @@ test.describe('harness installs are desired state', () => {
       await expect(page.getByTestId('tab-session-renamed')).toBeVisible()
       await expect(page.getByTestId('tab-session-my-fake')).toBeVisible()
       await expect(page.getByTestId('tab-session-shared-name')).toBeVisible()
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(10_000) })
       await gateShot(page, 'gate4-renamed')
       await page.getByTestId('tab-session-renamed').click()
       await expect(page.getByTestId('tab-session-renamed')).toHaveAttribute('aria-selected', 'true')
@@ -196,7 +196,7 @@ test.describe('harness installs are desired state', () => {
       await page.locator('.xterm-screen').click()
       await page.keyboard.type('echo after-rename\n')
       await expect
-        .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 15_000 })
+        .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: ciTimeout(15_000) })
         .toContain('after-rename')
       const state2 = await fetchState(request)
       expect(state2.projects[idAlpha].harnesses).toEqual({ [FAKE_HARNESS_ID]: 'true', helper: 'true' })
@@ -205,7 +205,7 @@ test.describe('harness installs are desired state', () => {
 
       await page.getByTestId('terminal-actions-trigger').click()
       await page.getByTestId('terminal-action-restart').click()
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(15_000) })
       await expect(page.getByTestId('tab-session-renamed')).toContainText('renamed')
       await expect(page.getByTestId('tab-session-renamed')).toHaveAttribute('aria-selected', 'true')
       await gateShot(page, 'gate5-restarted')
@@ -215,7 +215,7 @@ test.describe('harness installs are desired state', () => {
       await page.locator('.xterm-screen').click()
       await page.keyboard.type('echo after-restart\n')
       await expect
-        .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 30_000 })
+        .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: ciTimeout(30_000) })
         .toContain('after-restart')
       const bSessions4 = await request.get(`/api/projects/${projectURL(idBeta)}/sessions`)
       const bBody4 = (await bSessions4.json()) as { sessions: { name: string }[] }

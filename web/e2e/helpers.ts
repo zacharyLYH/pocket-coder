@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { expect, type Page, type APIRequestContext } from '@playwright/test'
 
-import { GIT_PORT, LOGIN_EMAIL, RUN_SLUG, SERVER_LOG } from './env'
+import { ciTimeout, GIT_PORT, LOGIN_EMAIL, RUN_SLUG, SERVER_LOG } from './env'
 
 export { LOGIN_EMAIL } // one source: env.ts (the seeder factory uses it too)
 
@@ -152,11 +152,11 @@ async function ensureCloneForm(page: Page): Promise<void> {
   const summary = page.locator('summary', { hasText: 'Clone a repo' })
   // The card mounts after the ssh gate + API state resolve — slow on a
   // CI runner shared with nine other stacks.
-  await expect(summary).toBeVisible({ timeout: 30_000 })
+  await expect(summary).toBeVisible({ timeout: ciTimeout(30_000) })
   if (!(await input.first().isVisible())) {
     await summary.click()
   }
-  await expect(input.first()).toBeVisible({ timeout: 10_000 })
+  await expect(input.first()).toBeVisible({ timeout: ciTimeout(10_000) })
 }
 // createProject clones a fixture repo via the API and returns its id
 // (owner/repo). The repo defaults to slot 1; tests holding several
@@ -243,14 +243,14 @@ export async function createProjectViaUI(
       const created = urlValue === '' && (await countNamed()) > before
       const failed = urlValue !== '' && (await page.getByTestId('clone-error').count()) > 0
       expect(created || failed).toBe(true)
-    }).toPass({ timeout: 120_000 })
+    }).toPass({ timeout: ciTimeout(120_000) })
   }
   if ((await countNamed()) <= before) {
     throw new Error(`project ${expectedID} not created after retries`)
   }
 
   await page.reload()
-  await expect(page.getByTestId(`project-card-${expectedID}`)).toHaveCount(before + 1, { timeout: 10_000 })
+  await expect(page.getByTestId(`project-card-${expectedID}`)).toHaveCount(before + 1, { timeout: ciTimeout(10_000) })
   const orderRes = await request.get('/api/projects')
   const orderBody = (await orderRes.json()) as { projects: { id: string }[] }
   const created = orderBody.projects.find((p) => p.id === expectedID)

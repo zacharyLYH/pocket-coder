@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { deleteAllProjects, engineUp, createProject, e2eRepo, e2eRepoID, resetHarnessRegistry } from './helpers'
 
@@ -47,7 +47,7 @@ test.describe('settings card', () => {
       await page.getByTestId('settings-download').click()
 
       // Wait for the fetch to settle.
-      await page.waitForFunction(() => true, { timeout: 3000 })
+      await page.waitForFunction(() => true, { timeout: ciTimeout(3000) })
 
       expect(downloadHit).toBe(true)
       const state = JSON.parse(stateText)
@@ -96,7 +96,7 @@ test.describe('settings card', () => {
         expect(res.ok()).toBeTruthy()
         const body = await res.json()
         expect(body.projects).toHaveLength(0)
-      }).toPass({ timeout: 30_000 })
+      }).toPass({ timeout: ciTimeout(30_000) })
 
       // Download was triggered before the wipe.
       expect(downloadHit).toBe(true)
@@ -134,7 +134,7 @@ test.describe('settings card', () => {
       await expect(page.getByText('Wipe all data?')).toBeVisible()
 
       // Cancel — no DELETE /api/state should fire.
-      const deleteStarted = page.waitForResponse((res) => res.url().includes('/api/state') && res.request().method() === 'DELETE', { timeout: 1000 }).catch(() => null)
+      const deleteStarted = page.waitForResponse((res) => res.url().includes('/api/state') && res.request().method() === 'DELETE', { timeout: ciTimeout(1000) }).catch(() => null)
       await page.getByTestId('settings-cancel').click()
       await expect(page.getByText('Wipe all data?')).toHaveCount(0)
 

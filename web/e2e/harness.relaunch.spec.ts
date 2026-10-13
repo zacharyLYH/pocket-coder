@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, test } from './test'
+import { ciTimeout, expect, type APIRequestContext, test } from './test'
 import { createProject, deleteAllProjects, engineUp, projectURL, resetHarnessRegistry, terminalUrl, waitForRunning } from './helpers'
 
 // Read a marker file's mtime from inside the container. Returns 0 if absent.
@@ -14,7 +14,7 @@ test.describe('harness relaunch', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('restart and re-entry relaunch dead harness sessions', async ({ page, request }) => {
-    test.setTimeout(300_000)
+    test.setTimeout(ciTimeout(300_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -50,8 +50,8 @@ test.describe('harness relaunch', () => {
 
       // Navigate to terminal and attach via UI
       await page.goto(terminalUrl(id, sessionName.name))
-      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
+      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(15_000) })
 
       // Wait for harness to start and write its marker
       await page.waitForTimeout(2000)
@@ -69,7 +69,7 @@ test.describe('harness relaunch', () => {
       // Restart
       await page.getByTestId('terminal-actions-trigger').click()
       await page.getByTestId('terminal-action-restart').click()
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(15_000) })
 
       // Wait for harness to restart and write a new marker
       await page.waitForTimeout(2000)
@@ -86,8 +86,8 @@ test.describe('harness relaunch', () => {
       await page.goto(terminalUrl(id, sessionName.name))
       // The ensure path runs LaunchNamed (validateCLI + tmux create),
       // which can take ~20s. Be generous.
-      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 30_000 })
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 20_000 })
+      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(30_000) })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(20_000) })
 
       // Wait for dead-session cleanup + harness relaunch
       await page.waitForTimeout(3000)

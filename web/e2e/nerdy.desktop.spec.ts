@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { mockNerdy, terminalUrl, PROJECT } from './nerdy.fixtures'
 
@@ -13,7 +13,7 @@ test.describe('nerdy stuff (desktop)', () => {
     await page.getByTestId('tab-nerdy').click()
     // Nerdy Stuff lands on Overview; switch to Runtime for the tail.
     await page.getByTestId('nerdy-panel-runtime').click()
-    await expect(page.getByTestId('nerdy-list')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByTestId('nerdy-list')).toBeVisible({ timeout: ciTimeout(10_000) })
   })
 
   test('tail → facet rail → expand → load older → follow', async ({ page }) => {

@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createRunningViteProjectOnPort, openPreviewFromTerminal, reactFiles, statusToken, tokenHeaders } from './preview.helpers'
@@ -15,7 +15,7 @@ test.describe('preview non-default port', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('sidecar loads app on :4001 (cfg.Port → BROWSER_TARGET)', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -37,7 +37,7 @@ test.describe('preview non-default port', () => {
 
       // Frontend proof: PreviewSurface mounted the noVNC iframe.
       const iframe = previewPage.locator('iframe[title="Remote project preview"]')
-      await expect(iframe).toBeVisible({ timeout: 30_000 })
+      await expect(iframe).toBeVisible({ timeout: ciTimeout(30_000) })
       await expect(iframe).toHaveAttribute(
         'src',
         new RegExp(`/api/projects/${projectURL(projectID)}/preview/vnc_lite\\.html`),
@@ -48,7 +48,7 @@ test.describe('preview non-default port', () => {
       // Playwright but its visibility is the signal that the sidecar is
       // up and the page didn't crash mid-mount).
       const canvas = iframe.contentFrame().locator('canvas').first()
-      await expect(canvas).toBeVisible({ timeout: 60_000 })
+      await expect(canvas).toBeVisible({ timeout: ciTimeout(60_000) })
 
       // Backend proof: the sidecar's browser fetched the app from :4001
       // (not the historical :3000), so the rendered HTML is the fixture
@@ -79,7 +79,7 @@ test.describe('preview non-default port', () => {
       // fit-to-window sync. No crash + iframe still present = page works.
       await iframe.contentFrame().locator('body').evaluate((b) => b.scrollTo(0, 0)).catch(() => {})
       await page.setViewportSize({ width: 1024, height: 768 })
-      await expect(iframe).toBeVisible({ timeout: 5_000 })
+      await expect(iframe).toBeVisible({ timeout: ciTimeout(5_000) })
       expect(consoleErrors).toEqual([])
 
       await previewPage.close()

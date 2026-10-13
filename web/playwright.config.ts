@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test'
 
-import { API_PORT, AUTH_STATE, COMPOSE_PROJECT, DATA_DIR, RUN_DIR, SEED_KIND, SERVER_LOG, WEB_PORT } from './e2e/env'
+import { API_PORT, AUTH_STATE, COMPOSE_PROJECT, DATA_DIR, RUN_DIR, SEED_KIND, SERVER_LOG, WEB_PORT, ciTimeout } from './e2e/env'
 
 // One real backend for every test. Each Playwright process boots its own Go
 // server + Vite dev server as webServers (needs the Go toolchain + a running
@@ -43,18 +43,23 @@ export default defineConfig({
   outputDir: RUN_DIR,
   globalSetup: './e2e/global-setup.ts',
   globalTeardown: './e2e/global-teardown.ts',
-  // Generous default: journeys do synchronous project-image builds and real
-  // npm installs, and e2e-parallel.sh stacks FOUR groups (each with its own
-  // Go server, Vite, and browser) on one machine — an unrelated group's
-  // docker build can stall another group's API calls past the 30s default.
-  // Specs needing more (the OpenCode TUI journey) raise their own budget.
-  timeout: 180_000,
+   // timeout: journeys do synchronous project-image builds and real npm
+   // installs, and e2e-parallel.sh stacks FOUR groups (each with its own Go
+   // server, Vite, and browser) on one machine — an unrelated group's docker
+   // build can stall another group's API calls past the 30s default. Scaled
+   // up under CI (shared runners) via ciTimeout; see e2e/env.ts. Specs needing
+   // more (the OpenCode TUI journey) raise their own budget.
+   timeout: ciTimeout(180_000),
   // One baseline per shot, no browser/platform suffix — the same PNGs serve
   // local macOS runs and Linux CI. maxDiffPixelRatio absorbs cross-OS font
   // rasterization noise; the visual suite guards responsive layout, not
   // pixel-perfect fonts.
   snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}',
   expect: {
+    // Default expect-patience (locator visibility/count/etc.) — 5s locally
+    // (Playwright's default), 2× that under CI where Vite cold-starts and
+    // project-card mounts are slower. Catches the bare `toBeVisible()` waits.
+    timeout: ciTimeout(5_000),
     toHaveScreenshot: {
       maxDiffPixelRatio: 0.07,
       animations: 'disabled',
@@ -106,7 +111,8 @@ export default defineConfig({
       // Boot now BLOCKS on the bootstrap pass (container recreate + harness
       // installs, e.g. a real npm download for the bootstrap seed), so the
       // stack can legitimately take minutes to answer /health on a cold run.
-      timeout: 420_000,
+      // Scaled up under CI via ciTimeout — cold image builds are slower there.
+      timeout: ciTimeout(420_000),
       stdout: 'ignore' as const,
       stderr: 'pipe' as const,
     },
@@ -119,7 +125,7 @@ export default defineConfig({
       command: `VITE_PREVIEW_HEARTBEAT_MS=5000 PCODER_SERVER_URL=http://127.0.0.1:${API_PORT} npm run dev -- --port ${WEB_PORT} --strictPort`,
       url: `http://localhost:${WEB_PORT}`,
       reuseExistingServer: false,
-      timeout: 60_000,
+      timeout: ciTimeout(60_000),
     },
   ],
 })

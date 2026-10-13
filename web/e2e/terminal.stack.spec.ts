@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp, fetchEvents } from './helpers'
 
 test.describe.configure({ mode: 'serial' })
@@ -35,12 +35,12 @@ test('create a project in the UI, open its terminal, type', async ({ page }) => 
 
     // --- open the terminal: this must work with NO session ever created ---
     await terminalButtons.click()
-    await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
+    await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(10_000) })
 
     await page.keyboard.type('echo journey7\n')
     await expect
-      .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 15_000 })
+      .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: ciTimeout(15_000) })
       .toContain('journey7')
 
     // visual screenshots — desktop and phone variants of the same terminal
@@ -69,7 +69,7 @@ test('create a project in the UI, open its terminal, type', async ({ page }) => 
 // artifact so a real OpenCode rendering can be inspected or compared against
 // the expected UI.
 test('real OpenCode session renders through the backend terminal bridge', async ({ page }, testInfo) => {
-  test.setTimeout(600_000)
+  test.setTimeout(ciTimeout(600_000))
   await page.goto('/app')
 
   if (!(await engineUp(page.request))) {
@@ -89,12 +89,12 @@ test('real OpenCode session renders through the backend terminal bridge', async 
     const row = hdialog.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
     // Scoped dialog: Install hits this project directly, no picker.
     await row.getByRole('button', { name: 'Install', exact: true }).click()
-    await expect(hdialog.getByText('Installed.')).toBeVisible({ timeout: 300_000 })
+    await expect(hdialog.getByText('Installed.')).toBeVisible({ timeout: ciTimeout(300_000) })
     await page.keyboard.press('Escape')
-    await expect(hdialog).not.toBeVisible({ timeout: 5_000 })
+    await expect(hdialog).not.toBeVisible({ timeout: ciTimeout(5_000) })
 
     await page.getByRole('button', { name: 'Terminal' }).click()
-    await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(15_000) })
 
     await page.getByTestId('tab-new').click()
     const dialog = page.getByRole('dialog')
@@ -102,10 +102,10 @@ test('real OpenCode session renders through the backend terminal bridge', async 
     await dialog.locator('select').selectOption('opencode')
     await dialog.getByRole('button', { name: 'Create & Attach' }).click()
 
-    await expect(dialog).not.toBeVisible({ timeout: 240_000 })
+    await expect(dialog).not.toBeVisible({ timeout: ciTimeout(240_000) })
     const opencodeTab = page.getByTestId('tab-session-opencode-1')
-    await expect(opencodeTab).toContainText('opencode-1', { timeout: 30_000 })
-    await expect(page.getByText('Connected')).toBeVisible({ timeout: 30_000 })
+    await expect(opencodeTab).toContainText('opencode-1', { timeout: ciTimeout(30_000) })
+    await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(30_000) })
     await expect(page.locator('.xterm-screen')).toBeVisible()
 
     // Exercise the same tab interaction as the reported naming bug,
@@ -115,9 +115,9 @@ test('real OpenCode session renders through the backend terminal bridge', async 
     await expect(page.getByTestId('tab-session-main')).toHaveAttribute('aria-selected', 'true')
     await opencodeTab.click()
     await expect(opencodeTab).toHaveAttribute('aria-selected', 'true')
-    await expect(page.getByText('Connected')).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(30_000) })
     await expect
-      .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: 60_000 })
+      .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: ciTimeout(60_000) })
       .toMatch(/Build|Connect|Ask anything/)
     await page.waitForTimeout(2_000)
     await page.screenshot({ path: testInfo.outputPath('opencode-real-backend.png'), fullPage: true })

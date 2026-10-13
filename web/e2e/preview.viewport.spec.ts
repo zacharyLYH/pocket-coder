@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext } from './test'
+import { ciTimeout, expect, test, type APIRequestContext } from './test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createReactProject, openPreviewFromTerminal, waitForChromiumFit, pngSize, statusToken, tokenHeaders } from './preview.helpers'
@@ -15,7 +15,7 @@ test.describe('preview chromium viewports', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('chromium desktop + phone viewports via CDP', async ({ page, request }, testInfo) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -74,7 +74,7 @@ test.describe('preview chromium viewports', () => {
   })
 
   test('chromium follows the preview window size', async ({ page, request }, testInfo) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return

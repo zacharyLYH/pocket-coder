@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
-import { expect, test, type Page } from './test'
+import { ciTimeout, expect, test, type Page } from './test'
 
 import { mockSessions } from './mocks'
 import { terminalUrl } from './helpers'
@@ -142,7 +142,7 @@ test.describe('butler live backend', () => {
       await expect(page.getByTestId('butler-pending')).toBeVisible()
       await expect(page).toHaveScreenshot('butler-live-streaming.png')
 
-      await expect(page.getByTestId('butler-answer')).toContainText('1 needs attention', { timeout: 15000 })
+      await expect(page.getByTestId('butler-answer')).toContainText('1 needs attention', { timeout: ciTimeout(15000) })
       await expect(page.getByTestId('butler-answer')).toContainText('Suggested next step')
       await expect(page).toHaveScreenshot('butler-live-answer.png')
 
@@ -176,7 +176,7 @@ test.describe('butler live backend', () => {
       await page.getByTestId('butler-prompt').fill('close the preview')
       await page.getByTestId('butler-send').click()
 
-      await expect(page.getByTestId('butler-confirm')).toBeVisible({ timeout: 15000 })
+      await expect(page.getByTestId('butler-confirm')).toBeVisible({ timeout: ciTimeout(15000) })
       await expect(page.getByTestId('butler-confirm-summary')).toContainText(`Close preview for ${FAKE_ID}?`)
       await expect(page.getByTestId('butler-confirm-blast')).toContainText('app server keeps running')
       await expect(page.getByTestId('butler-approval-block')).toBeVisible()
@@ -184,7 +184,7 @@ test.describe('butler live backend', () => {
 
       await page.getByTestId('butler-confirm-no').click()
       await expect(page.getByTestId('butler-confirm')).toHaveCount(0)
-      await expect(page.getByTestId('butler-prompt')).toBeEnabled({ timeout: 10000 })
+      await expect(page.getByTestId('butler-prompt')).toBeEnabled({ timeout: ciTimeout(10000) })
 
       // Server-side: the card resolved to discarded, the turn stayed put,
       // and the thread is back to ready with nothing applied.

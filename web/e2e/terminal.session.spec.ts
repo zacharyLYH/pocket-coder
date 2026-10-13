@@ -1,4 +1,4 @@
-import { expect, test, type Page } from './test'
+import { ciTimeout, expect, test, type Page } from './test'
 import { createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp } from './helpers'
 
 // Tests for the terminal session management UI — session dropdown, new
@@ -9,8 +9,8 @@ async function createProjectAndOpenTerminal(page: Page) {
   await page.goto('/app')
   const id = await createProjectViaUI(page, page.request, e2eRepo(1), e2eRepoID(1))
   await page.getByRole('button', { name: 'Terminal' }).click()
-  await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
+  await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(10_000) })
   return id
 }
 
@@ -73,11 +73,11 @@ test.describe('session switcher', () => {
     const row = hdialog.locator('div.flex.items-center.justify-between', { hasText: 'OpenCode' })
     // Scoped dialog: Install hits this project directly, no picker.
     await row.getByRole('button', { name: 'Install', exact: true }).click()
-    await expect(hdialog.getByText('Installed.')).toBeVisible({ timeout: 300_000 })
+    await expect(hdialog.getByText('Installed.')).toBeVisible({ timeout: ciTimeout(300_000) })
     await page.keyboard.press('Escape')
-    await expect(hdialog).not.toBeVisible({ timeout: 5_000 })
+    await expect(hdialog).not.toBeVisible({ timeout: ciTimeout(5_000) })
     await page.getByRole('button', { name: 'Terminal' }).click()
-    await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
 
     await page.getByTestId('tab-new').click()
     const dialog = page.getByRole('dialog')
@@ -99,7 +99,7 @@ test.describe('session deletion', () => {
   // it), and the deleted name disappears from the picker for good — unlike
   // kill, which keeps metadata for one-click relaunch.
   test('deleting the attached session lands on another session', async ({ page }) => {
-    test.setTimeout(300_000)
+    test.setTimeout(ciTimeout(300_000))
     test.skip(!(await engineUp(page.request)), 'Docker engine unavailable')
     await deleteAllProjects(page.request)
     try {
@@ -110,8 +110,8 @@ test.describe('session deletion', () => {
       const dialog = page.getByRole('dialog')
       await page.getByPlaceholder(/Tab name/).fill('dev')
       await dialog.getByRole('button', { name: 'Create & Attach' }).click()
-      await expect(dialog).not.toBeVisible({ timeout: 15_000 })
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+      await expect(dialog).not.toBeVisible({ timeout: ciTimeout(15_000) })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(10_000) })
 
       // stage 1: the strip shows both session tabs
       await expect(page.getByTestId('tab-session-main')).toBeVisible()
@@ -124,7 +124,7 @@ test.describe('session deletion', () => {
 
       // stage 3: landed on the other session, live again
       await expect(page.getByTestId('tab-session-main')).toHaveAttribute('aria-selected', 'true')
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(15_000) })
 
       // stage 4: the deleted session is gone from the strip for good
       await expect(page.getByTestId('tab-session-dev')).toHaveCount(0)
@@ -133,7 +133,7 @@ test.describe('session deletion', () => {
 
       // stage 5: refresh the page and ensure it doesn't resurrect (state.json metadata was deleted)
       await page.reload()
-      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
       await expect(page.getByTestId('tab-session-dev')).toHaveCount(0)
       await expect(page.getByTestId('tab-session-main')).toBeVisible()
     } finally {
@@ -148,7 +148,7 @@ test.describe('multiple sessions', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('creating a shell session adds it to the tab strip', async ({ page }) => {
-    test.setTimeout(300_000)
+    test.setTimeout(ciTimeout(300_000))
     test.skip(!(await engineUp(page.request)), 'Docker engine unavailable')
     await deleteAllProjects(page.request)
     try {
@@ -159,7 +159,7 @@ test.describe('multiple sessions', () => {
       const dialog = page.getByRole('dialog')
       await page.getByPlaceholder(/Tab name/).fill('dev')
       await dialog.getByRole('button', { name: 'Create & Attach' }).click()
-      await expect(dialog).not.toBeVisible({ timeout: 15_000 })
+      await expect(dialog).not.toBeVisible({ timeout: ciTimeout(15_000) })
 
       // the app switches to the new tab and both are listed in the strip
       await expect(page.getByTestId('tab-session-dev')).toHaveAttribute('aria-selected', 'true')
@@ -170,7 +170,7 @@ test.describe('multiple sessions', () => {
       // switching back to main reattaches for real — click the tab
       await page.getByTestId('tab-session-main').click()
       await expect(page.getByTestId('tab-session-main')).toHaveAttribute('aria-selected', 'true')
-      await expect(page.getByText('Connected')).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(10_000) })
     } finally {
       await deleteAllProjects(page.request)
     }

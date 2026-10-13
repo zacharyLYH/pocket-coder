@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 import { login } from './helpers'
 
 // Auth flows against the real backend. The suite shares one logged-in
@@ -18,7 +18,7 @@ test('shows the landing page at / when logged out', async ({ page }) => {
 test('shows the login form at /login when logged out', async ({ page }) => {
   await page.goto('/login')
   // Cold Vite + loaded CI can take a while for first paint + auth check.
-  await expect(page.getByPlaceholder('you@example.com')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByPlaceholder('you@example.com')).toBeVisible({ timeout: ciTimeout(30_000) })
   await expect(page.getByRole('button', { name: 'Send code' })).toBeVisible()
 })
 

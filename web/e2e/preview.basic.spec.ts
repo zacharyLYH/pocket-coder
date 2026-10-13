@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createReactProject, openPreviewFromTerminal, statusToken, tokenHeaders } from './preview.helpers'
@@ -7,7 +7,7 @@ test.describe('preview basic', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('full E2E: create project, terminal → Preview tab → Open, verify frontend+backend, interact, screenshot', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -19,7 +19,7 @@ test.describe('preview basic', () => {
 
       // ── Step 2: Verify project appears on home screen ──
       await page.goto('/app')
-      await expect(page.getByTestId(`project-card-${projectID}`)).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId(`project-card-${projectID}`)).toBeVisible({ timeout: ciTimeout(30_000) })
 
       // ── Step 3: Open preview via terminal → Preview tab → Open (new tab) ──
       const previewPage = await openPreviewFromTerminal(page, projectID)

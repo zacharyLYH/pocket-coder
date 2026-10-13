@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createReactProject, openPreviewFromTerminal, statusToken, tokenHeaders } from './preview.helpers'
@@ -26,7 +26,7 @@ test.describe('preview auth and isolation', () => {
   })
 
   test('project A cannot access project B preview', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return

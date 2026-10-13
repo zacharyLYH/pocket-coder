@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 
 import { deleteAllProjects, engineUp, projectURL } from './helpers'
 import { createReactProject, openPreviewFromTerminal, statusToken, tokenHeaders } from './preview.helpers'
@@ -7,7 +7,7 @@ test.describe('preview AI tools', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('screenshot returns a valid PNG via tools API', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -35,7 +35,7 @@ test.describe('preview AI tools', () => {
   })
 
   test('inspect returns page HTML via tools API', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -60,7 +60,7 @@ test.describe('preview AI tools', () => {
   })
 
   test('click and type interact with the remote browser', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -98,7 +98,7 @@ test.describe('preview AI tools', () => {
   })
 
   test('navigate and reload work through tools API', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -132,7 +132,7 @@ test.describe('preview AI tools', () => {
   })
 
   test('network tool reports resource requests', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -156,7 +156,7 @@ test.describe('preview AI tools', () => {
   })
 
   test('CDP screenshot matches display surface content', async ({ page, request }) => {
-    test.setTimeout(600_000)
+    test.setTimeout(ciTimeout(600_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return

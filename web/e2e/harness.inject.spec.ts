@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, type Page, test } from './test'
+import { ciTimeout, expect, type APIRequestContext, type Page, test } from './test'
 import { FAKE_HARNESS_ID, FAKE_HARNESS_NAME, createProjectViaUI, deleteAllProjects, e2eRepo, e2eRepoID, engineUp, ensureFakeHarness, projectURL } from './helpers'
 
 // The project-menu injection flow, end to end against the real backend:
@@ -59,7 +59,7 @@ test.describe('harness injection orchestration', () => {
       let dialog = await openHarnessDialog(page, a)
       const row = dialog.locator('div.flex.items-center.justify-between', { hasText: FAKE_HARNESS_NAME })
       await row.getByRole('button', { name: 'Install', exact: true }).click()
-      await expect(dialog.getByTestId(`harness-installed-${FAKE_HARNESS_ID}`)).toBeVisible({ timeout: 60_000 })
+      await expect(dialog.getByTestId(`harness-installed-${FAKE_HARNESS_ID}`)).toBeVisible({ timeout: ciTimeout(60_000) })
       await page.keyboard.press('Escape')
 
       expect(await fakeInstalled(page.request, a)).toBe(true)
@@ -76,7 +76,7 @@ test.describe('harness injection orchestration', () => {
       dialog = await openHarnessDialog(page, c)
       const row2 = dialog.locator('div.flex.items-center.justify-between', { hasText: FAKE_HARNESS_NAME })
       await row2.getByRole('button', { name: 'Install', exact: true }).click()
-      await expect(dialog.getByTestId(`harness-installed-${FAKE_HARNESS_ID}`)).toBeVisible({ timeout: 60_000 })
+      await expect(dialog.getByTestId(`harness-installed-${FAKE_HARNESS_ID}`)).toBeVisible({ timeout: ciTimeout(60_000) })
 
       expect(await fakeInstalled(page.request, c)).toBe(true)
       expect(await fakeInstalled(page.request, b)).toBe(false)
@@ -92,7 +92,7 @@ test.describe('harness injection orchestration', () => {
         if (id !== b) await page.getByLabel(`Run in ${id}`).uncheck()
       }
       await page.getByRole('button', { name: 'Run in checked projects' }).click()
-      await expect(page.getByText('Ran in 1 project.')).toBeVisible({ timeout: 60_000 })
+      await expect(page.getByText('Ran in 1 project.')).toBeVisible({ timeout: ciTimeout(60_000) })
 
       expect(await fakeInstalled(page.request, b)).toBe(true)
     } finally {

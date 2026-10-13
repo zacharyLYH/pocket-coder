@@ -1,4 +1,4 @@
-import { expect, test } from './test'
+import { ciTimeout, expect, test } from './test'
 import { createProject, deleteAllProjects, engineUp, projectURL } from './helpers'
 
 test.describe('shortcuts', () => {
@@ -13,7 +13,7 @@ test.describe('shortcuts', () => {
     try {
       const id = await createProject(request)
       await page.goto('/app')
-      await expect(page.getByTestId(`project-card-${id}`)).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByTestId(`project-card-${id}`)).toBeVisible({ timeout: ciTimeout(10_000) })
       const menu = page.getByTestId(`project-menu-${id}`)
       await expect(menu).toBeVisible()
       await menu.click()
@@ -30,7 +30,7 @@ test.describe('shortcuts', () => {
       // Instant save: the row appears, the dialog stays open.
       await expect(dialog.getByText('dev', { exact: true })).toBeVisible()
       await dialog.press('Escape')
-      await expect(dialog).not.toBeVisible({ timeout: 5_000 })
+      await expect(dialog).not.toBeVisible({ timeout: ciTimeout(5_000) })
       const get = await request.get(`/api/projects/${projectURL(id)}`)
       const body = (await get.json()) as { shortcuts: { alias: string; command: string }[] }
       expect(body.shortcuts.find((s) => s.alias === 'dev')?.command).toBe('npm run dev -- --host 0.0.0.0 --port 3000')
@@ -41,7 +41,7 @@ test.describe('shortcuts', () => {
   })
 
   test('Terminal Shortcuts button → run shortcut', async ({ page, request }) => {
-    test.setTimeout(60_000)
+    test.setTimeout(ciTimeout(60_000))
     if (!(await engineUp(request))) {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
@@ -51,9 +51,9 @@ test.describe('shortcuts', () => {
       const id = await createProject(request)
       await request.patch(`/api/projects/${projectURL(id)}`, { data: { shortcuts: [{ id: 's-hello', alias: 'hello', kind: 'cmd', command: 'echo hello-quick' }] } })
       await page.goto('/app')
-      await expect(page.getByTestId(`project-card-${id}`)).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByTestId(`project-card-${id}`)).toBeVisible({ timeout: ciTimeout(10_000) })
       await page.getByTestId(`project-card-${id}`).getByRole('button', { name: 'Terminal' }).click()
-      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: 15_000 })
+      await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
       await page.getByTestId('tab-shortcuts').click()
       const dialog = page.getByRole('dialog')
       await expect(dialog).toBeVisible()
@@ -61,8 +61,8 @@ test.describe('shortcuts', () => {
       await expect(dialog.getByTestId('sc-row-hello')).toBeVisible()
       await expect(page).toHaveScreenshot('shortcuts-modal-run.png')
       await dialog.getByTestId('sc-row-hello').click()
-      await expect(dialog).not.toBeVisible({ timeout: 5_000 })
-      await expect(page.locator('.xterm-rows')).toContainText('hello-quick', { timeout: 10_000 })
+      await expect(dialog).not.toBeVisible({ timeout: ciTimeout(5_000) })
+      await expect(page.locator('.xterm-rows')).toContainText('hello-quick', { timeout: ciTimeout(10_000) })
       await expect(page).toHaveScreenshot('shortcuts-inject.png', { fullPage: true })
     } finally {
       await deleteAllProjects(request)
@@ -99,11 +99,11 @@ test.describe('shortcuts', () => {
       await expect(dialog.getByText('echo a-updated')).toBeVisible()
       await dialog.getByTestId('sc-menu-b').click()
       await page.getByRole('menuitem', { name: 'Delete' }).click()
-      await expect(dialog.getByText('echo b')).not.toBeVisible({ timeout: 5_000 })
+      await expect(dialog.getByText('echo b')).not.toBeVisible({ timeout: ciTimeout(5_000) })
       // Row tap = run: alias + command wrap (no ellipsis) on narrow screens.
       await expect(dialog).toHaveScreenshot('shortcuts-update-wrapped.png')
       await dialog.press('Escape')
-      await expect(dialog).not.toBeVisible({ timeout: 5_000 })
+      await expect(dialog).not.toBeVisible({ timeout: ciTimeout(5_000) })
       const body = (await (await request.get(`/api/projects/${projectURL(id)}`)).json()) as { shortcuts: { alias: string; command: string }[] }
       expect(body.shortcuts.find((s) => s.alias === 'a')?.command).toBe('echo a-updated')
       expect(body.shortcuts.find((s) => s.alias === 'b')).toBeUndefined()

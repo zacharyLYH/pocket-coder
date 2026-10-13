@@ -1,4 +1,4 @@
-import { expect, test, type Page } from './test'
+import { ciTimeout, expect, test, type Page } from './test'
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
@@ -279,7 +279,7 @@ test.describe('codemap desktop', () => {
         await page.getByTestId('codemap-history-toggle').click()
       }
       await expect(page.getByTestId('codemap-thread-item')).toHaveCount(1)
-    }).toPass({ timeout: 10_000 })
+    }).toPass({ timeout: ciTimeout(10_000) })
     await expect(page.getByTestId('codemap-thread-list')).toContainText('Map this repo')
   })
 
@@ -419,9 +419,9 @@ test.describe('codemap desktop', () => {
     // The run finishes elsewhere: no reload, the tab picks it up.
     turn = filled
     running = null
-    await expect(page.getByTestId('codemap-spinner')).toHaveCount(0, { timeout: 20000 })
-    await expect(page.getByText('PIN login lives in the auth package')).toBeVisible({ timeout: 20000 })
-    await expect(page.getByTestId('codemap-prompt')).toBeEnabled({ timeout: 20000 })
+    await expect(page.getByTestId('codemap-spinner')).toHaveCount(0, { timeout: ciTimeout(20000) })
+    await expect(page.getByText('PIN login lives in the auth package')).toBeVisible({ timeout: ciTimeout(20000) })
+    await expect(page.getByTestId('codemap-prompt')).toBeEnabled({ timeout: ciTimeout(20000) })
   })
 
   test('crashed placeholder renders failed with enabled retry', async ({ page }) => {
@@ -635,15 +635,15 @@ test.describe('codemap live backend', () => {
 
       // The user's own bubble renders from the reserved placeholder right
       // away — the wait never looks like a bare loading state.
-      await expect(page.getByTestId('codemap-turn')).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId('codemap-turn')).toBeVisible({ timeout: ciTimeout(30_000) })
       await expect(page.getByTestId('codemap-turn')).toContainText(PROMPT)
       await expect(page.getByTestId('codemap-spinner')).toBeVisible()
       await expect(page).toHaveScreenshot('codemap-live-pending.png')
 
       // Completion lands via the 3s poll with no reload: spinner gone,
       // grounded answer in, composer re-enabled.
-      await expect(page.getByTestId('codemap-spinner')).toHaveCount(0, { timeout: 120_000 })
-      await expect(page.getByText('hello.txt says hi')).toBeVisible({ timeout: 120_000 })
+      await expect(page.getByTestId('codemap-spinner')).toHaveCount(0, { timeout: ciTimeout(120_000) })
+      await expect(page.getByText('hello.txt says hi')).toBeVisible({ timeout: ciTimeout(120_000) })
       await expect(page.getByTestId('codemap-prompt')).toBeEnabled()
       await expect(page).toHaveScreenshot('codemap-live-answer.png')
 
