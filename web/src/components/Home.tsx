@@ -25,7 +25,7 @@ import { useProjects } from '@/hooks/useProjects'
 export function Home({ email, onLogout, navigate }: {
   email: string; onLogout: () => void; navigate: (to: string) => void
 }) {
-  const { projects, loading, error, refresh } = useProjects()
+  const { projects, loading, error, refresh, removeProject } = useProjects()
   const [busy, setBusy] = useState(false)
   // The gate unlocks straight from a passed Test; checkSsh only runs on
   // mount and after a regenerate.
@@ -90,7 +90,7 @@ export function Home({ email, onLogout, navigate }: {
         )}
         {ssh === 'ok' && (
           <>
-            <ProjectsCard projects={projects} loading={loading} error={error} refresh={refresh} navigate={navigate} onBusy={setBusy} />
+            <ProjectsCard projects={projects} loading={loading} error={error} refresh={refresh} navigate={navigate} onBusy={setBusy} onRemoved={removeProject} />
             <Card className="gap-2 py-4">
               <CardHeader className="px-4">
                 <div className="flex items-center gap-2">

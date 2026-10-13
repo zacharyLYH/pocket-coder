@@ -21,7 +21,7 @@ import (
 // ProjectImage is the shared project image; the tag version bumps
 // whenever the embedded Dockerfile changes, so engines holding an older
 // build rebuild it.
-const ProjectImage = "pcoder-project:v3"
+const ProjectImage = "pcoder-project:v4"
 
 const (
 	repoTarget = "/workspace"

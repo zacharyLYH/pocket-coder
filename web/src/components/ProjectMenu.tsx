@@ -11,16 +11,22 @@ import type { Project } from '@/lib/types'
 
 // Per-project menu: shortcuts + harnesses live here, not on home.
 // The row itself navigates; this menu holds the rest.
-export function ProjectMenu({ project, onChanged, navigate }: {
-  project: Project; onChanged: () => void; navigate: (to: string) => void
+export function ProjectMenu({ project, onChanged, onRemove, navigate }: {
+  project: Project; onChanged: () => void; onRemove: (id: string) => void; navigate: (to: string) => void
 }) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [harnessOpen, setHarnessOpen] = useState(false)
   const [harnessBusy, setHarnessBusy] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  // Optimistic delete: drop the row now so the user sees it go instead of
+  // waiting on the round-trip, then reconcile with the server either way.
+  // onChanged refetches, which restores the row if the delete actually
+  // failed — so a failure never silently hides a still-live project.
   async function confirmDelete() {
     setDeleteOpen(false)
-    try { await api(projectPath(project.id, '?scope=all'), { method: 'DELETE' }); await onChanged() } catch { /* next refresh shows truth */ }
+    onRemove(project.id)
+    try { await api(projectPath(project.id, '?scope=all'), { method: 'DELETE' }) } catch { /* refresh shows truth */ }
+    await onChanged()
   }
   const installed = project.harnesses?.length ?? 0
   return (

@@ -224,6 +224,11 @@ func handleDeleteProject(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		defer obsFailAt(r, obs.ProjectDelete, "delete project failed", &err, nil)()
+		// A delete must finish once the user asked for it: refreshed or
+		// closed tabs cancel the request context, which used to abort the
+		// container remove mid-flight and leave the record in state.json,
+		// so the project came back on the next refresh.
+		r = detached(r)
 		stopPreview(r.Context(), d, r.PathValue("id"))
 		scope := project.Scope(r.URL.Query().Get("scope"))
 		if scope == "" {

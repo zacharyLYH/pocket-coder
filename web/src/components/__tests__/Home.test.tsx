@@ -10,6 +10,7 @@ vi.mock('@/hooks/useProjects', () => ({
     loading: false,
     error: null,
     refresh: vi.fn(async () => {}),
+    removeProject: vi.fn(),
   }),
 }))
 

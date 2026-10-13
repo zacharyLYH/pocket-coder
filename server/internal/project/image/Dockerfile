@@ -6,6 +6,9 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TERM=xterm-256color
+# Installers (e.g. kiro) land binaries in ~/.local/bin; without it on PATH
+# the server's non-interactive `bash -lc` probes never find them.
+ENV PATH="/root/.local/bin:${PATH}"
 
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends git tmux iproute2 openssh-client ca-certificates busybox curl unzip universal-ctags nodejs npm python3 python3-pip \

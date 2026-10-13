@@ -24,5 +24,13 @@ export function useProjects() {
     refresh()
   }, [refresh])
 
-  return { projects, loading, error, refresh }
+  // removeProject drops one row immediately (optimistic delete) so the
+  // project disappears from home the moment the user confirms, instead of
+  // waiting on the round-trip. The caller refetches after the server
+  // answers, which restores the row if the delete actually failed.
+  const removeProject = useCallback((id: string) => {
+    setProjects((prev) => prev.filter((p) => p.id !== id))
+  }, [])
+
+  return { projects, loading, error, refresh, removeProject }
 }

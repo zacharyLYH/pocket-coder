@@ -11,10 +11,11 @@ import { ProjectMenu } from '@/components/ProjectMenu'
 // in the per-project menu; the clone form hides in a disclosure. Every
 // clone runs over the server deploy key — HTTPS and SSH pastes alike,
 // normalized server-side.
-export function ProjectsCard({ projects, loading, error, refresh, navigate, onBusy }: {
+export function ProjectsCard({ projects, loading, error, refresh, navigate, onBusy, onRemoved }: {
   projects: Project[]; loading: boolean; error: string | null; refresh: () => Promise<void>
   navigate: (to: string) => void
   onBusy?: (b: boolean) => void
+  onRemoved: (id: string) => void
 }) {
   const [repoUrl, setRepoUrl] = useState('')
   const [creating, setCreating] = useState(false)
@@ -45,7 +46,7 @@ export function ProjectsCard({ projects, loading, error, refresh, navigate, onBu
               <span className="block truncate font-medium underline-offset-4 hover:underline">{p.id.split('/')[1] ?? p.id}</span>
               <span className="block truncate font-mono text-xs text-muted-foreground">{p.id}</span>
             </button>
-            <ProjectMenu project={p} onChanged={() => { void refresh() }} navigate={navigate} />
+            <ProjectMenu project={p} onChanged={() => { void refresh() }} onRemove={onRemoved} navigate={navigate} />
           </div>
         ))}
         <details className="mx-2 mt-1 rounded-xl bg-muted/50" {...(projects.length === 0 ? { open: true } : {})}>

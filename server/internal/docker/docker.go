@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	dockerclient "github.com/fsouza/go-dockerclient"
@@ -153,13 +155,49 @@ func isAlreadyStopped(err error) bool {
 }
 
 // Remove removes a container and its volumes. Removing an already-removed
-// container is not an error (idempotent delete).
+// container is not an error (idempotent delete). A removal that is already
+// in flight (the engine's 409 conflict) is waited out: a second delete of
+// the same project — a retry, a double-tap, or a concurrent cleanup — must
+// not fail on that transient overlap and leave the project half-deleted.
 func (d *Docker) Remove(ctx context.Context, id string, force bool) error {
-	err := d.c.RemoveContainer(dockerclient.RemoveContainerOptions{ID: id, Force: force, RemoveVolumes: true, Context: ctx})
-	if err != nil && !isNotFound(err) {
-		return fmt.Errorf("remove container %s: %w", id, err)
+	deadline := time.Now().Add(removeWait)
+	for {
+		err := d.c.RemoveContainer(dockerclient.RemoveContainerOptions{ID: id, Force: force, RemoveVolumes: true, Context: ctx})
+		if err == nil || isNotFound(err) {
+			return nil
+		}
+		if !isRemovalInProgress(err) {
+			return fmt.Errorf("remove container %s: %w", id, err)
+		}
+		// The engine is finishing an earlier removal of this container;
+		// wait briefly and re-check rather than reporting a conflict. The
+		// wait is bounded so a permanently-stuck removal still surfaces.
+		if time.Now().After(deadline) {
+			return fmt.Errorf("remove container %s: %w", id, err)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("remove container %s: %w", id, ctx.Err())
+		case <-time.After(removeRetryDelay):
+		}
 	}
-	return nil
+}
+
+const (
+	// removeRetryDelay spaces retries while an earlier removal finishes.
+	removeRetryDelay = 200 * time.Millisecond
+	// removeWait bounds the whole wait for an in-flight removal.
+	removeWait = 30 * time.Second
+)
+
+// isRemovalInProgress reports Docker's 409 conflict, returned while another
+// removal of the same container is still finishing.
+func isRemovalInProgress(err error) bool {
+	var de *dockerclient.Error
+	if !errors.As(err, &de) || de.Status != http.StatusConflict {
+		return false
+	}
+	return strings.Contains(de.Message, "already in progress")
 }
 
 // Inspect returns the container's current state.

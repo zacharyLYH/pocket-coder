@@ -2,11 +2,35 @@ package docker
 
 import (
 	"archive/tar"
+	"fmt"
 	"io"
 	"testing"
 
 	dockerclient "github.com/fsouza/go-dockerclient"
 )
+
+// A concurrent removal of the same container surfaces as the engine's 409
+// "already in progress"; Remove must recognise it and wait it out instead of
+// failing the delete. Any other conflict (e.g. a forced-remove refusal) is
+// NOT this case and must still be reported.
+func TestIsRemovalInProgress(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"engine race", &dockerclient.Error{Status: 409, Message: "removal of container abc is already in progress"}, true},
+		{"wrapped race", fmt.Errorf("remove container abc: %w", &dockerclient.Error{Status: 409, Message: "removal of container abc is already in progress"}), true},
+		{"other conflict", &dockerclient.Error{Status: 409, Message: "container is marked for removal and cannot be started"}, false},
+		{"not found", &dockerclient.Error{Status: 404, Message: "No such container: abc"}, false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		if got := isRemovalInProgress(tc.err); got != tc.want {
+			t.Errorf("%s: isRemovalInProgress = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
 
 func TestContainerOptionsDefaults(t *testing.T) {
 	opts := containerOptions(t.Context(), Spec{Name: "pcoder-x", Image: "img"})

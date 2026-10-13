@@ -19,6 +19,7 @@ describe('ProjectsCard', () => {
       error: null,
       refresh: vi.fn(async () => {}),
       navigate: vi.fn(),
+      onRemoved: vi.fn(),
       ...over,
     }
     const utils = render(<ProjectsCard {...props} />)
