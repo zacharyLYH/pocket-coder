@@ -77,12 +77,22 @@ test.describe('terminal scroll', () => {
 })
 
 // Regression pin for the mobile bug: xterm has no touch scrolling of its
-// own, so the pane bridges a one-finger drag into scrollLines calls — and
-// the terminal opts out of the document-level pull handler so the drag never
-// reloads the page.
+// own. Prod is `tmux attach` (alternate screen, no scrollback), so the pane
+// bridges a one-finger drag into SGR mouse-wheel input (64 = wheel-up,
+// 65 = wheel-down) — the same bytes a trusted desktop wheel produces — and
+// tmux scrolls copy-mode with `mouse on`. The old scrollLines-only bridge
+// passed a plain-output mock yet no-op'd on real phones, so this spec pins
+// the wire bytes (not the viewport) and asserts scrollLines never runs on
+// the alternate buffer. The terminal opts out of the document-level pull
+// handler so the drag never reloads the page.
 test.describe('terminal scroll (mobile)', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
 
+  // Same helper shape as the desktop long-output spec — emits plain lines.
+  // Prod wraps these in `tmux attach` (alternate screen); scrolling then
+  // happens server-side in copy-mode, so the `.xterm-rows` viewport is NOT
+  // expected to change here. What matters is the client→server SGR wheel
+  // reports that drive that server-side scroll.
   async function touchDrag(page: import('@playwright/test').Page, deltaY: number) {
     await page.evaluate((dy) => {
       const screen = document.querySelector('.xterm-screen') as HTMLElement
@@ -100,15 +110,19 @@ test.describe('terminal scroll (mobile)', () => {
     }, deltaY)
   }
 
-  test('one-finger drag scrolls the pane instead of refreshing', async ({ page }) => {
+  test('one-finger drag sends SGR mouse-wheel input instead of refreshing', async ({ page }) => {
     await mockSessions(page)
 
+    const clientFrames: string[] = []
     await page.routeWebSocket(/\/ws\/projects\//, (ws) => {
       let serverSent = false
-      ws.onMessage(() => {
+      ws.onMessage((msg) => {
+        clientFrames.push(msg.toString())
         if (!serverSent) {
           serverSent = true
-          ws.send(JSON.stringify({ type: 'output', data: lines(1, 200) }))
+          // Enter alternate screen like `tmux attach` does, then emit output:
+          // scrollLines is a noop here by design, scroll lives in tmux.
+          ws.send(JSON.stringify({ type: 'output', data: '\x1b[?1049h' + lines(1, 200) }))
         }
       })
     })
@@ -117,21 +131,25 @@ test.describe('terminal scroll (mobile)', () => {
     await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
     const rows = page.locator('.xterm-rows')
     await expect.poll(() => rows.innerText(), { timeout: ciTimeout(15_000) }).toContain('SCROLL-LINE-200')
-    const bottomText = await rows.innerText()
 
     // The pane opts out of the document-level pull handler.
     const optedOut = await page.evaluate(() => !!document.querySelector('.xterm-screen')?.closest('[data-no-pull-refresh]'))
     expect(optedOut).toBe(true)
 
-    // Drag down reveals earlier output…
+    // Drag down → wheel-up reports (64) reveal earlier output in tmux…
+    const framesBefore = clientFrames.length
     await touchDrag(page, 300)
-    await expect.poll(() => rows.innerText(), { timeout: ciTimeout(10_000) }).not.toEqual(bottomText)
-    const scrolledText = await rows.innerText()
-    expect(scrolledText).not.toContain('SCROLL-LINE-200')
+    await expect.poll(() => clientFrames.filter((f) => f.includes('"input"') && f.includes('\\u001b[<64;')).length, { timeout: ciTimeout(10_000) }).toBeGreaterThan(0)
+    // …never arrow-key leaks (the original desktop scroll bug)…
+    const downInputs = clientFrames.slice(framesBefore).filter((f) => f.includes('"input"'))
+    expect(downInputs.filter((f) => f.includes('\\u001b[A') || f.includes('\\u001b[B'))).toEqual([])
+    // …and never scrollLines-shaped silence: every notch must emit input.
+    expect(downInputs.length).toBeGreaterThan(0)
     await expect(page).toHaveScreenshot('terminal-scroll-mobile.png')
 
-    // …and dragging back down returns to the latest output.
+    // …and pushing back up sends wheel-down reports (65).
+    const framesBeforeUp = clientFrames.length
     await touchDrag(page, -300)
-    await expect.poll(() => rows.innerText(), { timeout: ciTimeout(10_000) }).toContain('SCROLL-LINE-200')
+    await expect.poll(() => clientFrames.slice(framesBeforeUp).filter((f) => f.includes('"input"') && f.includes('\\u001b[<65;')).length, { timeout: ciTimeout(10_000) }).toBeGreaterThan(0)
   })
 })

@@ -64,11 +64,17 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
 
   // Mobile scroll: xterm.js has no touch handling of its own — the pane is
   // a custom scroll element driven by wheel events only, so a one-finger
-  // drag did nothing. Translate a vertical drag into xterm's own scrollLines
-  // API (negative = earlier output, positive = newer). This deliberately
-  // does NOT synthesize WheelEvents: xterm 6's smooth-scroll pipeline drops
-  // untrusted wheel events, so the old wheel-bridge never scrolled. Desktop
-  // wheel is untouched (no wheel listener here) — only touch is bridged.
+  // drag did nothing. A vertical drag is bridged per buffer mode:
+  // - normal buffer: xterm's own scrollLines API (negative = earlier
+  //   output, positive = newer).
+  // - alternate buffer (`tmux attach` in prod): there is no scrollback, so
+  //   scrollLines is a noop. Instead emit the same SGR mouse-wheel reports
+  //   a trusted wheel would produce (64 = wheel-up, 65 = wheel-down), sent
+  //   as input over the session socket so tmux scrolls copy-mode with
+  //   `mouse on`. This deliberately does NOT synthesize WheelEvents: xterm
+  //   6's smooth-scroll pipeline drops untrusted wheel events, so the old
+  //   wheel-bridge never scrolled. Desktop wheel is untouched (no wheel
+  //   listener here) — only touch is bridged.
   useEffect(() => {
     if (!hostRef.current) return
     const host: HTMLDivElement = hostRef.current
@@ -97,6 +103,36 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
       lastY = t.clientY
       const term = termRef.current
       if (!term) return
+      // Alternate screen (`tmux attach` in prod) has no scrollback:
+      // scrollLines is a noop there, so forward SGR mouse-wheel reports
+      // (64 = wheel-up, 65 = wheel-down) as input — the same bytes a
+      // trusted wheel produces, which tmux turns into copy-mode scrolls.
+      // Drag down reveals earlier output (wheel-up), push up reveals newer.
+      let alternate = false
+      try {
+        alternate = (term.buffer.active as unknown as { type?: string }).type === 'alternate'
+      } catch {
+        alternate = false
+      }
+      if (alternate) {
+        const ws = wsRef.current
+        if (!ws || ws.readyState !== WebSocket.OPEN) return
+        const cols = term.cols || 80
+        const rows = term.rows || 24
+        const rect = host.getBoundingClientRect()
+        const col = rect.width > 0
+          ? Math.min(cols, Math.max(1, Math.floor(((t.clientX - rect.left) / rect.width) * cols) + 1))
+          : 1
+        const row = rect.height > 0
+          ? Math.min(rows, Math.max(1, Math.floor(((t.clientY - rect.top) / rect.height) * rows) + 1))
+          : 1
+        while (Math.abs(accum) >= PX_PER_NOTCH) {
+          const step = accum > 0 ? PX_PER_NOTCH : -PX_PER_NOTCH
+          accum -= step
+          ws.send(JSON.stringify({ type: 'input', data: `\x1b[<${step > 0 ? 64 : 65};${col};${row}M` }))
+        }
+        return
+      }
       // Match finger travel to text lines from live geometry.
       const rows = term.rows || 1
       const pxPerLine = host.clientHeight / rows || 13
