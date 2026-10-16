@@ -83,12 +83,14 @@ func ThemeArgs() []string {
 		// (always true under `tmux attach`, which uses the alternate
 		// screen), so scrolling recalled shell history instead of scrolling.
 		";", "set-option", "-g", "mouse", "on",
-		// Status bar in the app palette: accent session name, dim chrome.
-		";", "set-option", "-g", "status-style", "bg=#0a0e14,fg=#b3b1ad",
-		";", "set-option", "-g", "status-left", "#[fg=#e6b450,bold]#S #[fg=#686868]",
-		";", "set-option", "-g", "status-right", "#[fg=#686868]#h #[fg=#b3b1ad]%H:%M",
-		";", "set-option", "-g", "window-status-style", "fg=#686868,bg=#0a0e14",
-		";", "set-option", "-g", "window-status-current-style", "fg=#e6b450,bg=#0a0e14",
+		// Status bar in the app palette (Tokyonight): accent session name,
+		// dim chrome — matches TERM_THEME in web/src/components/terminal/
+		// TerminalPane.tsx so the bar does not clash with the app theme.
+		";", "set-option", "-g", "status-style", "bg=#1a1b26,fg=#a9b1d6",
+		";", "set-option", "-g", "status-left", "#[fg=#7aa2f7,bold]#S #[fg=#565f89]",
+		";", "set-option", "-g", "status-right", "#[fg=#565f89]#h #[fg=#a9b1d6]%H:%M",
+		";", "set-option", "-g", "window-status-style", "fg=#565f89,bg=#1a1b26",
+		";", "set-option", "-g", "window-status-current-style", "fg=#7aa2f7,bg=#1a1b26",
 	}
 }
 

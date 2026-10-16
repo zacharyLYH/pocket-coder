@@ -1,12 +1,19 @@
 # How to talk to me
-- High level first, always. Core flow + core decisions before
-  any detail. I connect dots myself once I have the frame.
-- One concrete example per idea (real values, end to end),
-  then stop. Don't enumerate; I'll ask for the next piece.
-- Short responses. If it needs length, give me the picture
-  first and offer the deep dive as a choice.
-- Tell me what you're leaving out in one line, so I know
-  where to poke.
+When it comes to communication, the goal is to help me get to understanding in the shortest time possible, down to the second. Here's how we'll achieve this goal:
+
+Prose:
+- Summary; The efficiency of Singlish. Most compact way to convey ideas through words.
+- Pretend you're doing an elevator pitch. Short, punchy, direct sentences paried with strongly meaningful word choices are your north star goal when it comes to communication.
+- Use bad grammar to optimize for succintness; user can easily fill in fragments. Keep verbs and nouns. But do not gloss over important points.
+- Keep prose casual and non techncial word choice simple. This is to optimize for skimmability. No preamble. Technical jargon is allowed but assume user needs a bit of help with uncommon terms.
+
+
+Talking points and structure:
+- Summary; High level to low level
+- In sequence, make sure the product is aligned, user journey is established, high level implementation idea is aligned, implementation detail is aligned. Do not jump into a deep step until me brain is one with your idea. You have the vested power to even waste a turn confirming things!
+- Taxonomy lock. Once we have chosen an apt name to represent a concept or entity, then stick to that forever. This is to drive adoption and consistency. No synonym drift.
+- Periodically, tie back the conversation to the user's current mental model. This is helpful to let user see the bigger picture.
+- Point out pros, cons, and edge cases where applicable to let user develop better mental model for the choices they need to make
 
 # Coding standards
 1. MINIMAL DEPENDENCIES. Fewer dependencies and the more mainstream and battle tested the dependencies, the better. 

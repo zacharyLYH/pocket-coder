@@ -13,11 +13,12 @@ let wsInstances: MockWebSocket[] = []
 
 // Buffer mode drives the touch bridge: 'normal' has scrollback,
 // 'alternate' is `tmux attach` (no scrollback, tmux owns scroll via mouse).
-const { scrollLines, opened, opts, buf } = vi.hoisted(() => ({
+const { scrollLines, opened, opts, buf, write } = vi.hoisted(() => ({
   scrollLines: vi.fn(),
   opened: vi.fn(),
   opts: { v: null as Record<string, unknown> | null },
   buf: { type: 'normal' as 'normal' | 'alternate' },
+  write: vi.fn(),
 }))
 
 vi.mock('@xterm/xterm', () => ({
@@ -27,7 +28,7 @@ vi.mock('@xterm/xterm', () => ({
       open: opened,
       dispose: vi.fn(),
       focus: vi.fn(),
-      write: vi.fn(),
+      write,
       onData: vi.fn(),
       scrollLines,
       cols: 80,
@@ -52,6 +53,7 @@ beforeEach(() => {
   wsInstances = stubWebSocket()
   scrollLines.mockClear()
   opened.mockClear()
+  write.mockClear()
   opts.v = null
   buf.type = 'normal'
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver)
@@ -63,6 +65,78 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+})
+
+describe('TerminalPane liveness + spaciousness options', () => {
+  // The palette/typography/fit config is the whole "lively, not white on
+  // black" + "spacious, not cramped" change: pin it so a future option edit
+  // cannot silently drop it.
+  it('opens with the vibrant theme, airy weights and a 7px scrollbar budget', () => {
+    render(<TerminalPane projectId="abc" session="main" redial={0} fontSize={14} hostRef={hostRef()} onStatus={vi.fn()} onError={vi.fn()} />)
+    expect(opts.v).toEqual(expect.objectContaining({
+      fontWeight: '300',
+      fontWeightBold: '500',
+      lineHeight: 1.3,
+      drawBoldTextInBrightColors: true,
+      minimumContrastRatio: 4.5,
+      // 7px is both the rendered scrollbar width and FitAddon's column
+      // budget, so no 14px dead gutter is reserved.
+      overviewRuler: { width: 7 },
+      theme: expect.objectContaining({
+        background: '#1a1b26',
+        foreground: '#c0caf5',
+        green: '#9ece6a',
+        scrollbarSliderBackground: '#56576a',
+      }),
+    }))
+  })
+})
+
+describe('TerminalPane output coalescing', () => {
+  // One write per animation frame: a burst of PTY frames used to hit
+  // term.write() once per frame, which kept the parser and DOM renderer on
+  // the main thread for the whole burst.
+  it('coalesces a burst of output frames into a single write', async () => {
+    const scheduled: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { scheduled.push(cb); return scheduled.length })
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+    render(<TerminalPane projectId="abc" session="main" redial={0} fontSize={14} hostRef={hostRef()} onStatus={vi.fn()} onError={vi.fn()} />)
+    await new Promise((r) => setTimeout(r, 50))
+    wsInstances[0]?.open()
+    await new Promise((r) => setTimeout(r, 10))
+
+    const send = (data: string) => wsInstances[0]!.onmessage!({ data: JSON.stringify({ type: 'output', data }) } as MessageEvent)
+    for (let i = 0; i < 50; i++) send(`line-${i}\r\n`)
+
+    expect(scheduled.length).toBe(1) // one frame scheduled for 50 frames of output
+    expect(write).not.toHaveBeenCalled()
+    scheduled.shift()!(0)
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(write.mock.calls[0][0]).toContain('line-0')
+    expect(write.mock.calls[0][0]).toContain('line-49')
+    expect(scheduled.length).toBe(0) // nothing left over
+  })
+
+  it('drains queued output before the session-ended notice', async () => {
+    // rAF never fires here: the exit frame must flush the queue itself, or
+    // the last lines of a finished session are lost.
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+    render(<TerminalPane projectId="abc" session="main" redial={0} fontSize={14} hostRef={hostRef()} onStatus={vi.fn()} onError={vi.fn()} />)
+    await new Promise((r) => setTimeout(r, 50))
+    wsInstances[0]?.open()
+    await new Promise((r) => setTimeout(r, 10))
+
+    const send = (msg: unknown) => wsInstances[0]!.onmessage!({ data: JSON.stringify(msg) } as MessageEvent)
+    send({ type: 'output', data: 'tail-line\r\n' })
+    send({ type: 'exit', code: 1 })
+
+    const written = write.mock.calls.map(([d]) => d as string).join('')
+    expect(written).toContain('tail-line')
+    expect(written.indexOf('tail-line')).toBeLessThan(written.indexOf('session ended'))
+  })
 })
 
 describe('TerminalPane scroll behavior', () => {

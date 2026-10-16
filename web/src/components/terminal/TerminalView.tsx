@@ -5,7 +5,7 @@ import { api, errMsg, projectPath } from '@/lib/api'
 import type { Harness } from '@/lib/types'
 import { TerminalHeader } from '@/components/terminal/TerminalHeader'
 import { TerminalTabs, type FixedView } from '@/components/terminal/TerminalTabs'
-import { TerminalPane, type ConnStatus } from '@/components/terminal/TerminalPane'
+import { TerminalPane, TERM_THEME, type ConnStatus } from '@/components/terminal/TerminalPane'
 import { useAiConfig } from '@/hooks/useAiConfig'
 import { NewSessionDialog } from '@/components/terminal/NewSessionDialog'
 import { PreviewTab } from '@/components/terminal/PreviewTab'
@@ -278,7 +278,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
       <ShortcutsModal projectId={projectId} open={shortcutsOpen} onOpenChange={setShortcutsOpen} onRun={(s) => void runShortcut(s)} />
       {/* touch-action:none hands every gesture to TerminalPane's touch→scroll
           bridge; the browser must not start (and then cancel) a scroll. */}
-      <div className={`min-h-0 flex-1 overflow-hidden border bg-black p-2 shadow-sm mx-3 mb-3 rounded-xl [touch-action:none] ${tab === 'terminal' ? '' : 'hidden'}`} data-no-pull-refresh data-testid="terminal-pane-wrap">
+      <div style={{ backgroundColor: TERM_THEME.background }} className={`min-h-0 flex-1 overflow-hidden border p-2 shadow-sm mx-3 mb-3 rounded-xl [touch-action:none] ${tab === 'terminal' ? '' : 'hidden'}`} data-no-pull-refresh data-testid="terminal-pane-wrap">
         <div ref={hostRef} className="h-full w-full [touch-action:none]" />
         <TerminalPane
           projectId={projectId}

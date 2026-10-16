@@ -46,7 +46,7 @@ fi
 ALL_GROUPS='
 app|1|e2e/app.spec.ts e2e/preview.basic.spec.ts e2e/preview.hmr.spec.ts
 stack|2|e2e/terminal.stack.spec.ts
-sessions|3|e2e/terminal.session.spec.ts e2e/terminal.mobile.spec.ts e2e/terminal.scroll.spec.ts e2e/nerdy.mobile.spec.ts e2e/nerdy.desktop.spec.ts e2e/harness.inject.spec.ts e2e/harness.orchestration.spec.ts e2e/harness.relaunch.spec.ts e2e/diff.visual.spec.ts
+sessions|3|e2e/terminal.session.spec.ts e2e/terminal.mobile.spec.ts e2e/terminal.scroll.spec.ts e2e/terminal.liveness.spec.ts e2e/nerdy.mobile.spec.ts e2e/nerdy.desktop.spec.ts e2e/harness.inject.spec.ts e2e/harness.orchestration.spec.ts e2e/harness.relaunch.spec.ts e2e/diff.visual.spec.ts
 visual|4|e2e/home.visual.spec.ts e2e/settings.spec.ts e2e/codemap.spec.ts e2e/butler.spec.ts e2e/butler.live.spec.ts e2e/butler.confirm.spec.ts e2e/pulltorefresh.mobile.spec.ts e2e/git.mobile.spec.ts
 preview.a|5|e2e/preview.tools.spec.ts
 preview.b|6|e2e/preview.token.spec.ts

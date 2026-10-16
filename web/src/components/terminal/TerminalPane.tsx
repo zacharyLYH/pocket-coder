@@ -9,32 +9,38 @@ import { TERM_INPUT_EVENT } from '@/components/terminal/QuickKeys'
 
 export type ConnStatus = 'connecting' | 'live' | 'ended'
 
-// A dark theme that feels like a real terminal, not a default palette.
-// Kept in sync with the tmux status styling the server applies on session
-// create (ThemeArgs in server/internal/session/session.go).
-const TERM_THEME = {
-  background: '#0a0e14',
-  foreground: '#b3b1ad',
-  cursor: '#e6b450',
-  cursorAccent: '#0a0e14',
-  selectionBackground: '#273747',
-  selectionForeground: '#e6e4d9',
-  black: '#01060e',
-  red: '#ea6c73',
-  green: '#91b362',
-  yellow: '#f9af4f',
-  blue: '#53bdfa',
-  magenta: '#fae994',
-  cyan: '#90e1c6',
-  white: '#c7c7c7',
-  brightBlack: '#686868',
-  brightRed: '#f07178',
-  brightGreen: '#c2d94c',
-  brightYellow: '#ffb454',
-  brightBlue: '#59c2ff',
-  brightMagenta: '#ffee99',
-  brightCyan: '#95e6cb',
-  brightWhite: '#ffffff',
+// A vibrant dark theme (Tokyonight-ish): the server's tmux status styling
+// (ThemeArgs in server/internal/session/session.go) is tuned to sit next to
+// it. Muted greys on near-black read as dead text; saturated ANSI colours
+// make successful lines (green), failures (red) and paths (blue) pop.
+export const TERM_THEME = {
+  background: '#1a1b26',
+  foreground: '#c0caf5',
+  cursor: '#c0caf5',
+  cursorAccent: '#1a1b26',
+  selectionBackground: '#283247',
+  selectionForeground: '#c0caf5',
+  black: '#15161e',
+  red: '#f7768e',
+  green: '#9ece6a',
+  yellow: '#e0af68',
+  blue: '#7aa2f7',
+  magenta: '#bb9af7',
+  cyan: '#7dcfff',
+  white: '#a9b1d6',
+  brightBlack: '#414868',
+  brightRed: '#f7768e',
+  brightGreen: '#9ece6a',
+  brightYellow: '#e0af68',
+  brightBlue: '#7aa2f7',
+  brightMagenta: '#bb9af7',
+  brightCyan: '#7dcfff',
+  brightWhite: '#c0caf5',
+  // The 7px scrollbar (see `overviewRuler` below) needs its own colours or
+  // it falls back to a chrome-grey bar that fights the theme.
+  scrollbarSliderBackground: '#56576a',
+  scrollbarSliderHoverBackground: '#7aa2f7',
+  scrollbarSliderActiveBackground: '#7aa2f7',
 }
 
 // TerminalPane bridges one xterm.js instance to
@@ -176,20 +182,52 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
 
     const term = new Terminal({
       cursorBlink: true,
-      cursorStyle: 'bar',
+      cursorStyle: 'block',
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, "Cascadia Code", "Fira Code", monospace',
       fontSize,
+      // Light strokes + 1.3 line height: same content, more air per line.
+      fontWeight: '300',
+      fontWeightBold: '500',
       lineHeight: 1.3,
       letterSpacing: 0.3,
       theme: TERM_THEME,
       allowProposedApi: true,
       scrollback: 10000,
       scrollSensitivity: 2,
+      drawBoldTextInBrightColors: true,
+      // Guarantee readable foregrounds on any of the ANSI colours.
+      minimumContrastRatio: 4.5,
+      // ONE option, two wins: the vertical scrollbar renders 7px instead of
+      // the 14px default, AND FitAddon's column budget comes from the same
+      // value — so cols track the space actually available instead of
+      // reserving a 14px dead gutter (one extra column on a phone).
+      overviewRuler: { width: 7 },
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
     termRef.current = term
     fitRef.current = fit
+
+    // PTY output is coalesced into one xterm.write() per animation frame.
+    // An agent streaming test output sends hundreds of frames a second, and
+    // writing each one separately keeps the parser and the DOM renderer on
+    // the main thread for the whole burst — typing then lags behind.
+    let pending = ''
+    let raf = 0
+    function flush() {
+      raf = 0
+      if (!pending || disposed) return
+      const data = pending
+      pending = ''
+      term.write(data)
+    }
+    function enqueueWrite(data: string) {
+      pending += data
+      // A backgrounded tab pauses rAF: write through so a busy session
+      // cannot grow `pending` without bound.
+      if (pending.length > 64_000) { flush(); return }
+      if (!raf) raf = requestAnimationFrame(flush)
+    }
 
     const observer = new ResizeObserver(() => {
       if (!opened || !ws) return
@@ -239,9 +277,11 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
         // frame is ignored so one bad message never kills the terminal.
         const frame = parseTerminalFrame(ev.data as string)
         if (!frame) return
-        if (frame.type === 'output') term.write(frame.data ?? '')
+        if (frame.type === 'output') enqueueWrite(frame.data ?? '')
         if (frame.type === 'exit') {
           onStatus('ended')
+          // Drain first so the notice lands after every queued line.
+          flush()
           term.write(`\r\n\x1b[31m[session ended${frame.code ? ` (code ${frame.code})` : ''}]\x1b[0m\r\n`)
           ws!.close()
         }
@@ -258,6 +298,7 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
     observer.observe(hostRef.current!)
     return () => {
       disposed = true
+      cancelAnimationFrame(raf)
       observer.disconnect()
       ws?.close()
       if (wsRef.current === ws) wsRef.current = null
