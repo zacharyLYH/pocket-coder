@@ -15,6 +15,9 @@ var browserDockerfile []byte
 //go:embed image/start-browser
 var browserStartScript []byte
 
+//go:embed image/pcoder.html
+var browserEntryPage []byte
+
 type imageRuntime interface {
 	InspectImage(context.Context, string) error
 	Build(context.Context, docker.BuildOptions, io.Writer) error
@@ -33,5 +36,6 @@ func browserContext() io.Reader {
 	return docker.TarFiles(
 		docker.TarFile{Name: "Dockerfile", Mode: 0o644, Data: browserDockerfile},
 		docker.TarFile{Name: "start-browser", Mode: 0o755, Data: browserStartScript},
+		docker.TarFile{Name: "pcoder.html", Mode: 0o644, Data: browserEntryPage},
 	)
 }

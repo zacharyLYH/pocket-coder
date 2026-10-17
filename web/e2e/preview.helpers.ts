@@ -267,17 +267,21 @@ export async function openPreviewFromTerminal(page: Page, projectId: string, por
   return previewPage
 }
 
-// Wait for the RFB handshake, not a fixed sleep. vnc_lite sets #status to
-// "Connected to <host>" from the connect event (ServerInit received, canvas
-// allocated) and the first framebuffer update follows immediately — a shot
-// taken earlier shows only the connecting screen, which is exactly the flake
-// a blind sleep produces on a slow sidecar.
+// Wait for the RFB handshake, not a fixed sleep. The entry page sets #status
+// to "Connected to <host>" from the connect event (ServerInit received,
+// canvas allocated) and the first framebuffer update follows immediately — a
+// shot taken earlier shows only the connecting screen, which is exactly the
+// flake a blind sleep produces on a slow sidecar.
 async function waitForPreview(page: Page) {
   const surface = page.locator('iframe[title="Remote project preview"]').contentFrame()
   const canvas = surface.locator('#screen canvas').first()
   await expect(canvas).toBeVisible({ timeout: ciTimeout(60_000) })
-  const connectBtn = surface.locator('text=Connect')
-  if (await connectBtn.isVisible({ timeout: ciTimeout(5_000) }).catch(() => false)) {
+  // A stock noVNC page can render a Connect button when autoconnect is off.
+  // Match the BUTTON, never the status text: "Connecting"/"Connected to …"
+  // are substrings of a text=Connect locator, and our entry page hides its
+  // status, so clicking it would retry against an unclickable node forever.
+  const connectBtn = surface.getByRole('button', { name: 'Connect', exact: true })
+  if ((await connectBtn.count()) > 0) {
     await connectBtn.click()
   }
   await expect(surface.locator('#status')).toContainText('Connected to', { timeout: ciTimeout(60_000) })

@@ -28,6 +28,7 @@ setup: ## First-time local setup: check tools, create server/.env, install deps,
 start-docker: ## Start full stack locally via docker compose (dev: Vite HMR)
 	@command -v docker >/dev/null 2>&1 || { echo "missing: docker (https://docs.docker.com/get-docker/)"; exit 1; }
 	@test -n "$(PCODER_LOGIN_EMAIL)" || { echo 'PCODER_LOGIN_EMAIL missing — run make setup first'; exit 1; }
+	@docker build -t pcoder-browser:v14 server/internal/preview/image
 	@trap 'docker compose -f docker-compose.dev.yml down' EXIT; \
 	docker compose -f docker-compose.dev.yml up --build
 

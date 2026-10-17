@@ -60,6 +60,23 @@ type runtimeDockerFake struct {
 	relayIP     string           // returned for the relay ("" → no bridge IP)
 	runErr      error            // first Run fails with this (then nil)
 	inspectSeen int
+	builds      int  // browser-image builds (imageRuntime)
+	imageBuilt  bool // set by Build, so the next InspectImage succeeds
+}
+
+// InspectImage/Build make the fake an imageRuntime: without them a factory
+// skips the image step entirely and the warm path could not be tested.
+func (f *runtimeDockerFake) InspectImage(context.Context, string) error {
+	if f.imageBuilt {
+		return nil
+	}
+	return docker.ErrNotFound
+}
+
+func (f *runtimeDockerFake) Build(context.Context, docker.BuildOptions, io.Writer) error {
+	f.builds++
+	f.imageBuilt = true
+	return nil
 }
 
 func (f *runtimeDockerFake) Run(_ context.Context, spec docker.Spec) (string, error) {
@@ -134,15 +151,16 @@ func TestDockerFactoryUsesPrivateNamespaceAndDirectIP(t *testing.T) {
 	}
 }
 
-// The framebuffer the sidecar boots with is the client's, not a fixed
-// 1920x1080: this is the pixel budget the whole VNC pipeline inherits.
-func TestDockerFactorySizesSidecarScreenToClientViewport(t *testing.T) {
+// The desktop the sidecar boots with is seeded from the client's 1x
+// viewport, not a fixed 1920x1080. It is only a seed: the desktop resizes
+// live afterwards, so no DPR math may leak in.
+func TestDockerFactorySeedsSidecarScreenFromClientViewport(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		cfg          Config
 		wantW, wantH int
 	}{
-		{"phone retina", Config{ViewWidth: 390, ViewHeight: 844, DPR: 3}, 780, 1688},
+		{"phone", Config{ViewWidth: 390, ViewHeight: 844}, 390, 844},
 		{"no viewport keeps legacy screen", Config{}, DisplayWidth, DisplayHeight},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -163,10 +181,6 @@ func TestDockerFactorySizesSidecarScreenToClientViewport(t *testing.T) {
 			wantEnv := "WIDTH=" + strconv.Itoa(tc.wantW) + " HEIGHT=" + strconv.Itoa(tc.wantH)
 			if !strings.Contains(env, wantEnv) {
 				t.Fatalf("sidecar env %q missing %q", env, wantEnv)
-			}
-			gotW, gotH := w.Framebuffer()
-			if gotW != tc.wantW || gotH != tc.wantH {
-				t.Fatalf("worker framebuffer = %dx%d, want %dx%d", gotW, gotH, tc.wantW, tc.wantH)
 			}
 		})
 	}

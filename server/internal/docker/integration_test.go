@@ -102,6 +102,21 @@ func TestDockerLifecycle(t *testing.T) {
 		_ = d.c.RemoveVolume(itHomeVol)
 	})
 
+	// ListContainers feeds the preview janitor: it must find a running
+	// container by name prefix (Docker's own filter matches substrings, so the
+	// prefix is enforced here) and report nothing for a prefix that matches
+	// nothing.
+	found, err := d.ListContainers(ctx, "pcoder-it")
+	if err != nil {
+		t.Fatalf("list containers: %v", err)
+	}
+	if len(found) != 1 || found[0].ID != id || found[0].Name != itName || !found[0].Running {
+		t.Fatalf("ListContainers(pcoder-it) = %+v, want just %s running", found, itName)
+	}
+	if empty, err := d.ListContainers(ctx, "pcoder-no-such-prefix-"); err != nil || len(empty) != 0 {
+		t.Fatalf("ListContainers(no match) = %v (err %v), want none", empty, err)
+	}
+
 	// inspect: running
 	ins, err := d.Inspect(ctx, id)
 	if err != nil {

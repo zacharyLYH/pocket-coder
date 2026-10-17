@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"pcoder/internal/docker"
@@ -19,14 +20,14 @@ import (
 const (
 	// Bump on every image/ change: ensureBrowserImage only builds when the tag
 	// is missing, so a stale tag means a stale start-browser.
-	// v13: the framebuffer now comes from the client viewport (and the image no
-	// longer asks for window maximizing, which no WM honors).
-	DefaultBrowserImage = "pcoder-browser:v13"
+	// v14: Xtigervnc replaces Xvfb + x11vnc, so the desktop resizes live and
+	// the client's viewport is a 1x seed rather than a fixed screen.
+	DefaultBrowserImage = "pcoder-browser:v14"
 	// SidecarPorts are the preview browser's own ports. The sidecar shares
 	// the project's network namespace, so ss lists them alongside user
 	// ports. Keep this as the single source of truth — preview port
 	// filtering must derive from here, not duplicate literals.
-	SidecarVNCPort      = 5900 // x11vnc -rfbport (see image/start-browser)
+	SidecarVNCPort      = 5900 // Xtigervnc -rfbport (see image/start-browser)
 	SidecarChromiumPort = 9222 // Chromium --remote-debugging-port (CDP_PORT)
 	SidecarCDPProxyPort = 9223 // socat forward (CDP_PROXY_PORT)
 	SidecarNoVNCPort    = 6080 // websockify (VNC_WEB_PORT)
@@ -46,9 +47,9 @@ const (
 	relayNamePrefix = "pcoder-preview-relay-"
 )
 
-// DisplayWidth/Height is the legacy sidecar X screen size, still used as the
-// fallback when a caller has no client viewport to size it from (see
-// FramebufferSize, which is what actually picks the screen for real clients).
+// DisplayWidth/Height is the legacy sidecar desktop size, still used as the
+// seed fallback when a caller has no client viewport to size it from (see
+// FramebufferSize).
 const (
 	DisplayWidth  = 1920
 	DisplayHeight = 1080
@@ -80,6 +81,10 @@ type DockerFactory struct {
 	PollEvery  time.Duration
 	// CDPWait bounds the sidecar readiness window; 0 uses cdpWaitTimeout.
 	CDPWait time.Duration
+	// buildMu serializes browser-image builds so concurrent preview starts
+	// for different projects cannot build the same tag twice (the loser would
+	// duplicate minutes of apt/Chromium work and could trip over itself).
+	buildMu sync.Mutex
 }
 
 func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
@@ -98,7 +103,7 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	}
 	if ir, ok := f.Docker.(imageRuntime); ok {
 		t := time.Now()
-		if err := ensureBrowserImage(ctx, ir, image); err != nil {
+		if err := f.ensureImage(ctx, ir, image); err != nil {
 			return nil, fmt.Errorf("ensure browser image: %w", err)
 		}
 		log.Info("preview phase: ensure image", "duration", time.Since(t).Round(time.Millisecond))
@@ -107,13 +112,14 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	if cfg.Port > 0 {
 		targetURL = "http://127.0.0.1:" + strconv.Itoa(cfg.Port)
 	}
-	// The X screen is the VNC framebuffer, so it is sized to the client that
-	// asked for the preview rather than to a fixed 1920x1080.
-	fbWidth, fbHeight := FramebufferSize(cfg.ViewWidth, cfg.ViewHeight, cfg.DPR)
-	log.Info("preview phase: framebuffer", "width", fbWidth, "height", fbHeight,
+	// The desktop is seeded from the client that asked for the preview, so the
+	// first frame is already the right size. It is only a seed: Xtigervnc
+	// resizes the live desktop when the surface syncs a new viewport.
+	fbWidth, fbHeight := FramebufferSize(cfg.ViewWidth, cfg.ViewHeight)
+	log.Info("preview phase: framebuffer seed", "width", fbWidth, "height", fbHeight,
 		"viewport", fmt.Sprintf("%dx%d", cfg.ViewWidth, cfg.ViewHeight))
 	spec := docker.Spec{
-		Name:     "pcoder-preview-" + project.SanitizeName(cfg.ProjectID),
+		Name:     sidecarNamePrefix + project.SanitizeName(cfg.ProjectID),
 		Image:    image,
 		Writable: true,
 		Network:  docker.NetworkNamespace(cfg.ContainerID),
@@ -210,7 +216,17 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	log.Info("preview phase: wait for CDP", "duration", time.Since(t).Round(time.Millisecond), "endpoint", ep.CDP)
 
 	log.Info("preview started", "total_duration", time.Since(startTotal).Round(time.Millisecond), "relay", relayID != "")
-	return &dockerWorker{docker: f.Docker, id: cid, relayID: relayID, endpoint: ep, framebuffer: [2]int{fbWidth, fbHeight}}, nil
+	return &dockerWorker{docker: f.Docker, id: cid, relayID: relayID, endpoint: ep}, nil
+}
+
+
+// ensureImage is the single build path: serialized, and always re-checking
+// the tag so a concurrent caller finds the finished image instead of
+// rebuilding it.
+func (f *DockerFactory) ensureImage(ctx context.Context, ir imageRuntime, image string) error {
+	f.buildMu.Lock()
+	defer f.buildMu.Unlock()
+	return ensureBrowserImage(ctx, ir, image)
 }
 
 // directCDPReady probes whether the server can complete a CDP version
@@ -304,14 +320,9 @@ type dockerWorker struct {
 	id       string
 	relayID  string // non-empty on Docker Desktop: the loopback relay dies with the worker
 	endpoint Endpoint
-	// framebuffer is the X screen from the WIDTHxHEIGHT env: the ceiling for
-	// the CDP window bounds.
-	framebuffer [2]int
 }
 
 func (w *dockerWorker) Endpoint() Endpoint { return w.endpoint }
-
-func (w *dockerWorker) Framebuffer() (int, int) { return w.framebuffer[0], w.framebuffer[1] }
 
 func (w *dockerWorker) Close(ctx context.Context) error {
 	var first error

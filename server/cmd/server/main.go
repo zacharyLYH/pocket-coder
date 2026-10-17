@@ -126,8 +126,13 @@ func main() {
 
 	sessions := session.New(dkr)
 	svc.SetInstaller(&harnessInstaller{harnesses: harnesses, sessions: sessions})
-	previewManager := preview.NewManager(&preview.DockerFactory{Docker: dkr})
+	previewFactory := &preview.DockerFactory{Docker: dkr}
+	previewManager := preview.NewManager(previewFactory)
 	previewManager.StartSweeper(previewSweepInterval(), previewTokenSilence())
+	// The sweeper tears down idle containers on silence; the one-time sweep
+	// below (after bootstrap) reaps leftovers from a crashed server.
+	// The browser image is prebuilt by setup.sh (deploy) or the Makefile; a
+	// missing image is built on-demand by Start → ensureImage.
 
 	// Bootstrap before serving: make live Docker match state.json for every
 	// project — containers running, recorded harnesses installed. Blocking on
@@ -147,6 +152,16 @@ func main() {
 	} else {
 		slog.Warn("docker engine unreachable at boot — skipping bootstrap; EnsureContainer will reconcile per request", "err", err)
 	}
+	// One sweep right after bootstrap: a server starting up owns no workers
+	// yet, so anything still running from the previous process goes now
+	// instead of at the first janitor tick.
+	sweepCtx, cancelSweep := context.WithTimeout(context.Background(), 30*time.Second)
+	if removed, err := previewManager.SweepContainers(sweepCtx, dkr); err != nil {
+		slog.Warn("orphaned preview sweep failed", "err", err)
+	} else if len(removed) > 0 {
+		slog.Info("removed orphaned preview containers", "count", len(removed), "containers", removed)
+	}
+	cancelSweep()
 
 	ev.Append("boot", map[string]any{"version": version})
 	if len(seeded) > 0 {

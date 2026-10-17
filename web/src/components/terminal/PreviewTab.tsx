@@ -6,15 +6,13 @@ import { Separator } from '@/components/ui/separator'
 import { api, errMsg, projectPath } from '@/lib/api'
 import { EmptyState } from '@/components/EmptyState'
 
-// The start request creates the sidecar's X screen (the VNC framebuffer), so
-// it has to carry the viewport that will display it: the preview opens at
-// this window's size, and a phone should not pay for a 1920x1080 screen.
-// dpr rides along so retina text renders sharp; the backend caps both.
+// The start request seeds the sidecar's desktop from the window that opens
+// the preview, so the first frame is already the right size. The desktop
+// resizes live afterwards, so this is a hint, not a fixed screen.
 function viewState() {
   return {
     width: window.innerWidth,
     height: window.innerHeight,
-    dpr: window.devicePixelRatio || 1,
   }
 }
 

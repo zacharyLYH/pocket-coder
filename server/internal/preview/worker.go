@@ -22,17 +22,17 @@ var (
 
 // Config is the immutable identity/configuration of one project's browser.
 //
-// ViewWidth/ViewHeight/DPR are the client that asked for the preview: they
-// size the X screen (FramebufferSize) and are fixed for the worker's life,
-// because Xvfb cannot resize it. A zero viewport keeps the legacy full-size
-// screen, which is what callers without a client (tools, the butler) get.
+// ViewWidth/ViewHeight seed the desktop the sidecar starts at (see
+// FramebufferSize). They do not pin it: Xtigervnc resizes at runtime, so the
+// first client that syncs its viewport takes over. A zero viewport keeps the
+// legacy full-size seed, which is what callers without a client (tools, the
+// butler) get.
 type Config struct {
 	ProjectID   string
 	ContainerID string
 	Port        int
 	ViewWidth   int
 	ViewHeight  int
-	DPR         int
 }
 
 // Endpoint describes a private worker endpoint. These values are server-side
@@ -46,9 +46,6 @@ type Endpoint struct {
 // Close must be safe to call more than once.
 type Worker interface {
 	Endpoint() Endpoint
-	// Framebuffer reports the sidecar's X screen size: the pixel budget every
-	// VNC frame is encoded from, and the ceiling for the Chromium window.
-	Framebuffer() (width, height int)
 	Close(ctx context.Context) error
 }
 
@@ -263,7 +260,10 @@ func (m *Manager) Touch(projectID string) {
 }
 
 // Sweep deletes tokens (and their presence) silent longer than silence.
-func (m *Manager) Sweep(now time.Time, silence time.Duration) {
+// It returns the project IDs whose tokens were removed — callers (notably the
+// sweeper goroutine) stop the associated worker + sidecar container so an idle
+// preview does not leak a container just because the server is still up.
+func (m *Manager) Sweep(now time.Time, silence time.Duration) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var swept []string
@@ -277,10 +277,13 @@ func (m *Manager) Sweep(now time.Time, silence time.Duration) {
 	if len(swept) > 0 {
 		slog.Info("preview tokens swept after silence", "projects", swept, "silence", silence.String())
 	}
+	return swept
 }
 
-// StartSweeper runs one global ticker expiring silent tokens. Once-guarded;
-// Close stops it first.
+// StartSweeper runs one ticker: on each tick it expires silent tokens (Sweep)
+// and stops the associated worker + container (Stop). The boot-time
+// SweepContainers in cmd/server covers crash recovery; the sweeper handles the
+// healthy-server idle case so containers never leak.
 func (m *Manager) StartSweeper(interval, silence time.Duration) {
 	m.sweepOnce.Do(func() {
 		m.mu.Lock()
@@ -299,7 +302,14 @@ func (m *Manager) StartSweeper(interval, silence time.Duration) {
 				case <-stop:
 					return
 				case now := <-t.C:
-					m.Sweep(now, silence)
+					swept := m.Sweep(now, silence)
+					for _, id := range swept {
+						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						if err := m.Stop(ctx, id); err != nil && !errors.Is(err, ErrNotFound) {
+							slog.Warn("preview idle-stop failed — container may linger until next boot sweep", "project", id, "err", err)
+						}
+						cancel()
+					}
 				}
 			}
 		}()

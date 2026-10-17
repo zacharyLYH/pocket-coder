@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!--
+pcoder preview entry. A trimmed noVNC page: no status bar, no sidebar, no
+"Send CtrlAltDel" button — it is an iframe surface, not a remote-desktop app.
+
+Why this file exists instead of the image's vnc_lite.html: that page reads
+only `view_only` and `scale`, so `resizeSession` cannot ride through it. Here
+the RFB client asks the server to resize the desktop to the iframe's CSS size
+on connect and on every local resize, which is why the preview renders at 1x
+with no DPR arithmetic.
+
+Connect parameters (query string):
+  path             websocket path, capability included (required)
+  token            capability, also accepted by the surface handler
+  resize           resize the remote desktop to this box (default true)
+  scale            scale the framebuffer into the box (default false)
+  view_only        no input, view only (default false)
+  reconnect        reconnect after a disconnect (default true)
+  reconnect_delay  ms between reconnect attempts (default 2000)
+-->
+<title>Preview</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+	html, body {
+		height: 100%;
+		margin: 0;
+		background: #000;
+		overflow: hidden;
+	}
+	#screen {
+		width: 100%;
+		height: 100%;
+	}
+	#screen canvas {
+		outline: none;
+	}
+	/* Status text is for assistive tech and diagnostics; the surface itself
+	   stays chromeless. */
+	#status {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+	}
+</style>
+<script type="module" crossorigin="anonymous">
+// RFB is the noVNC client: it owns the websocket, the canvas, and the
+// request that resizes the remote desktop.
+import RFB from './core/rfb.js';
+
+// Read one query parameter (or hash parameter) without URLSearchParams so a
+// test-runner URL with a hash keeps working.
+function param(name, fallback) {
+	const re = new RegExp('.*[?&]' + name + '=([^&#]*)');
+	const match = ''.concat(document.location.href, window.location.hash).match(re);
+	return match ? decodeURIComponent(match[1]) : fallback;
+}
+
+function flag(name, fallback) {
+	const value = param(name, fallback);
+	return value !== '0' && value !== 'false';
+}
+
+function status(text) {
+	document.getElementById('status').textContent = text;
+}
+
+const reconnect = flag('reconnect', 'true');
+const reconnectDelay = Number(param('reconnect_delay', '2000')) || 2000;
+
+let rfb = null;
+let desktopName = '';
+let retryTimer = null;
+
+function connect() {
+	// Build the websocket URL from this document's host plus the `path`
+	// param. The capability rides inside that path value: the page's own
+	// ?token= is not forwarded on the upgrade, so the path is authoritative.
+	const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+	const host = window.location.hostname;
+	const port = window.location.port ? ':' + window.location.port : '';
+	const path = param('path', 'websockify');
+	desktopName = '';
+	status('Connecting');
+	rfb = new RFB(document.getElementById('screen'), `${scheme}://${host}${port}/${path}`, {
+		credentials: { password: param('password', '') },
+	});
+	rfb.addEventListener('connect', () => status('Connected to ' + desktopName));
+	rfb.addEventListener('desktopname', (e) => { desktopName = e.detail.name; });
+	rfb.addEventListener('disconnect', (e) => {
+		status(e.detail.clean ? 'Disconnected' : 'Something went wrong, connection is closed');
+		if (reconnect) {
+			clearTimeout(retryTimer);
+			retryTimer = setTimeout(() => {
+				// Drop the dead client's canvas: each RFB allocates one, so a
+				// long reconnect loop would otherwise stack a canvas per try.
+				document.getElementById('screen').replaceChildren();
+				connect();
+			}, reconnectDelay);
+		}
+	});
+	// Desktop = the iframe's CSS size. The server mirrors that by resizing
+	// the Chromium window to the same viewport, so the frame is never
+	// letterboxed, cropped, or scaled.
+	rfb.resizeSession = flag('resize', 'true');
+	rfb.scaleViewport = flag('scale', 'false');
+	rfb.viewOnly = flag('view_only', 'false');
+}
+
+connect();
+</script>
+</head>
+<body>
+<div id="screen"></div>
+<div id="status" role="status">Loading</div>
+</body>
+</html>

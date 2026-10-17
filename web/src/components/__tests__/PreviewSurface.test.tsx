@@ -33,7 +33,7 @@ describe('PreviewSurface', () => {
     render(<PreviewSurface projectId="project/one" />)
     const frame = await screen.findByTitle('Remote project preview')
     const src = frame.getAttribute('src') ?? ''
-    expect(src).toContain('/api/projects/project%2Fone/preview/vnc_lite.html?')
+    expect(src).toContain('/api/projects/project%2Fone/preview/pcoder.html?')
     expect(src).toContain('token=tok123')
     await waitFor(() => {
       expect(calls.some((c) => String(c.url).endsWith('/preview/heartbeat'))).toBe(true)
@@ -98,6 +98,8 @@ describe('PreviewSurface', () => {
     const fits = posts.filter((p) => p.url.endsWith('/preview/tools/viewport'))
     expect(fits).toHaveLength(1)
     expect((fits[0].init?.headers as Record<string, string>)['X-Preview-Token']).toBe('tok9')
+    // The preview renders at 1x: the body is the box, and no DPR rides along.
+    expect(JSON.parse(fits[0].init?.body as string)).toEqual({ width: 800, height: 600 })
   })
 
   it('shows a not-running card instead of a blank page when stopped', async () => {

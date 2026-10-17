@@ -74,9 +74,9 @@ describe('PreviewTab', () => {
     expect(polls).toBe(3)
   })
 
-  // The sidecar's X screen (the VNC framebuffer) is created by this request,
-  // so the viewport has to travel with it. Without this the backend can only
-  // fall back to a fixed 1920x1080 screen a phone never fills.
+  // The sidecar's desktop is seeded by this request, so the viewport travels
+  // with it. It renders at 1x (the desktop resizes live afterwards), so no
+  // device pixel ratio belongs in the body.
   it('sends the client viewport with the start request', async () => {
     let startBody: Record<string, number> | null = null
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -97,8 +97,8 @@ describe('PreviewTab', () => {
       port: 3000,
       width: window.innerWidth,
       height: window.innerHeight,
-      dpr: window.devicePixelRatio,
     })
+    expect(startBody).not.toHaveProperty('dpr')
     expect(startBody!.width).toBeGreaterThanOrEqual(100)
     expect(startBody!.height).toBeGreaterThanOrEqual(100)
   })

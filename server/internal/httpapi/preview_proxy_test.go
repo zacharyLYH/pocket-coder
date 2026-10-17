@@ -175,6 +175,34 @@ func TestPreviewSurfaceCookieCarriesAssetImports(t *testing.T) {
 	}
 }
 
+// The preview entry moved to pcoder.html, and a bare surface request defaults
+// to it. Both must get the same capability hand-off as noVNC's stock entry
+// pages, or the page's relative module imports 404 and the canvas never
+// renders.
+func TestPreviewSurfacePcoderEntryGetsCookie(t *testing.T) {
+	script := &scriptedCDP{navigateResult: `{}`}
+	script.eval = func(string) string { return evalValue(`{"state":"complete","href":"http://127.0.0.1:3000/"}`) }
+	h, cookie, tok := tokenDeps(t, script, "ptok-pcoder")
+	for _, path := range []string{"/preview/pcoder.html", "/preview/"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/projects/ptok-pcoder"+path+"?token="+tok, nil)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d body=%s", path, rec.Code, rec.Body)
+		}
+		var capability *http.Cookie
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == previewSurfaceCookieName("ptok-pcoder") {
+				capability = c
+			}
+		}
+		if capability == nil || capability.Value != tok {
+			t.Fatalf("%s capability cookie = %+v, want value %q", path, capability, tok)
+		}
+	}
+}
+
 // The capability cookie follows the session cookie's Secure rule: marked
 // Secure when the browser arrived over TLS (direct or via the Tunnel's
 // X-Forwarded-Proto), unset on plain HTTP so dev keeps working.

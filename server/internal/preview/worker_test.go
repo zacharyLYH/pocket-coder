@@ -16,7 +16,6 @@ type fakeWorker struct {
 func (w *fakeWorker) Endpoint() Endpoint {
 	return Endpoint{CDP: "private-cdp", Display: "private-display"}
 }
-func (w *fakeWorker) Framebuffer() (int, int) { return DisplayWidth, DisplayHeight }
 func (w *fakeWorker) Close(context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -24,14 +23,29 @@ func (w *fakeWorker) Close(context.Context) error {
 	return nil
 }
 
+func (w *fakeWorker) closedCount() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.closed
+}
+
 type fakeFactory struct {
 	mu      sync.Mutex
 	starts  int
 	delay   time.Duration
 	workers []*fakeWorker
+	byID    map[string]*fakeWorker
 }
 
-func (f *fakeFactory) Start(context.Context, Config) (Worker, error) {
+// worker returns the worker the factory handed out for a project: the fake
+// must remember which is which now that tests assert on per-project Close.
+func (f *fakeFactory) worker(projectID string) *fakeWorker {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.byID[projectID]
+}
+
+func (f *fakeFactory) Start(_ context.Context, cfg Config) (Worker, error) {
 	f.mu.Lock()
 	f.starts++
 	f.mu.Unlock()
@@ -43,6 +57,10 @@ func (f *fakeFactory) Start(context.Context, Config) (Worker, error) {
 	w := &fakeWorker{}
 	f.mu.Lock()
 	f.workers = append(f.workers, w)
+	if f.byID == nil {
+		f.byID = map[string]*fakeWorker{}
+	}
+	f.byID[cfg.ProjectID] = w
 	f.mu.Unlock()
 	return w, nil
 }
@@ -101,6 +119,41 @@ func TestManagerConcurrentEnsureStartsOnce(t *testing.T) {
 	}
 	if got, err := m.Get("p1"); err != nil || got != results[0] {
 		t.Fatalf("manager holds %p (err %v); want shared worker %p", got, err, results[0])
+	}
+}
+
+// Close is what reclaims containers: a preview sidecar and its relay are
+// standalone docker containers, so the worker's Close is the ONLY thing that
+// removes them. Stop must close exactly once, a second Stop must not close
+// again, and Manager.Close must reclaim whatever is left.
+func TestManagerStopClosesWorkerExactlyOnce(t *testing.T) {
+	f := &fakeFactory{}
+	m := NewManager(f)
+	ctx := context.Background()
+	for _, id := range []string{"p1", "p2"} {
+		if _, err := m.Ensure(ctx, Config{ProjectID: id, ContainerID: "container-" + id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := m.Stop(ctx, "p1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.worker("p1").closedCount(); got != 1 {
+		t.Fatalf("Stop closed p1's worker %d times, want 1 (else the sidecar leaks)", got)
+	}
+	if !errors.Is(m.Stop(ctx, "p1"), ErrNotFound) {
+		t.Fatal("second stop should report not found")
+	}
+	if got := f.worker("p1").closedCount(); got != 1 {
+		t.Fatalf("second Stop closed again (%d), want exactly 1", got)
+	}
+
+	if err := m.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.worker("p2").closedCount(); got != 1 {
+		t.Fatalf("Manager.Close closed p2's worker %d times, want 1", got)
 	}
 }
 
@@ -194,5 +247,50 @@ func TestManagerStopDeletesTokenRestartForgets(t *testing.T) {
 	fresh := NewManager(&fakeFactory{})
 	if fresh.CheckToken("p1", t1) {
 		t.Fatal("fresh manager remembers tokens")
+	}
+}
+
+// TestManagerSweepStopsIdleWorker pins the idle-container cleanup that
+// StartSweeper performs: when Sweep removes a project's token after silence,
+// Stop must also close the worker (which closes the sidecar container).
+func TestManagerSweepStopsIdleWorker(t *testing.T) {
+	f := &fakeFactory{}
+	m := NewManager(f)
+	cfg := Config{ProjectID: "p1", ContainerID: "container-p1"}
+	if _, err := m.Ensure(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	fw := f.worker("p1")
+	if fw == nil {
+		t.Fatal("fake worker not registered")
+	}
+
+	// Touch sets lastSeen on the mock clock so Sweep can age it past silence.
+	base := time.Now()
+	m.now = func() time.Time { return base.Add(5 * time.Minute) }
+	m.Touch("p1")
+
+	// Sweep at 10 min with a 1-min silence threshold: the 5-min gap qualifies.
+	swept := m.Sweep(base.Add(10*time.Minute), time.Minute)
+	if len(swept) != 1 || swept[0] != "p1" {
+		t.Fatalf("swept = %v, want [p1]", swept)
+	}
+	// Token is gone after sweep, but the worker (and its container) still live.
+	if m.CheckToken("p1", "anything") {
+		t.Fatal("token survived Sweep")
+	}
+	if _, err := m.Get("p1"); err != nil {
+		t.Fatalf("worker gone before Stop: %v", err)
+	}
+
+	// StartSweeper calls Stop on each swept project — that must close the worker.
+	if err := m.Stop(context.Background(), "p1"); err != nil {
+		t.Fatalf("Stop after Sweep: %v", err)
+	}
+	if fw.closedCount() != 1 {
+		t.Fatalf("worker Close count = %d, want 1", fw.closedCount())
+	}
+	if _, err := m.Get("p1"); err == nil {
+		t.Fatal("worker still live after Stop")
 	}
 }

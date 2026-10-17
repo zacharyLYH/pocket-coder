@@ -47,6 +47,15 @@ type Client interface {
 	WriteFile(ctx context.Context, id, path string, content []byte) error
 }
 
+// ContainerInfo is the listing shape (see ListContainers): cheaper than
+// Inspect per container, for sweepers that only decide whether a container
+// is running.
+type ContainerInfo struct {
+	ID      string
+	Name    string
+	Running bool
+}
+
 // Container is the inspect summary the server needs — never the raw docker type.
 type Container struct {
 	ID      string
@@ -86,6 +95,35 @@ func (d *Docker) Ping(ctx context.Context) error {
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	return nil
+}
+
+// ListContainers returns every container whose name starts with prefix, in
+// any state. Docker's own name filter matches substrings, so the prefix is
+// enforced here. Kept off the Client interface: this is a sweep tool, not
+// part of what the request path needs from Docker.
+func (d *Docker) ListContainers(ctx context.Context, prefix string) ([]ContainerInfo, error) {
+	list, err := d.c.ListContainers(dockerclient.ListContainersOptions{All: true, Context: ctx})
+	if err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+	return matchContainers(list, prefix), nil
+}
+
+// matchContainers keeps the containers whose (slash-stripped) name starts
+// with prefix. Split out so the filter is testable without an engine.
+func matchContainers(list []dockerclient.APIContainers, prefix string) []ContainerInfo {
+	var out []ContainerInfo
+	for _, c := range list {
+		for _, raw := range c.Names {
+			name := strings.TrimPrefix(raw, "/")
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			out = append(out, ContainerInfo{ID: c.ID, Name: name, Running: c.State == "running"})
+			break
+		}
+	}
+	return out
 }
 
 // EnsureNetwork creates name (bridge driver) if it does not exist yet.

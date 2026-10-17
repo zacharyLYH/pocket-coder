@@ -22,13 +22,14 @@ describe('previewSurfacePath token embedding', () => {
     expect(wsPath).toContain('token=tok123')
   })
 
-  // The framebuffer is the client viewport x DPR, so it can be bigger than
-  // the iframe's CSS box. Without scaling — or with the param name that
-  // vnc_lite.html ignores — the client shows only its top-left corner.
-  it('asks the noVNC client to scale the framebuffer into the iframe', () => {
+  // The preview renders at 1x, so the desktop has to follow the iframe's CSS
+  // box: the entry page turns `resize` into rfb.resizeSession. It has to be
+  // our own page — vnc_lite.html only reads view_only and scale.
+  it('points at the resize-aware entry page and asks for resize', () => {
     const u = new URL(previewSurfacePath('proj/1', 'tok123'), 'http://x')
-    expect(u.searchParams.get('scale')).toBe('true')
-    expect(u.searchParams.get('resize')).toBeNull()
+    expect(u.pathname).toBe('/api/projects/proj%2F1/preview/pcoder.html')
+    expect(u.searchParams.get('resize')).toBe('true')
+    expect(u.searchParams.get('scale')).toBeNull()
   })
 
   it('round-trips special characters in project id and token', () => {

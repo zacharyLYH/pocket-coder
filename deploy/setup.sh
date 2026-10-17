@@ -684,9 +684,10 @@ boot() {
   # Pre-build on-demand runtime images so the first clone/preview doesn't
   # block on a 2-5 min Docker build inside the HTTP request — that was the
   # original 504 Gateway Timeout source. The tags must match the constants
-  # in server/internal/project/service.go and server/internal/preview/docker_runtime.go.
-  docker build -t pcoder-project:v3 "$INSTALL_DIR/server/internal/project/image"
-  docker build -t pcoder-browser:v13 "$INSTALL_DIR/server/internal/preview/image"
+  # in server/internal/project/service.go and server/internal/preview/docker_runtime.go;
+  # a drift guard test (cmd/server) fails the build when they stop matching.
+  docker build -t pcoder-project:v4 "$INSTALL_DIR/server/internal/project/image"
+  docker build -t pcoder-browser:v14 "$INSTALL_DIR/server/internal/preview/image"
   log "probing SMTP delivery"
   # The image ENTRYPOINT is already ["pcoder"], so the subcommand is
   # appended bare (not `pcoder smtp-test`, which would repeat the binary).

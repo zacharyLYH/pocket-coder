@@ -65,14 +65,13 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		defer obsFailAt(r, obs.PreviewStart, "preview start failed", &err, nil)()
-		// The client's viewport sizes the sidecar's X screen (the VNC
-		// framebuffer), so it must arrive with the start that creates it. All
-		// three fields are optional: absent viewport = legacy full-size screen.
+		// The client's viewport seeds the desktop created with the sidecar,
+		// so it arrives with the start. Both fields are optional: absent
+		// viewport = legacy full-size seed (the desktop resizes later anyway).
 		var body struct {
 			Port   int `json:"port"`
 			Width  int `json:"width"`
 			Height int `json:"height"`
-			DPR    int `json:"dpr"`
 		}
 		if !decodeBody(w, r, &body, false) {
 			return
@@ -87,7 +86,7 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		worker, werr := ensurePreviewWorker(d, r, previewStartOpts{Port: body.Port, Width: body.Width, Height: body.Height, DPR: body.DPR})
+		worker, werr := ensurePreviewWorker(d, r, previewStartOpts{Port: body.Port, Width: body.Width, Height: body.Height})
 		if werr != nil {
 			err = werr
 			if errors.Is(werr, project.ErrNotFound) || errors.Is(werr, preview.ErrNotFound) {
@@ -182,7 +181,7 @@ func handlePreviewSurface(d Deps) http.HandlerFunc {
 		prefix := "/api/projects/" + id + "/preview/"
 		path := strings.TrimPrefix(r.URL.Path, prefix)
 		if path == "" {
-			path = "vnc.html"
+			path = "pcoder.html"
 		}
 		// An explicit ?token= is authoritative: a wrong or rotated one 404s
 		// even when a live cookie is present, so the cookie can only ever
@@ -223,7 +222,7 @@ func handlePreviewSurface(d Deps) http.HandlerFunc {
 		// handler and would spam the log. The entry document is also where
 		// the capability changes hands to the cookie the relative module
 		// imports will be sent back with.
-		if path == "vnc.html" || path == "vnc_lite.html" {
+		if isPreviewEntryDocument(path) {
 			obs.Info(r.Context(), obs.PreviewOpen, "Preview opened", nil)
 			if explicit {
 				c := &http.Cookie{
@@ -250,6 +249,17 @@ func handlePreviewSurface(d Deps) http.HandlerFunc {
 		}
 		proxy.ServeHTTP(w, r)
 	}
+}
+
+// isPreviewEntryDocument reports whether path is a noVNC entry page: it
+// loads once per visit (one PreviewOpen event) and is where the capability
+// hands off to the cookie the page's relative module imports inherit.
+func isPreviewEntryDocument(path string) bool {
+	switch path {
+	case "pcoder.html", "vnc.html", "vnc_lite.html":
+		return true
+	}
+	return false
 }
 
 // surfaceCookiePath is the shared cookie scope for the surface capability.
@@ -446,12 +456,11 @@ func validViewport(width, height int) bool {
 
 // previewStartOpts is what a preview start knows about its client: the
 // target port and, when the caller has one, the viewport that will display
-// it. A zero viewport keeps the legacy full-size framebuffer.
+// it. A zero viewport keeps the legacy full-size seed.
 type previewStartOpts struct {
 	Port   int
 	Width  int
 	Height int
-	DPR    int
 }
 
 func ensurePreviewWorker(d Deps, r *http.Request, opts ...previewStartOpts) (preview.Worker, error) {
@@ -467,7 +476,7 @@ func ensurePreviewWorker(d Deps, r *http.Request, opts ...previewStartOpts) (pre
 	}
 	if len(opts) > 0 {
 		cfg.Port = opts[0].Port
-		cfg.ViewWidth, cfg.ViewHeight, cfg.DPR = opts[0].Width, opts[0].Height, opts[0].DPR
+		cfg.ViewWidth, cfg.ViewHeight = opts[0].Width, opts[0].Height
 	}
 	return d.Preview.Ensure(r.Context(), cfg)
 }

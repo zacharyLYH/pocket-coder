@@ -40,7 +40,7 @@ test.describe('preview non-default port', () => {
       await expect(iframe).toBeVisible({ timeout: ciTimeout(30_000) })
       await expect(iframe).toHaveAttribute(
         'src',
-        new RegExp(`/api/projects/${projectURL(projectID)}/preview/vnc_lite\\.html`),
+        new RegExp(`/api/projects/${projectURL(projectID)}/preview/pcoder\\.html`),
       )
 
       // Frontend proof: the sidecar's display surface actually streamed

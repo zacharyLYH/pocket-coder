@@ -11,11 +11,10 @@ async function cdpScreenshot(request: APIRequestContext, projectID: string, toke
   return body
 }
 
-// The sidecar's X screen is the client's viewport x DPR (see
-// preview.framebuffer.spec.ts), so a viewport request larger than the screen
-// that asked for the preview is clamped, and 1920x1080 is no longer a
-// constant anywhere. This host viewport is chosen to leave room for both a
-// desktop and a phone viewport request inside the screen it produces.
+// The desktop resizes to whatever the surface syncs (see
+// preview.framebuffer.spec.ts), so a viewport request is applied as asked:
+// there is no fixed screen to clamp against, and the response reports scale 1
+// with no framebuffer.
 test.describe('preview chromium viewports', () => {
   test.use({ viewport: { width: 1280, height: 900 } })
 
@@ -57,21 +56,20 @@ test.describe('preview chromium viewports', () => {
       expect(phonePNG.equals(desktopPNG)).toBe(false)
       expect(phonePNG.length).toBeLessThan(desktopPNG.length)
 
-      // Oversize requests clamp to the sidecar screen instead of failing.
+      // Oversize requests are applied as asked: the desktop grows to match
+      // instead of clamping to the seed screen it started at.
       const bigRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/viewport`, { ...tokenHeaders(token), 
         data: { width: 3000, height: 2000 },
       })
       expect(bigRes.ok()).toBeTruthy()
       const bigBody = (await bigRes.json()) as {
-        width: number; height: number; framebuffer: { width: number; height: number }
+        width: number; height: number; deviceScaleFactor: number; framebuffer?: unknown
       }
-      // The clamp target is the screen this preview actually got — the
-      // viewport that started it, not a fixed 1920x1080.
-      expect(bigBody.framebuffer.width).toBe(1280)
-      expect(bigBody.framebuffer.height).toBe(900)
-      expect([bigBody.width, bigBody.height]).toEqual([bigBody.framebuffer.width, bigBody.framebuffer.height])
+      expect([bigBody.width, bigBody.height]).toEqual([3000, 2000])
+      expect(bigBody.deviceScaleFactor).toBe(1)
+      expect(bigBody.framebuffer).toBeUndefined()
       const bigPNG = await cdpScreenshot(request, projectID, token)
-      expect(pngSize(bigPNG)).toEqual(bigBody.framebuffer)
+      expect(pngSize(bigPNG)).toEqual({ width: 3000, height: 2000 })
 
       // Invalid sizes are rejected.
       const badRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/viewport`, { ...tokenHeaders(token), 
