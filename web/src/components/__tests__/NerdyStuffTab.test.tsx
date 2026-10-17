@@ -19,9 +19,10 @@ function stubFetch(calls: string[], opts: {
   observe?: (url: string) => unknown
   errors?: unknown
   health?: unknown
+  repair?: unknown
 } | ((url: string) => unknown) = {}) {
-  const { observe: observeImpl, errors = { groups: [] }, health } =
-    typeof opts === 'function' ? { observe: opts, errors: undefined, health: undefined } : opts
+  const { observe: observeImpl, errors = { groups: [] }, health, repair } =
+    typeof opts === 'function' ? { observe: opts, errors: undefined, health: undefined, repair: undefined } : opts
   const fetchMock = vi.fn(async (url: string) => {
     calls.push(String(url))
     const u = String(url)
@@ -32,6 +33,7 @@ function stubFetch(calls: string[], opts: {
       buildTypes: ['project.create'],
     }), { status: 200 })
     if (u.endsWith('/health') && health !== undefined) return new Response(JSON.stringify(health), { status: 200 })
+    if (u.endsWith('/health/repair') && repair !== undefined) return new Response(JSON.stringify(repair), { status: 200 })
     if (u.includes('/observe')) {
       if (observeImpl) return new Response(JSON.stringify(observeImpl(u)), { status: 200 })
       return new Response(JSON.stringify({ logs: LOGS, firstSeq: 1, lastSeq: 2 }), { status: 200 })
@@ -236,5 +238,49 @@ describe('NerdyStuffTab', () => {
     // Long drift lists scroll inside the card instead of overflowing the tab.
     expect(screen.getByTestId('nerdy-healthcheck-report').className).toMatch(/overflow-y-auto/)
     expect(screen.getByTestId('nerdy-healthcheck-report').className).toMatch(/max-h-64/)
+  })
+
+  it('fix drift posts once and lists what was healed vs left manual', async () => {
+    const calls: string[] = []
+    const fetchMock = stubFetch(calls, {
+      health: {
+        project: 'abc',
+        inSync: false,
+        checks: [
+          { name: 'harness:fake', status: 'drift', state: 'installed', system: 'missing', fix: 'install' },
+          { name: 'harness:helper', status: 'drift', state: 'not recorded', system: 'binary present', fix: 'record' },
+          { name: 'session:ghost-1', status: 'drift', state: 'recorded harness fake', system: 'missing from tmux', fix: 'manual' },
+        ],
+      },
+      repair: {
+        project: 'abc',
+        inSync: false,
+        checks: [
+          { name: 'session:ghost-1', status: 'drift', state: 'recorded harness fake', system: 'missing from tmux', fix: 'manual' },
+        ],
+        actions: [
+          { name: 'harness:fake', action: 'reconciled', detail: 'reinstalled' },
+          { name: 'harness:helper', action: 'recorded', detail: 'binary present — install record written' },
+          { name: 'session:ghost-1', action: 'manual', detail: 'left alone' },
+        ],
+      },
+    })
+    render(<NerdyStuffTab projectId="abc" />)
+    await waitFor(() => expect(screen.getByTestId('nerdy-healthcheck')).toBeVisible())
+    await act(async () => { fireEvent.click(screen.getByTestId('nerdy-healthcheck-run')) })
+    await waitFor(() => expect(screen.getByTestId('nerdy-healthcheck-fix')).toBeVisible())
+
+    await act(async () => { fireEvent.click(screen.getByTestId('nerdy-healthcheck-fix')) })
+    await waitFor(() => expect(screen.getByTestId('nerdy-healthcheck-actions')).toBeVisible())
+    const repairCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/health/repair'))
+    expect(repairCalls).toHaveLength(1)
+    const [, repairInit] = repairCalls[0] as unknown as [string, RequestInit?]
+    expect(repairInit?.method).toBe('POST')
+    expect(screen.getByTestId('nerdy-healthcheck-action-harness:fake')).toHaveTextContent('reconciled')
+    expect(screen.getByTestId('nerdy-healthcheck-action-harness:helper')).toHaveTextContent('recorded')
+    expect(screen.getByTestId('nerdy-healthcheck-action-session:ghost-1')).toHaveTextContent('manual')
+    expect(screen.getByTestId('nerdy-healthcheck-verdict')).toHaveTextContent('1 drift found')
+    // Manual-only drift: no Fix button — nothing safe left to run.
+    expect(screen.queryByTestId('nerdy-healthcheck-fix')).toBeNull()
   })
 })

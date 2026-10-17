@@ -404,11 +404,12 @@ func (s *Service) installRecordedHarnesses(ctx context.Context, id, cid string, 
 	return firstErr
 }
 
-// provisionProject brings ONE project to full desired state: container
-// running, repo present (re-cloned when the engine lost the volume), and
-// every recorded harness installed. This is the boot path; the per-request
-// safety net (EnsureContainer) only guarantees the container itself.
-func (s *Service) provisionProject(ctx context.Context, id string) error {
+// Reconcile ensures ONE project's container and repo: the container runs,
+// and a recorded repo is re-cloned when its volume came up empty. Harness
+// installs are deliberately out of scope — the healthcheck repairs those
+// row by row, so one failing install cannot mask a successful container or
+// repo fix. Boot runs this, then installs recorded harnesses.
+func (s *Service) Reconcile(ctx context.Context, id string) error {
 	ctx = obs.WithProject(ctx, id)
 	st, err := s.EnsureContainer(ctx, id)
 	if err != nil {
@@ -440,6 +441,20 @@ func (s *Service) provisionProject(ctx context.Context, id string) error {
 					map[string]any{"error": err.Error()})
 			}
 		}
+	}
+	return nil
+}
+
+// provisionProject is the boot path: container + repo (Reconcile), then
+// every recorded harness installed. The per-request safety net
+// (EnsureContainer) only guarantees the container itself.
+func (s *Service) provisionProject(ctx context.Context, id string) error {
+	if err := s.Reconcile(ctx, id); err != nil {
+		return err
+	}
+	p, err := s.store.Get(id)
+	if err != nil {
+		return err
 	}
 	return s.installRecordedHarnesses(ctx, id, ContainerName(id), InstalledIDs(p))
 }

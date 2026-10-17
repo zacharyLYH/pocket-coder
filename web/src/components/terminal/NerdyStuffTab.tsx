@@ -52,10 +52,19 @@ function Meter({ used, total, testid, label }: { used: number; total: number; te
 // Desired-vs-live sync check, on demand only: compares state.json against
 // the system (container, repo volume, tmux sessions vs recorded sessions,
 // binaries vs recorded installs — both directions) and prints every
-// divergence. Read-only by design: it never reconciles, it only reports,
-// and the existing flows stay the repair paths.
-type HealthCheck = { name: string; status: 'ok' | 'drift' | 'unknown'; state: string; system: string; detail?: string }
-type HealthReport = { project: string; inSync: boolean; checks: HealthCheck[] }
+// divergence. "Fix drift" re-runs the project's boot path for container,
+// repo and harness rows, writes missing install records, and leaves
+// sessions manual — relaunching or killing a terminal is the user's call.
+type HealthCheck = {
+  name: string
+  status: 'ok' | 'drift' | 'unknown'
+  state: string
+  system: string
+  fix?: 'reconcile' | 'install' | 'record' | 'manual'
+  detail?: string
+}
+type HealthRepair = { name: string; action: 'reconciled' | 'recorded' | 'manual' | 'failed'; detail?: string }
+type HealthReport = { project: string; inSync: boolean; checks: HealthCheck[]; actions?: HealthRepair[] }
 
 function healthBadge(status: HealthCheck['status']): string {
   return status === 'ok' ? 'bg-emerald-500' : status === 'drift' ? 'bg-red-500' : 'bg-amber-400'
@@ -64,6 +73,7 @@ function healthBadge(status: HealthCheck['status']): string {
 function HealthCheckCard({ projectId }: { projectId: string }) {
   const [report, setReport] = useState<HealthReport | null>(null)
   const [busy, setBusy] = useState(false)
+  const [fixing, setFixing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function run() {
@@ -78,17 +88,36 @@ function HealthCheckCard({ projectId }: { projectId: string }) {
     }
   }
 
+  async function fix() {
+    setFixing(true)
+    setError(null)
+    try {
+      setReport(await api<HealthReport>(projectPath(projectId, '/health/repair'), { method: 'POST' }))
+    } catch (e) {
+      setError(errMsg(e))
+    } finally {
+      setFixing(false)
+    }
+  }
+
   const drifts = report?.checks.filter((c) => c.status === 'drift').length ?? 0
   return (
     <div className="rounded-lg border bg-card p-3" data-testid="nerdy-healthcheck">
       <div className="flex items-center justify-between gap-2">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">State sync</p>
-          <p className="text-xs text-muted-foreground">state.json vs the system, both directions. Read-only.</p>
+          <p className="text-xs text-muted-foreground">state.json vs the system. Fix heals container, repo and harness drifts; sessions stay manual.</p>
         </div>
-        <Button size="sm" variant="outline" onClick={() => void run()} disabled={busy} data-testid="nerdy-healthcheck-run">
-          {busy ? 'Checking…' : report ? 'Re-check' : 'Run healthcheck'}
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          {report?.checks.some((c) => c.status === 'drift' && c.fix && c.fix !== 'manual') && (
+            <Button size="sm" onClick={() => void fix()} disabled={busy || fixing} data-testid="nerdy-healthcheck-fix">
+              {fixing ? 'Fixing…' : 'Fix drift'}
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={() => void run()} disabled={busy || fixing} data-testid="nerdy-healthcheck-run">
+            {busy ? 'Checking…' : report ? 'Re-check' : 'Run healthcheck'}
+          </Button>
+        </div>
       </div>
       {error && <p className="max-h-16 overflow-auto break-all pt-2 text-xs text-destructive" data-testid="nerdy-healthcheck-error">{error}</p>}
       {report && (
@@ -98,6 +127,16 @@ function HealthCheckCard({ projectId }: { projectId: string }) {
               ? <Badge data-testid="nerdy-healthcheck-verdict"><span className="mr-1 inline-block size-1.5 rounded-full bg-emerald-500" />In sync</Badge>
               : <Badge variant="destructive" data-testid="nerdy-healthcheck-verdict"><span className="mr-1 inline-block size-1.5 rounded-full bg-red-500" />{drifts} drift{drifts === 1 ? '' : 's'} found</Badge>}
           </p>
+          {report.actions && report.actions.length > 0 && (
+            <div className="flex flex-col gap-0.5 border-b pb-1" data-testid="nerdy-healthcheck-actions">
+              {report.actions.map((a) => (
+                <p key={a.name} data-testid={`nerdy-healthcheck-action-${a.name}`}
+                  className={`break-words ${a.action === 'failed' ? 'text-destructive' : a.action === 'manual' ? 'text-amber-600' : 'text-muted-foreground'}`}>
+                  <span className="font-mono">{a.name}</span> · {a.action}{a.detail ? ` — ${a.detail}` : ''}
+                </p>
+              ))}
+            </div>
+          )}
           {report.checks.map((c) => (
             <div key={c.name} data-testid={`nerdy-healthcheck-row-${c.name}`} className="flex flex-col gap-px rounded border border-muted px-2 py-1 text-xs">
               <div className="flex items-center gap-2">

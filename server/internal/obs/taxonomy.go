@@ -28,6 +28,7 @@ const (
 	ProjectHarnesses  = "project.harnesses"
 	ProjectBootstrap  = "project.bootstrap"
 	ProjectSSHKeys    = "project.sshkeys"
+	HealthRepair      = "health.repair"
 
 	// Sessions + terminal transport.
 	SessionList    = "session.list"
@@ -137,6 +138,7 @@ var AuditTypes = []string{
 	ProjectPatch,
 	ProjectImageBuild,
 	ProjectBootstrap,
+	HealthRepair,
 	SessionCreate,
 	SessionDelete,
 	SessionRestart,

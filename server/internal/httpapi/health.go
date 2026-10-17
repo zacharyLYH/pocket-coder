@@ -1,10 +1,9 @@
 // Desired-vs-live healthcheck: compares state.json against the system and
-// reports every divergence in both directions, without changing anything.
-// The Nerdy Stuff overview runs it on demand (button → synchronous POST →
-// report on screen). No reconciliation lives here by design: the report
-// tells the user exactly what is recorded-but-missing and what exists
-// unrecorded, and the existing flows (install dialog, session launch,
-// project recreate) remain the repair paths.
+// reports every divergence in both directions. The Nerdy Stuff overview runs
+// it on demand (button → synchronous POST → report on screen). The check is
+// read-only; the sibling repair action heals the safe drifts (container,
+// repo, harness records) and explicitly leaves sessions alone — relaunching
+// or killing a terminal is a user decision, not a reconciliation.
 package httpapi
 
 import (
@@ -12,9 +11,11 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"pcoder/internal/harness"
+	"pcoder/internal/obs"
 	"pcoder/internal/project"
 	"pcoder/internal/state"
 )
@@ -28,6 +29,17 @@ const (
 	healthUnknown = "unknown"
 )
 
+// healthFix values tell the repair action what a drift row needs. reconcile
+// re-runs the project's boot path (container, repo), install re-runs the
+// harness's install command, record writes the install mark for a present
+// binary, and manual is a row the user must resolve (sessions).
+const (
+	fixReconcile = "reconcile"
+	fixInstall   = "install"
+	fixRecord    = "record"
+	fixManual    = "manual"
+)
+
 // healthCheck is one compared fact: what state.json says (state) against
 // what the system shows (system). Names read as paths: "container",
 // "repo", "session:<name>", "harness:<id>".
@@ -36,6 +48,25 @@ type healthCheck struct {
 	Status string `json:"status"`
 	State  string `json:"state"`
 	System string `json:"system"`
+	// Fix is the repair action this row needs ("reconcile", "install",
+	// "record", "manual"); empty for ok/unknown rows.
+	Fix    string `json:"fix,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// healthReport is the shared payload for the check and the repair action.
+// Repair adds Actions after re-running the check.
+type healthReport struct {
+	Project string        `json:"project"`
+	InSync  bool          `json:"inSync"`
+	Checks  []healthCheck `json:"checks"`
+}
+
+// healthRepair is one drift row the repair action handled (or deliberately
+// left alone). Action is "reconciled", "recorded", "manual" or "failed".
+type healthRepair struct {
+	Name   string `json:"name"`
+	Action string `json:"action"`
 	Detail string `json:"detail,omitempty"`
 }
 
@@ -44,30 +75,140 @@ type healthCheck struct {
 // creates, installs, or deletes anything.
 func handleProjectHealth(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		p, st, err := d.Projects.Get(r.Context(), id)
+		rep, err := readHealthReport(r.Context(), d, r.PathValue("id"))
 		if err != nil {
-			if errors.Is(err, project.ErrNotFound) {
-				writeErr(w, http.StatusNotFound, "project not found")
-				return
-			}
-			writeInternalErr(w, "read project", err)
+			writeHealthReadErr(w, err)
 			return
 		}
-		checks := checkProjectHealth(r.Context(), d, id, p, st)
-		drift := false
-		for _, c := range checks {
-			if c.Status == healthDrift {
-				drift = true
-				break
+		writeJSON(w, http.StatusOK, rep)
+	}
+}
+
+// handleProjectHealthRepair heals the drifts the check found, then re-runs
+// the check and returns the fresh report plus what was done per row. It
+// never restarts/kills sessions: those rows come back as "manual" so the
+// user decides.
+func handleProjectHealthRepair(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		rep, err := readHealthReport(r.Context(), d, id)
+		if err != nil {
+			writeHealthReadErr(w, err)
+			return
+		}
+		drifts := make([]healthCheck, 0, len(rep.Checks))
+		reconcile := false
+		for _, c := range rep.Checks {
+			if c.Status != healthDrift {
+				continue
+			}
+			drifts = append(drifts, c)
+			if c.Fix == fixReconcile {
+				reconcile = true
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"project": id,
-			"inSync":  !drift,
-			"checks":  checks,
-		})
+
+		// One pass covers container + repo; each harness row below is
+		// repaired on its own so one failure does not mask the rest.
+		var reconcileErr error
+		if reconcile {
+			reconcileErr = d.Projects.Reconcile(r.Context(), id)
+			if reconcileErr != nil {
+				obs.Error(r.Context(), obs.HealthRepair, "health repair failed in "+id+": "+reconcileErr.Error(),
+					map[string]any{"error": reconcileErr.Error()})
+			}
+		}
+
+		actions := make([]healthRepair, 0, len(drifts))
+		for _, c := range drifts {
+			switch c.Fix {
+			case fixManual:
+				actions = append(actions, healthRepair{Name: c.Name, Action: "manual", Detail: manualDetail(c)})
+			case fixInstall:
+				hid := strings.TrimPrefix(c.Name, "harness:")
+				if h, gerr := d.Harnesses.Get(hid); gerr != nil {
+					actions = append(actions, healthRepair{Name: c.Name, Action: "failed", Detail: gerr.Error()})
+				} else if ierr := d.Sessions.InstallHarness(r.Context(), project.ContainerName(id), h); ierr != nil {
+					actions = append(actions, healthRepair{Name: c.Name, Action: "failed", Detail: ierr.Error()})
+				} else {
+					actions = append(actions, healthRepair{Name: c.Name, Action: "reconciled", Detail: "reinstalled"})
+				}
+			case fixRecord:
+				hid := strings.TrimPrefix(c.Name, "harness:")
+				if rerr := d.Projects.RecordInstall(id, hid); rerr != nil {
+					actions = append(actions, healthRepair{Name: c.Name, Action: "failed", Detail: rerr.Error()})
+				} else {
+					actions = append(actions, healthRepair{Name: c.Name, Action: "recorded", Detail: "binary present — install record written"})
+				}
+			default:
+				if reconcileErr != nil {
+					actions = append(actions, healthRepair{Name: c.Name, Action: "failed", Detail: reconcileErr.Error()})
+				} else {
+					actions = append(actions, healthRepair{Name: c.Name, Action: "reconciled"})
+				}
+			}
+		}
+		if len(actions) > 0 {
+			obs.Info(r.Context(), obs.HealthRepair, "health repair handled "+strconv.Itoa(len(actions))+" drift(s) in "+id,
+				map[string]any{"actions": actions})
+		}
+
+		fresh, rerr := readHealthReport(r.Context(), d, id)
+		if rerr != nil {
+			writeInternalErr(w, "re-read project", rerr)
+			return
+		}
+		// A repair that reported success but left the row drifting (e.g. the
+		// re-clone failed while the container came back) is a failure.
+		stillDrift := map[string]bool{}
+		for _, c := range fresh.Checks {
+			stillDrift[c.Name] = c.Status == healthDrift
+		}
+		for i := range actions {
+			if actions[i].Action == "reconciled" && stillDrift[actions[i].Name] {
+				actions[i].Action, actions[i].Detail = "failed", "still drifting after repair"
+			}
+		}
+		writeJSON(w, http.StatusOK, struct {
+			healthReport
+			Actions []healthRepair `json:"actions"`
+		}{fresh, actions})
 	}
+}
+
+// readHealthReport compares one project and packages the result.
+func readHealthReport(ctx context.Context, d Deps, id string) (healthReport, error) {
+	p, st, err := d.Projects.Get(ctx, id)
+	if err != nil {
+		return healthReport{}, err
+	}
+	checks := checkProjectHealth(ctx, d, id, p, st)
+	inSync := true
+	for _, c := range checks {
+		if c.Status == healthDrift {
+			inSync = false
+			break
+		}
+	}
+	return healthReport{Project: id, InSync: inSync, Checks: checks}, nil
+}
+
+// writeHealthReadErr maps the shared read failure to 404/internal.
+func writeHealthReadErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, project.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "project not found")
+		return
+	}
+	writeInternalErr(w, "read project", err)
+}
+
+// manualDetail explains why a manual drift was left untouched.
+func manualDetail(c healthCheck) string {
+	detail := "left alone — sessions are never auto-repaired"
+	if c.Detail != "" {
+		detail += ": " + c.Detail
+	}
+	return detail
 }
 
 // checkProjectHealth builds the ordered report: container, repo, then
@@ -84,6 +225,7 @@ func checkProjectHealth(ctx context.Context, d Deps, id string, p project.Projec
 	switch st.State {
 	case project.StateMissing:
 		c.Status, c.System = healthDrift, "missing"
+		c.Fix = fixReconcile
 		c.Detail = "in state.json but the container is gone — recreate it from the project (container scope)"
 	case project.StateRunning:
 		c.Status, c.System = healthOK, "running"
@@ -123,7 +265,7 @@ func checkProjectHealth(ctx context.Context, d Deps, id string, p project.Projec
 			if live[name] {
 				checks = append(checks, healthCheck{Name: "session:" + name, Status: healthOK, State: describeSession(p.Sessions[name]), System: "in tmux"})
 			} else {
-				checks = append(checks, healthCheck{Name: "session:" + name, Status: healthDrift, State: describeSession(p.Sessions[name]), System: "missing from tmux", Detail: "recorded but not running — re-enter it to relaunch, or delete it"})
+				checks = append(checks, healthCheck{Name: "session:" + name, Status: healthDrift, State: describeSession(p.Sessions[name]), System: "missing from tmux", Fix: fixManual, Detail: "recorded but not running — re-enter it to relaunch, or delete it"})
 			}
 		}
 		var ghosts []string
@@ -134,7 +276,7 @@ func checkProjectHealth(ctx context.Context, d Deps, id string, p project.Projec
 		}
 		sort.Strings(ghosts)
 		for _, name := range ghosts {
-			checks = append(checks, healthCheck{Name: "session:" + name, Status: healthDrift, State: "not recorded", System: "in tmux, untracked", Detail: "live session with no state.json entry — kill it from the terminal if it is stray"})
+			checks = append(checks, healthCheck{Name: "session:" + name, Status: healthDrift, State: "not recorded", System: "in tmux, untracked", Fix: fixManual, Detail: "live session with no state.json entry — kill it from the terminal if it is stray"})
 		}
 	}
 
@@ -177,7 +319,8 @@ func checkProjectHealth(ctx context.Context, d Deps, id string, p project.Projec
 			c.Status = healthOK
 		case want == state.HarnessInstalled:
 			c.Status = healthDrift
-			c.Detail = "recorded installed but the binary is missing — reinstall it from the harnesses dialog"
+			c.Fix = fixInstall
+			c.Detail = "recorded installed but the binary is missing — the repair action reinstalls it"
 		case want == state.HarnessInstalling && got:
 			c.Status = healthOK
 			c.Detail = "install landed, record flip pending"
@@ -186,7 +329,8 @@ func checkProjectHealth(ctx context.Context, d Deps, id string, p project.Projec
 			c.Detail = "install running on the server"
 		case got:
 			c.Status = healthDrift
-			c.Detail = "binary present but not recorded — launch a session to heal the record, or install it explicitly"
+			c.Fix = fixRecord
+			c.Detail = "binary present but not recorded — the repair action writes the install record"
 		default:
 			c.Status = healthOK
 		}
@@ -241,7 +385,7 @@ func repoCheck(ctx context.Context, d Deps, container string, p project.Project)
 		return healthCheck{Name: "repo", Status: healthUnknown, State: p.Repo, System: "—", Detail: "volume probe failed — cannot compare"}
 	}
 	if strings.TrimSpace(out) == "" {
-		return healthCheck{Name: "repo", Status: healthDrift, State: p.Repo, System: "volume empty", Detail: "repo recorded but nothing cloned — recreate the container or re-clone from the terminal"}
+		return healthCheck{Name: "repo", Status: healthDrift, State: p.Repo, System: "volume empty", Fix: fixReconcile, Detail: "repo recorded but nothing cloned — recreate the container or re-clone from the terminal"}
 	}
 	return healthCheck{Name: "repo", Status: healthOK, State: p.Repo, System: "volume present"}
 }
