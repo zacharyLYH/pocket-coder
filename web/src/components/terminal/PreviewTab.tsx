@@ -22,10 +22,40 @@ export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; on
     }
   }, [projectId])
 
+  // Poll only while this tab is on screen. The component unmounts when the
+  // user switches views, but the window can still be backgrounded (another
+  // OS window, a locked phone): every tick is a docker exec inside the
+  // project container, so a hidden tab must not keep probing. Coming back
+  // refreshes immediately instead of waiting out the interval.
   useEffect(() => {
-    refresh()
-    const id = setInterval(refresh, 5000)
-    return () => clearInterval(id)
+    let id: ReturnType<typeof setInterval> | null = null
+    const tick = () => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    const start = () => {
+      if (id === null) id = setInterval(tick, 5000)
+    }
+    const stop = () => {
+      if (id !== null) {
+        clearInterval(id)
+        id = null
+      }
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void refresh()
+        start()
+      } else {
+        stop()
+      }
+    }
+    void refresh()
+    start()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [refresh])
 
   const start = useCallback(async (port: number): Promise<boolean> => {

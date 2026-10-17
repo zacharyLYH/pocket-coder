@@ -1,5 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { PreviewTab } from '@/components/terminal/PreviewTab'
 
 // The ports list must survive a failed refresh: a transient probe error
@@ -7,6 +7,11 @@ import { PreviewTab } from '@/components/terminal/PreviewTab'
 describe('PreviewTab', () => {
   beforeEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('keeps last-known ports when a refresh fails', async () => {
@@ -30,6 +35,43 @@ describe('PreviewTab', () => {
     fireEvent.click(screen.getByTestId('preview-refresh'))
     await waitFor(() => expect(calls).toBeGreaterThanOrEqual(2))
     expect(screen.getByTestId('preview-port-3000')).toBeInTheDocument()
+  })
+
+  // Every poll is a docker exec inside the project container, so a hidden
+  // window must stop probing; returning to the tab refreshes right away.
+  it('pauses polling while the window is hidden and refreshes on return', async () => {
+    vi.useFakeTimers()
+    let polls = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url)
+      if (u.endsWith('/preview/ports')) {
+        polls += 1
+        return new Response(JSON.stringify({ ports: [] }), { status: 200 })
+      }
+      throw new Error(`unexpected fetch: ${u}`)
+    }))
+    let hidden = true
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => (hidden ? 'hidden' : 'visible'))
+
+    render(<PreviewTab projectId="abc" onOpenPreview={vi.fn()} />)
+    await act(async () => {})
+    expect(polls).toBe(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000)
+    })
+    expect(polls).toBe(1)
+
+    hidden = false
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(polls).toBe(2)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000)
+    })
+    expect(polls).toBe(3)
   })
 
   it('auto-starts the lowest port, not ss-order first', async () => {
