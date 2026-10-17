@@ -23,6 +23,31 @@ func TestParsePorcelainLeadingSpaceFirstLine(t *testing.T) {
 	}
 }
 
+// Unmerged porcelain pairs are the conflict signal. Modified/untracked
+// pairs must not be mistaken for conflicts.
+func TestIsUnmerged(t *testing.T) {
+	cases := []struct {
+		x, y string
+		want bool
+	}{
+		{"U", "U", true},
+		{"A", "A", true},
+		{"D", "D", true},
+		{"A", "U", true},
+		{"U", "D", true},
+		{"D", "U", true},
+		{" ", "M", false},
+		{"M", " ", false},
+		{"?", "?", false},
+		{"A", " ", false},
+	}
+	for _, c := range cases {
+		if got := isUnmerged(c.x, c.y); got != c.want {
+			t.Fatalf("isUnmerged(%q, %q) = %v, want %v", c.x, c.y, got, c.want)
+		}
+	}
+}
+
 func TestGitStatusEndpointKeepsLeadingSpace(t *testing.T) {
 	d, md, pinOut, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")

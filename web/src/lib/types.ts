@@ -21,9 +21,18 @@ export type GitFileStatus = {
   unstagedAdd: number
   unstagedDel: number
   binary: boolean
+  conflict?: boolean
 }
 export type GitUpstream = { name: string; ahead: number; behind: number } | null
-export type GitStatusResponse = { branch: string; files: GitFileStatus[]; notRepo?: boolean; upstream?: GitUpstream; unborn?: boolean }
+export type GitConflictOperation = 'merge' | 'rebase' | ''
+export type GitStatusResponse = {
+  branch: string
+  files: GitFileStatus[]
+  notRepo?: boolean
+  upstream?: GitUpstream
+  unborn?: boolean
+  conflictOperation?: GitConflictOperation
+}
 export type GitBranchList = {
   current: string
   detached: boolean

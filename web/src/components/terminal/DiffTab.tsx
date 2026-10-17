@@ -9,10 +9,17 @@ import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { api, ApiError, errMsg, projectPath } from '@/lib/api'
 import { copyToClipboard } from '@/lib/clipboard'
+import { resolvePrimaryAction } from '@/lib/git-primary-action'
 import { BranchSheet } from '@/components/terminal/BranchSheet'
 import { EmptyState } from '@/components/EmptyState'
 import { GitOpsPrompt } from '@/components/terminal/GitOpsPrompt'
 import type { GitBranchList, GitDiffResponse, GitFileStatus, GitStatusResponse } from '@/lib/types'
+
+// Sticky section labels: the file list scrolls, so each "Staged / Unstaged /
+// Untracked" label stays pinned while its own files scroll past, keeping the
+// section a file belongs to visible.
+const sectionHeader =
+  'sticky top-0 z-10 -mx-0.5 rounded bg-background/95 px-1.5 py-1 text-xs font-medium text-muted-foreground backdrop-blur-sm'
 
 // Context levels for the per-file progressive expansion.
 const CONTEXT_LEVELS = [3, 10, 30, 0] as const // 0 = full
@@ -258,6 +265,24 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
     await stageMut(path, `/git/${unstage ? 'unstage' : 'stage'}`, { path }, `file:${path}:${unstage ? 'u' : 's'}`)
   }
 
+  // stageAll is the primary CTA's bulk step: one POST per stageable file,
+  // then a single refresh. Conflicts are never staged.
+  async function stageAll() {
+    const targets = files.filter((f) => !f.conflict && (f.unstaged !== ' ' || f.staged === '?'))
+    if (targets.length === 0) return
+    await runGit('stage-all', async () => {
+      for (const f of targets) {
+        await api(projectPath(projectId, '/git/stage'), {
+          method: 'POST',
+          body: JSON.stringify({ path: f.path }),
+        })
+      }
+    })
+    setDiffs({})
+    setExpanded({})
+    await refresh()
+  }
+
   async function stageHunk(path: string, hunk: string, stagedSection: boolean) {
     await stageMut(path, '/git/stage-hunk', { path, patch: hunkPatch(path, hunk), reverse: stagedSection }, `hunk:${path}:${hunk.slice(0, 24)}`)
   }
@@ -403,9 +428,14 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
   }
 
   const files = status?.files ?? []
-  const staged = files.filter((f) => f.staged !== ' ' && f.staged !== '?')
-  const unstaged = files.filter((f) => f.unstaged !== ' ' && f.staged !== '?')
-  const untracked = files.filter((f) => f.staged === '?' || f.unstaged === '?')
+  // Conflicts render first and are excluded from the normal sections: they
+  // need resolution, not staging. The backend marks them from porcelain's
+  // unmerged XY pairs (UU, AA, DD, AU, UA, DU, UD).
+  const conflicts = files.filter((f) => f.conflict)
+  const staged = files.filter((f) => !f.conflict && f.staged !== ' ' && f.staged !== '?')
+  const unstaged = files.filter((f) => !f.conflict && f.unstaged !== ' ' && f.staged !== '?')
+  const untracked = files.filter((f) => !f.conflict && (f.staged === '?' || f.unstaged === '?'))
+  const stageable = files.filter((f) => !f.conflict && (f.unstaged !== ' ' || f.staged === '?'))
 
   function renderHunks(path: string, section: 'staged' | 'unstaged') {
     const stagedSection = section === 'staged'
@@ -418,7 +448,7 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
     const hunks = parseHunks(fd.diff)
     if (hunks.length === 0) return <p className="py-2 text-xs text-muted-foreground">No hunks in this section.</p>
     return (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1.5">
         {fd.truncated && (
           <p className="text-xs text-muted-foreground">Truncated at 300 KB — read the rest in the terminal.</p>
         )}
@@ -471,7 +501,11 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
           aria-expanded={isOpen}
         >
           <span className="text-xs text-muted-foreground">{isOpen ? '▾' : '▸'}</span>
-          <span className="min-w-0 flex-1 truncate font-mono text-xs">{f.path}</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-mono text-xs">{f.path}</span>
+            {f.conflict && <span className="block text-[11px] text-destructive">Unresolved conflict</span>}
+          </span>
+          {f.conflict && <Badge variant="destructive" className="shrink-0" data-testid="diff-conflict-badge">Conflict</Badge>}
           {f.binary ? (
             <Badge variant="outline">binary</Badge>
           ) : (
@@ -481,7 +515,7 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
           )}
         </button>
         {isOpen && (
-          <div className="flex flex-col gap-2 border-t p-2">
+          <div className="flex flex-col gap-1.5 border-t p-2">
             <div className="flex flex-wrap items-center gap-2">
               {/* Per-file context expansion: 3 → 10 → 30 → full. */}
               {!f.binary && (
@@ -496,7 +530,12 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
                   {ctx === 0 ? 'Context: full' : `Context: ${ctx} ▾`}
                 </Button>
               )}
-              {hasUnstaged && (
+              {f.conflict && (
+                <p className="text-[11px] text-destructive">
+                  Resolve the markers in the terminal, then stage the file there or press Stage all.
+                </p>
+              )}
+              {hasUnstaged && !f.conflict && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -508,7 +547,7 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
                   {busy ? 'Staging…' : 'Stage file'}
                 </Button>
               )}
-              {hasStaged && (
+              {hasStaged && !f.conflict && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -525,16 +564,16 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
               <p className="py-2 text-xs text-muted-foreground">Binary file, not shown.</p>
             ) : (
               <>
-                {hasStaged && (
-                  <div className="flex flex-col gap-2">
+                {hasStaged && !f.conflict && (
+                  <div className="flex flex-col gap-1.5">
                     <p className="text-xs font-medium text-muted-foreground">Staged</p>
                     {renderHunks(f.path, 'staged')}
                   </div>
                 )}
                 {hasUnstaged && (
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-1.5">
                     <p className="text-xs font-medium text-muted-foreground">
-                      {hasStaged ? 'Unstaged' : f.staged === '?' ? 'Untracked' : 'Changes'}
+                      {hasStaged ? 'Unstaged' : f.staged === '?' ? 'Untracked' : f.conflict ? 'Conflict' : 'Changes'}
                     </p>
                     {renderHunks(f.path, 'unstaged')}
                   </div>
@@ -550,19 +589,52 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
   const upstream = status?.upstream ?? null
   const treeDirty = files.length > 0
   const ahead = upstream?.ahead ?? 0
+  const behind = upstream?.behind ?? 0
   const hasUpstream = upstream !== null
-  // Push needs something to send: unborn HEAD (zero commits) has
-  // nothing, and a clean tree already in sync is a no-op. First push
-  // (no upstream yet) stays enabled — it records tracking via -u.
-  const pushDisabled = status?.unborn
-    ? 'Commit first — this repo has no commits yet.'
-    : !treeDirty && hasUpstream && ahead === 0
-      ? 'Nothing to push — the branch is up to date.'
-      : null
+  // One CTA: its label always says what pressing it does.
+  const action = resolvePrimaryAction({
+    stagedCount: staged.length,
+    unstagedCount: stageable.length,
+    hasMessage: message.trim() !== '',
+    ahead,
+    behind,
+    unborn: !!status?.unborn,
+    hasUnresolvedConflicts: conflicts.length > 0,
+    conflictOperation: status?.conflictOperation,
+    busy: gitBusy !== null,
+  })
+  const busyLabel =
+    gitBusy === 'commit' ? 'Committing…'
+      : gitBusy === 'push' ? 'Pushing…'
+        : gitBusy === 'pull' ? 'Pulling…'
+          : gitBusy === 'stage-all' ? 'Staging…'
+            : null
+
+  async function runPrimary() {
+    switch (action.kind) {
+      case 'stage-all':
+        await stageAll()
+        break
+      case 'commit':
+        await doCommit()
+        break
+      case 'commit-push': {
+        const sha = await doCommit()
+        if (sha) await doPush()
+        break
+      }
+      case 'push':
+        await doPush()
+        break
+      case 'pull':
+        await doPull()
+        break
+    }
+  }
 
   return (
-    <Card className="flex h-full w-full flex-col shadow-sm" data-testid="diff-tab">
-      <CardHeader className="pb-3">
+    <Card className="flex h-full w-full flex-col gap-2 py-3 shadow-sm" data-testid="diff-tab">
+      <CardHeader className="px-3 pt-3 pb-2">
         <div className="flex items-center gap-2">
           <CardTitle className="text-base">Git</CardTitle>
           <button
@@ -588,7 +660,7 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
         <CardDescription>Review what the harness changed, then commit and push. Pushes go straight to the current branch — PRs and syncs run in your terminal AI (below).</CardDescription>
       </CardHeader>
       <Separator />
-      <CardContent className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pt-3">
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto px-2 pt-2 pb-2">
         {error && <p className="text-xs text-destructive" data-testid="diff-error">{error}</p>}
         {gitError && (
           <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-2" data-testid="git-error">
@@ -602,48 +674,6 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
             >
               Copy
             </Button>
-          </div>
-        )}
-        {/* Message box: always visible at the top of the content. */}
-        {!status?.notRepo && (
-          <div className="flex flex-col gap-1.5 rounded-lg border p-2" data-testid="git-commit-section">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-muted-foreground">Commit</span>
-              <span className="flex-1" />
-              <Button
-                size="sm"
-                variant="ghost"
-                className="min-h-[36px]"
-                disabled={gitBusy !== null || !treeDirty}
-                onClick={() => void generateMessage()}
-                data-testid="git-generate-message"
-              >
-                {gitBusy === 'gen-msg' ? '✨ Generating…' : '✨ Generate'}
-              </Button>
-            </div>
-            <textarea
-              className="min-h-12 w-full rounded-md border bg-background p-2 font-mono text-xs"
-              placeholder="Commit message (multi-line ok)"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              data-testid="git-message"
-            />
-            {identityOpen && (
-              <div className="flex flex-col gap-2 rounded-md border bg-muted/30 p-2" data-testid="git-identity-form">
-                <p className="text-xs text-muted-foreground">Set git identity for this repo (required to commit):</p>
-                <Input placeholder="Name" value={idName} onChange={(e) => setIdName(e.target.value)} data-testid="git-identity-name" />
-                <Input placeholder="Email" value={idEmail} onChange={(e) => setIdEmail(e.target.value)} data-testid="git-identity-email" />
-                <Button
-                  size="sm"
-                  className="min-h-[44px]"
-                  disabled={gitBusy !== null || !idName.trim() || !idEmail.trim()}
-                  onClick={() => void saveIdentity()}
-                  data-testid="git-identity-save"
-                >
-                  Save identity
-                </Button>
-              </div>
-            )}
           </div>
         )}
         {status === null ? (
@@ -678,24 +708,36 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
             {files.length === 0 ? (
               <EmptyState testid="diff-empty" title="No changes" hint="Working tree is clean." />
             ) : (
-              // min-h-36 floors the list: on short screens the fixed
-              // message/actions blocks must not squeeze it to zero.
-              <div className="flex min-h-36 flex-1 flex-col gap-2 overflow-auto" data-testid="diff-file-list">
+              // The diff is the point of this tab: floor the list at most of
+              // the viewport so the sticky message/actions block below can
+              // never squeeze the changes into a postage stamp.
+              <div className="flex min-h-[45vh] flex-1 flex-col gap-2 overflow-auto" data-testid="diff-file-list">
+                {conflicts.length > 0 && (
+                  <div className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2" data-testid="diff-conflicts">
+                    <p className="text-xs font-medium text-destructive">Conflicts ({conflicts.length})</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Resolve them in the terminal, then commit.{' '}
+                      {status?.conflictOperation ? `A ${status.conflictOperation} is in progress — ` : ''}
+                      {status?.conflictOperation === 'rebase' ? '`git rebase --abort` cancels it.' : '`git merge --abort` cancels it.'}
+                    </p>
+                    {conflicts.map(renderFile)}
+                  </div>
+                )}
                 {staged.length > 0 && (
                   <div className="flex flex-col gap-2">
-                    <p className="text-xs font-medium text-muted-foreground">Staged ({staged.length})</p>
+                    <p className={sectionHeader}>Staged ({staged.length})</p>
                     {staged.map(renderFile)}
                   </div>
                 )}
                 {unstaged.length > 0 && (
                   <div className="flex flex-col gap-2">
-                    <p className="text-xs font-medium text-muted-foreground">Unstaged ({unstaged.length})</p>
+                    <p className={sectionHeader}>Unstaged ({unstaged.length})</p>
                     {unstaged.map(renderFile)}
                   </div>
                 )}
                 {untracked.length > 0 && (
                   <div className="flex flex-col gap-2">
-                    <p className="text-xs font-medium text-muted-foreground">Untracked ({untracked.length})</p>
+                    <p className={sectionHeader}>Untracked ({untracked.length})</p>
                     {untracked.map(renderFile)}
                   </div>
                 )}
@@ -703,41 +745,73 @@ export function DiffTab({ projectId, onSelectView }: { projectId: string; onSele
             )}
           </>
         )}
-        {/* Commit and Push are separate buttons: commit lands locally,
-            push ships the branch (first push records tracking via -u).
-            No combined states — a failed push leaves the sha chip and a
-            push-only retry, never a duplicate commit. */}
+        {/* One CTA whose label always says what it does — Stage all →
+            Commit → Commit & Push → Push/Pull — instead of static Commit +
+            Push buttons the user has to reason about. The message box lives
+            in the same sticky card (Orca anchors both above the keyboard)
+            so typing and committing never requires scrolling past the file
+            list. */}
         {!status?.notRepo && (
-          <div className="flex flex-col gap-1.5 rounded-lg border p-2" data-testid="git-actions">
-            <div className="flex flex-wrap gap-2">
+          <div className="sticky bottom-0 z-10 flex flex-col gap-1 rounded-lg border bg-card/95 p-1.5 backdrop-blur" data-testid="git-actions">
+            {/* Message + generate share one row: the commit box costs one
+                textarea worth of height, not a label row plus a button row. */}
+            <div className="flex flex-col gap-1" data-testid="git-commit-section">
+              <div className="flex items-start gap-1.5">
+                <textarea
+                  className="min-h-9 flex-1 rounded-md border bg-background p-2 font-mono text-xs"
+                  placeholder="Commit message (multi-line ok)"
+                  rows={2}
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  data-testid="git-message"
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="min-h-[36px] shrink-0 px-2 text-xs"
+                  disabled={gitBusy !== null || !treeDirty}
+                  onClick={() => void generateMessage()}
+                  data-testid="git-generate-message"
+                >
+                  {gitBusy === 'gen-msg' ? '✨ …' : '✨ Generate'}
+                </Button>
+              </div>
+              {identityOpen && (
+                <div className="flex flex-col gap-2 rounded-md border bg-muted/30 p-2" data-testid="git-identity-form">
+                  <p className="text-xs text-muted-foreground">Set git identity for this repo (required to commit):</p>
+                  <Input placeholder="Name" value={idName} onChange={(e) => setIdName(e.target.value)} data-testid="git-identity-name" />
+                  <Input placeholder="Email" value={idEmail} onChange={(e) => setIdEmail(e.target.value)} data-testid="git-identity-email" />
+                  <Button
+                    size="sm"
+                    className="min-h-[44px]"
+                    disabled={gitBusy !== null || !idName.trim() || !idEmail.trim()}
+                    onClick={() => void saveIdentity()}
+                    data-testid="git-identity-save"
+                  >
+                    Save identity
+                  </Button>
+                </div>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
               <Button
                 size="sm"
                 className="min-h-[44px] flex-1"
-                disabled={gitBusy !== null || !message.trim() || !treeDirty}
-                onClick={() => void doCommit()}
-                data-testid="git-commit"
+                disabled={gitBusy !== null || action.disabled}
+                title={action.hint ?? undefined}
+                onClick={() => void runPrimary()}
+                data-testid="git-primary-action"
               >
-                {gitBusy === 'commit' ? 'Committing…' : 'Commit'}
+                {busyLabel ?? action.label}
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="min-h-[44px] flex-1"
-                disabled={gitBusy !== null || pushDisabled !== null}
-                title={pushDisabled ?? undefined}
-                onClick={() => void doPush()}
-                data-testid="git-push"
-              >
-                {gitBusy === 'push' ? 'Pushing…' : 'Push'}
-              </Button>
-              {hasUpstream && upstream.behind > 0 && (
+              {hasUpstream && behind > 0 && action.kind !== 'pull' && (
                 <Button size="sm" variant="outline" className="min-h-[44px]" disabled={gitBusy !== null} onClick={() => void doPull()} data-testid="git-pull">
-                  {gitBusy === 'pull' ? 'Pulling…' : `Pull (↓${upstream.behind})`}
+                  {gitBusy === 'pull' ? 'Pulling…' : `Pull (↓${behind})`}
                 </Button>
               )}
             </div>
-            {pushDisabled !== null && gitBusy === null && (
-              <p className="text-[11px] text-muted-foreground" data-testid="git-push-hint">{pushDisabled}</p>
+            {action.hint && gitBusy === null && (
+              <p className="text-[11px] text-muted-foreground" data-testid="git-primary-hint">{action.hint}</p>
             )}
           </div>
         )}

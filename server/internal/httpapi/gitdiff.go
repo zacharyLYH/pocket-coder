@@ -29,6 +29,29 @@ type gitFile struct {
 	UnstagedAdd int    `json:"unstagedAdd"`
 	UnstagedDel int    `json:"unstagedDel"`
 	Binary      bool   `json:"binary"`
+	// Conflict marks a porcelain XY pair git reports as unmerged. The UI
+	// badges and sorts these first; resolution stays in the terminal.
+	Conflict bool `json:"conflict,omitempty"`
+}
+
+// isUnmerged reports whether a porcelain XY pair is an unmerged state
+// (UU, AA, DD, AU, UA, DU, UD).
+func isUnmerged(x, y string) bool {
+	return x == "U" || y == "U" || (x == "A" && y == "A") || (x == "D" && y == "D")
+}
+
+// conflictOperation names the merge/rebase that produced the conflicts.
+// Best-effort: empty when no operation is in progress (or the probe fails),
+// which only costs the hint — the conflict rows still surface.
+func conflictOperation(ctx context.Context, d Deps, container, dir string) string {
+	out, err := d.Sessions.ExecCommand(ctx, container,
+		"gd=$(git -C "+shellQuote(dir)+" rev-parse --absolute-git-dir 2>/dev/null) || exit 0; "+
+			"if [ -f \"$gd/MERGE_HEAD\" ]; then echo merge; "+
+			"elif [ -d \"$gd/rebase-merge\" ] || [ -d \"$gd/rebase-apply\" ]; then echo rebase; fi")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 // shellQuote wraps s in single quotes for `bash -lc` embedding.
@@ -168,6 +191,20 @@ func handleGitStatus(d Deps) http.HandlerFunc {
 		parseNumstat(unstagedStat, unstaged, binary)
 		parseNumstat(stagedStat, staged, binary)
 
+		// Conflict state rides the existing poll: unmerged XY pairs get a
+		// per-file flag, and one extra probe runs only when they exist.
+		conflicted := false
+		for _, codes := range xy {
+			if isUnmerged(codes[0], codes[1]) {
+				conflicted = true
+				break
+			}
+		}
+		conflictOp := ""
+		if conflicted {
+			conflictOp = conflictOperation(r.Context(), d, container, dir)
+		}
+
 		// Upstream tracking for the Commit & Push label + PR-row gating.
 		// Fails soft: any error → null upstream, status still 200.
 		upstream := map[string]any(nil)
@@ -185,13 +222,17 @@ func handleGitStatus(d Deps) http.HandlerFunc {
 				Path: path, Staged: codes[0], Unstaged: codes[1],
 				StagedAdd: s[0], StagedDel: s[1],
 				UnstagedAdd: u[0], UnstagedDel: u[1],
-				Binary: binary[path],
+				Binary:  binary[path],
+				Conflict: isUnmerged(codes[0], codes[1]),
 			})
 		}
 		if files == nil {
 			files = []gitFile{}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"branch": branch, "files": files, "upstream": upstream, "unborn": unborn})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"branch": branch, "files": files, "upstream": upstream, "unborn": unborn,
+			"conflictOperation": conflictOp,
+		})
 	}
 }
 

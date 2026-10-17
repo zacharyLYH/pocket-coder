@@ -153,4 +153,46 @@ test.describe('diff tab phone', () => {
       await deleteAllProjects(request)
     }
   })
+
+  // Section labels are sticky so a file always says which bucket it is in
+  // once the list is scrolled past the point where the label would leave.
+  test('section headers stay pinned while the file list scrolls', async ({ page, request }) => {
+    test.setTimeout(ciTimeout(300_000))
+    const id = await createProject(request)
+    await waitForRunning(request, id)
+    try {
+      // Enough files to overflow the list's 45vh floor several times over.
+      const files = Array.from({ length: 14 }, (_, i) => `pad-${i}.txt`)
+      const res = await request.post('/api/projects/exec', {
+        data: {
+          projectIds: [id],
+          command: ['cd /workspace/repo', ...files.map((f) => `echo ${f} > ${f}`)].join(' && '),
+        },
+      })
+      expect(res.ok()).toBeTruthy()
+
+      await page.goto(`/projects/${projectURL(id)}/terminal/main`)
+      await page.getByTestId('tab-diff').click()
+      const list = page.getByTestId('diff-file-list')
+      await expect(list).toBeVisible({ timeout: ciTimeout(30_000) })
+      await expect(page.getByText('pad-13.txt')).toBeVisible({ timeout: ciTimeout(30_000) })
+
+      const header = page.getByText(/^Untracked \(\d+\)$/)
+      await expect(header).toBeVisible()
+      const listBox = await list.boundingBox()
+      await list.evaluate((el) => {
+        el.scrollTop = el.scrollHeight
+      })
+      await expect(header).toBeVisible()
+      const headerBox = await header.boundingBox()
+      expect(listBox && headerBox).toBeTruthy()
+      // Pinned at the list's top edge — inside the viewport, not scrolled
+      // above it with its files.
+      const offset = headerBox!.y - listBox!.y
+      expect(offset).toBeGreaterThanOrEqual(0)
+      expect(offset).toBeLessThan(24)
+    } finally {
+      await deleteAllProjects(request)
+    }
+  })
 })

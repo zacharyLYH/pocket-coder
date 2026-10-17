@@ -41,7 +41,10 @@ test.describe('preview surface back button (mobile only)', () => {
 
       // Wait for the iframe + noVNC surface to load.
       await expect(previewPage.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: ciTimeout(60_000) })
-      await previewPage.waitForTimeout(5_000)
+      // The iframe element exists before noVNC connects — wait for its
+      // canvas (surface connected) and for the app inside the sidecar,
+      // otherwise the shot enshrines a gray "Loading" frame.
+      await expect(previewPage.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: ciTimeout(60_000) })
 
       // On touch devices, the back button should be visible.
       const backBtn = previewPage.locator('button[aria-label="Back to terminal"]')
@@ -80,7 +83,10 @@ test.describe('preview surface back button (mobile only)', () => {
       ])
 
       await expect(previewPage.locator('iframe[title="Remote project preview"]')).toBeVisible({ timeout: ciTimeout(60_000) })
-      await previewPage.waitForTimeout(5_000)
+      // The iframe element exists before noVNC connects — wait for its
+      // canvas (surface connected) so the back button is interactable
+      // over a loaded surface, not a gray "Loading" frame.
+      await expect(previewPage.locator('iframe[title="Remote project preview"]').contentFrame().locator('canvas').first()).toBeVisible({ timeout: ciTimeout(60_000) })
 
       const backBtn = previewPage.locator('button[aria-label="Back to terminal"]')
       await expect(backBtn).toBeVisible({ timeout: ciTimeout(10_000) })

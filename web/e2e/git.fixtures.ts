@@ -65,19 +65,49 @@ export const BRANCHES = {
 // STATE is a mutable test store so POST handlers (commit, push) can
 // mutate what GET /git/status answers — the spec drives real flows:
 // commit cleans the tree with 1 ahead, push drains it back to 0.
-export const STATE = { committed: false, ahead: 0 }
+export const STATE = { committed: false, staged: false, ahead: 0 }
 
 export function resetGitState() {
   STATE.committed = false
+  STATE.staged = false
   STATE.ahead = 0
 }
 
-export async function mockGit(page: Page, opts: { identityEmpty?: boolean; noUpstream?: boolean; switchConflict?: boolean; pushFail?: string; unborn?: boolean } = {}) {
+export async function mockGit(page: Page, opts: {
+  identityEmpty?: boolean
+  noUpstream?: boolean
+  switchConflict?: boolean
+  pushFail?: string
+  unborn?: boolean
+  conflict?: boolean
+  ahead?: number
+} = {}) {
+  STATE.ahead = opts.ahead ?? 0
   const status = () => {
-    if (opts.unborn) return { branch: '', files: [], upstream: null, unborn: true }
+    if (opts.unborn) return { branch: '', files: [], upstream: null, unborn: true, conflictOperation: '' }
     const base = opts.noUpstream ? STATUS_NO_UPSTREAM : STATUS
     const upstream = base.upstream ? { ...base.upstream, ahead: STATE.ahead } : null
-    return STATE.committed ? { ...base, upstream, files: [] } : { ...base, upstream }
+    if (STATE.committed) return { ...base, upstream, files: [], conflictOperation: '' }
+    if (opts.conflict) {
+      return {
+        ...base,
+        upstream,
+        conflictOperation: 'merge',
+        files: [
+          { path: 'conflict.txt', staged: 'U', unstaged: 'U', stagedAdd: 1, stagedDel: 1, unstagedAdd: 1, unstagedDel: 1, binary: false, conflict: true },
+          ...STATUS.files,
+        ],
+      }
+    }
+    if (STATE.staged) {
+      return {
+        ...base,
+        upstream,
+        conflictOperation: '',
+        files: [{ ...STATUS.files[0], staged: 'M', unstaged: ' ', stagedAdd: 1, unstagedAdd: 0 }],
+      }
+    }
+    return { ...base, upstream, conflictOperation: '' }
   }
 
   await page.route('**/api/ai/models', (r) =>
@@ -91,9 +121,18 @@ export async function mockGit(page: Page, opts: { identityEmpty?: boolean; noUps
   await page.route('**/api/projects/*/git/status', (r) =>
     r.fulfill({ json: STATE.committed ? { ...status(), files: [] } : status() }))
 
-  await page.route('**/api/projects/*/git/stage', (r) => r.fulfill({ json: { ok: true } }))
-  await page.route('**/api/projects/*/git/unstage', (r) => r.fulfill({ json: { ok: true } }))
-  await page.route('**/api/projects/*/git/stage-hunk', (r) => r.fulfill({ json: { ok: true } }))
+  await page.route('**/api/projects/*/git/stage', (r) => {
+    STATE.staged = true
+    return r.fulfill({ json: { ok: true } })
+  })
+  await page.route('**/api/projects/*/git/unstage', (r) => {
+    STATE.staged = false
+    return r.fulfill({ json: { ok: true } })
+  })
+  await page.route('**/api/projects/*/git/stage-hunk', (r) => {
+    STATE.staged = true
+    return r.fulfill({ json: { ok: true } })
+  })
 
   await page.route('**/api/projects/*/git/diff*', (r) => {
     const u = new URL(r.request().url())

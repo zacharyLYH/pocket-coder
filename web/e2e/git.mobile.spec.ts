@@ -24,7 +24,7 @@ test.describe('git tab (mobile)', () => {
 
   test('review → expand context → commit → push → draft description', async ({ page }) => {
     await openGitTab(page)
-    // Message box sits at the top with Generate.
+    // Message box lives in the sticky action card with Generate.
     await expect(page.getByTestId('git-message')).toBeVisible()
     await expect(page.getByTestId('git-generate-message')).toBeVisible()
 
@@ -39,17 +39,24 @@ test.describe('git tab (mobile)', () => {
     await page.getByTestId('git-collapse-all').click()
     await expect(page.getByTestId('diff-stage-hunk')).toBeHidden()
 
+    // One CTA, label changes with state: Stage all → Commit → Push.
+    await expect(page.getByTestId('git-primary-action')).toHaveText('Stage all')
+    await page.getByTestId('git-primary-action').click()
+    await expect(page.getByTestId('git-primary-action')).toHaveText('Commit')
+    await expect(page.getByTestId('git-primary-action')).toBeDisabled()
+    await expect(page.getByTestId('git-primary-hint')).toContainText('Enter a commit message')
+    await expect(page.getByTestId('git-actions')).toHaveScreenshot('git-mobile-actions-commit.png')
+
     // Commit lands locally: sha chip, clean tree, push-only retry state.
-    await page.getByTestId('diff-file').click()
     await page.getByTestId('git-message').fill('feat: add world greeting')
-    await page.getByTestId('git-commit').click()
+    await expect(page.getByTestId('git-primary-action')).toBeEnabled()
+    await page.getByTestId('git-primary-action').click()
     await expect(page.getByTestId('git-commit-sha')).toContainText('abc1234')
     await expect(page.getByTestId('diff-empty')).toContainText('No changes')
-    await expect(page.getByTestId('git-commit')).toBeDisabled()
-    await expect(page.getByTestId('git-push')).toBeEnabled()
+    await expect(page.getByTestId('git-primary-action')).toHaveText('Push')
 
     // Push ships it, then the AI description is copy-only.
-    await page.getByTestId('git-push').click()
+    await page.getByTestId('git-primary-action').click()
     await expect(page.getByTestId('git-push-state')).toContainText('Pushed ✓')
     await expect(page.getByTestId('diff-tab')).toHaveScreenshot('git-mobile-shipped.png', { timeout: ciTimeout(20_000) })
 
@@ -71,18 +78,20 @@ test.describe('git tab (mobile)', () => {
     await expect(page.getByTestId('tab-codemap')).toHaveAttribute('aria-selected', 'true')
   })
 
-  test('push is disabled on a repo with no commits yet', async ({ page }) => {
+  test('unborn repo shows Commit first, not Push', async ({ page }) => {
     await openGitTab(page, { unborn: true })
-    await expect(page.getByTestId('git-push')).toBeDisabled()
-    await expect(page.getByTestId('git-push-hint')).toContainText('Commit first')
+    await expect(page.getByTestId('git-primary-action')).toHaveText('Commit first')
+    await expect(page.getByTestId('git-primary-action')).toBeDisabled()
+    await expect(page.getByTestId('git-primary-hint')).toContainText('no commits yet')
   })
 
   test('working-tree explain is disabled on a clean tree', async ({ page }) => {
     await openGitTab(page)
     await page.getByTestId('diff-file').click()
     await expect(page.getByTestId('git-explain-tree')).toBeEnabled()
+    await page.getByTestId('git-primary-action').click() // Stage all
     await page.getByTestId('git-message').fill('feat: add world greeting')
-    await page.getByTestId('git-commit').click()
+    await page.getByTestId('git-primary-action').click() // Commit
     await expect(page.getByTestId('git-explain-tree')).toBeDisabled()
   })
 
@@ -91,21 +100,55 @@ test.describe('git tab (mobile)', () => {
       pushFail: 'To github.com:demo/git.git\n ! [rejected] main -> main (non-fast-forward)\nerror: failed to push some refs — fix credentials or conflicts in the terminal',
     })
 
+    await page.getByTestId('git-primary-action').click() // Stage all
     await page.getByTestId('git-message').fill('feat: add world greeting')
-    await page.getByTestId('git-commit').click()
+    await page.getByTestId('git-primary-action').click() // Commit
     await expect(page.getByTestId('git-commit-sha')).toContainText('abc1234')
 
     // Partial success is honest: commit landed, push failed, retry is
     // push-only with no duplicate commit.
-    await page.getByTestId('git-push').click()
+    await expect(page.getByTestId('git-primary-action')).toHaveText('Push')
+    await page.getByTestId('git-primary-action').click()
     await expect(page.getByTestId('git-push-state')).toContainText('Push rejected ✗')
     await expect(page.getByTestId('git-error')).toContainText('non-fast-forward')
-    await expect(page.getByTestId('git-commit')).toBeDisabled()
-    await expect(page.getByTestId('git-push')).toBeEnabled()
+    await expect(page.getByTestId('git-primary-action')).toHaveText('Push')
 
     // The error copies verbatim for pasting into their AI.
     await page.getByTestId('git-error-copy').click()
     expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('non-fast-forward')
+  })
+
+  test('ahead branch folds commit and push into one CTA', async ({ page }) => {
+    await openGitTab(page, { ahead: 1 })
+
+    // Unstaged work outranks the pending push: stage it first.
+    await expect(page.getByTestId('git-primary-action')).toHaveText('Stage all')
+    await page.getByTestId('git-primary-action').click()
+
+    await page.getByTestId('git-message').fill('feat: add world greeting')
+    await expect(page.getByTestId('git-primary-action')).toHaveText('Commit & Push')
+    await page.getByTestId('git-primary-action').click()
+
+    // One press lands the commit and ships it: no second button hunt.
+    await expect(page.getByTestId('git-commit-sha')).toContainText('abc1234')
+    await expect(page.getByTestId('git-push-state')).toContainText('Pushed ✓')
+    await expect(page.getByTestId('git-primary-action')).toHaveText('Up to date')
+  })
+
+  test('unresolved merge conflict blocks the CTA and badges the file', async ({ page }) => {
+    await openGitTab(page, { conflict: true })
+
+    // Detection replaces the failure surprise: the CTA names the blocker.
+    await expect(page.getByTestId('git-primary-action')).toHaveText('Resolve conflicts')
+    await expect(page.getByTestId('git-primary-action')).toBeDisabled()
+    await expect(page.getByTestId('git-primary-hint')).toContainText('merge in progress')
+
+    // Conflicts sort above the normal sections and never offer staging.
+    await expect(page.getByTestId('diff-conflicts')).toContainText('Conflicts (1)')
+    await expect(page.getByTestId('diff-conflict-badge')).toHaveCount(1)
+    await page.getByTestId('diff-conflicts').getByTestId('diff-file').click()
+    await expect(page.getByTestId('diff-conflicts').getByTestId('diff-stage-file')).toHaveCount(0)
+    await expect(page.getByTestId('diff-tab')).toHaveScreenshot('git-mobile-conflict.png')
   })
 })
 
