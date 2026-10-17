@@ -267,14 +267,25 @@ export async function openPreviewFromTerminal(page: Page, projectId: string, por
   return previewPage
 }
 
+// Wait for the RFB handshake, not a fixed sleep. vnc_lite sets #status to
+// "Connected to <host>" from the connect event (ServerInit received, canvas
+// allocated) and the first framebuffer update follows immediately — a shot
+// taken earlier shows only the connecting screen, which is exactly the flake
+// a blind sleep produces on a slow sidecar.
 async function waitForPreview(page: Page) {
-  const frame = page.locator('iframe[title="Remote project preview"]')
-  await expect(frame.contentFrame().locator('canvas').first()).toBeVisible({ timeout: ciTimeout(60_000) })
-  const connectBtn = frame.contentFrame().locator('text=Connect')
+  const surface = page.locator('iframe[title="Remote project preview"]').contentFrame()
+  const canvas = surface.locator('#screen canvas').first()
+  await expect(canvas).toBeVisible({ timeout: ciTimeout(60_000) })
+  const connectBtn = surface.locator('text=Connect')
   if (await connectBtn.isVisible({ timeout: ciTimeout(5_000) }).catch(() => false)) {
     await connectBtn.click()
   }
-  await page.waitForTimeout(5000)
+  await expect(surface.locator('#status')).toContainText('Connected to', { timeout: ciTimeout(60_000) })
+  // Zero-size canvas = no ServerInit yet, so no frame could have been painted.
+  await expect
+    .poll(() => canvas.evaluate((el: HTMLCanvasElement) => el.width * el.height), { timeout: ciTimeout(30_000) })
+    .toBeGreaterThan(0)
+  await page.waitForTimeout(500)
 }
 
 export function pngSize(png: Buffer): { width: number; height: number } {

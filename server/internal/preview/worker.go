@@ -21,10 +21,18 @@ var (
 )
 
 // Config is the immutable identity/configuration of one project's browser.
+//
+// ViewWidth/ViewHeight/DPR are the client that asked for the preview: they
+// size the X screen (FramebufferSize) and are fixed for the worker's life,
+// because Xvfb cannot resize it. A zero viewport keeps the legacy full-size
+// screen, which is what callers without a client (tools, the butler) get.
 type Config struct {
 	ProjectID   string
 	ContainerID string
 	Port        int
+	ViewWidth   int
+	ViewHeight  int
+	DPR         int
 }
 
 // Endpoint describes a private worker endpoint. These values are server-side
@@ -38,6 +46,9 @@ type Endpoint struct {
 // Close must be safe to call more than once.
 type Worker interface {
 	Endpoint() Endpoint
+	// Framebuffer reports the sidecar's X screen size: the pixel budget every
+	// VNC frame is encoded from, and the ceiling for the Chromium window.
+	Framebuffer() (width, height int)
 	Close(ctx context.Context) error
 }
 

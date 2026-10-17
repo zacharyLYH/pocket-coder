@@ -52,7 +52,7 @@ preview.a|5|e2e/preview.tools.spec.ts
 preview.b|6|e2e/preview.token.spec.ts
 preview.c|7|e2e/preview.journey.spec.ts e2e/preview.auth.spec.ts e2e/preview.viewport.spec.ts
 preview.d|8|e2e/preview.htmx.spec.ts e2e/preview.vue.spec.ts e2e/preview.reconnect.spec.ts e2e/preview.port.spec.ts e2e/shortcuts.spec.ts
-preview.e|10|e2e/preview.fit.spec.ts e2e/preview.vanilla.spec.ts e2e/preview.backbutton.spec.ts
+preview.e|10|e2e/preview.fit.spec.ts e2e/preview.vanilla.spec.ts e2e/preview.backbutton.spec.ts e2e/preview.framebuffer.spec.ts
 bootstrap|9|e2e/bootstrap.spec.ts
 '
 

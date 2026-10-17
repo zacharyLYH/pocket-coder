@@ -200,15 +200,30 @@ func authedRequest(t *testing.T, h http.Handler, cookie *http.Cookie, method, pa
 
 // previewTestWorker/Factory are a no-op Docker-like runtime for manager-level
 // tests: they report a fixed private endpoint and Close immediately.
-type previewTestWorker struct{ ep preview.Endpoint }
+type previewTestWorker struct {
+	ep          preview.Endpoint
+	framebuffer [2]int
+}
 
 func (w previewTestWorker) Endpoint() preview.Endpoint  { return w.ep }
 func (w previewTestWorker) Close(context.Context) error { return nil }
 
-type previewTestFactory struct{ ep preview.Endpoint }
+// Framebuffer mirrors the legacy fixed screen unless a test overrides it via
+// previewTestFactory.framebuffer.
+func (w previewTestWorker) Framebuffer() (int, int) {
+	if w.framebuffer[0] > 0 && w.framebuffer[1] > 0 {
+		return w.framebuffer[0], w.framebuffer[1]
+	}
+	return preview.DisplayWidth, preview.DisplayHeight
+}
+
+type previewTestFactory struct {
+	ep          preview.Endpoint
+	framebuffer [2]int
+}
 
 func (f previewTestFactory) Start(context.Context, preview.Config) (preview.Worker, error) {
-	return previewTestWorker{ep: f.ep}, nil
+	return previewTestWorker{ep: f.ep, framebuffer: f.framebuffer}, nil
 }
 
 // harnessPath mirrors the prelude session puts before every harness exec.

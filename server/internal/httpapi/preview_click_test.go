@@ -14,14 +14,24 @@ import (
 type scriptedCaller struct {
 	results []error
 	calls   []string
+	// bodies records every call's params so tests can assert the values that
+	// actually reached CDP (window size, emulated viewport, scale factor).
+	bodies []map[string]any
+	// responses are canned replies by method; anything unlisted answers {}.
+	responses map[string]json.RawMessage
 }
 
 func (f *scriptedCaller) call(_ context.Context, method string, params any) (json.RawMessage, error) {
 	typ := ""
-	if m, ok := params.(map[string]any); ok {
+	m, _ := params.(map[string]any)
+	if m != nil {
 		typ, _ = m["type"].(string)
 	}
 	f.calls = append(f.calls, method+"/"+typ)
+	f.bodies = append(f.bodies, m)
+	if canned, ok := f.responses[method]; ok {
+		return canned, nil
+	}
 	if len(f.results) == 0 {
 		return json.RawMessage(`{}`), nil
 	}

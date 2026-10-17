@@ -6,6 +6,18 @@ import { Separator } from '@/components/ui/separator'
 import { api, errMsg, projectPath } from '@/lib/api'
 import { EmptyState } from '@/components/EmptyState'
 
+// The start request creates the sidecar's X screen (the VNC framebuffer), so
+// it has to carry the viewport that will display it: the preview opens at
+// this window's size, and a phone should not pay for a 1920x1080 screen.
+// dpr rides along so retina text renders sharp; the backend caps both.
+function viewState() {
+  return {
+    width: window.innerWidth,
+    height: window.innerHeight,
+    dpr: window.devicePixelRatio || 1,
+  }
+}
+
 export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; onOpenPreview: () => void }) {
   const [ports, setPorts] = useState<{ port: number }[]>([])
   const [loadingPort, setLoadingPort] = useState<number | null>(null)
@@ -65,7 +77,10 @@ export function PreviewTab({ projectId, onOpenPreview }: { projectId: string; on
     try {
       // POST blocks until the sidecar proves the page (or fails loudly) —
       // no client-side guessing, no force-ready.
-      await api(projectPath(projectId, '/preview/start'), { method: 'POST', body: JSON.stringify({ port }) })
+      await api(projectPath(projectId, '/preview/start'), {
+        method: 'POST',
+        body: JSON.stringify({ port, ...viewState() }),
+      })
       setReadyPort(port)
       return true
     } catch (e) {

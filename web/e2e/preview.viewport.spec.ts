@@ -11,8 +11,13 @@ async function cdpScreenshot(request: APIRequestContext, projectID: string, toke
   return body
 }
 
+// The sidecar's X screen is the client's viewport x DPR (see
+// preview.framebuffer.spec.ts), so a viewport request larger than the screen
+// that asked for the preview is clamped, and 1920x1080 is no longer a
+// constant anywhere. This host viewport is chosen to leave room for both a
+// desktop and a phone viewport request inside the screen it produces.
 test.describe('preview chromium viewports', () => {
-  test.use({ viewport: { width: 1280, height: 720 } })
+  test.use({ viewport: { width: 1280, height: 900 } })
 
   test('chromium desktop + phone viewports via CDP', async ({ page, request }, testInfo) => {
     test.setTimeout(ciTimeout(600_000))
@@ -52,14 +57,21 @@ test.describe('preview chromium viewports', () => {
       expect(phonePNG.equals(desktopPNG)).toBe(false)
       expect(phonePNG.length).toBeLessThan(desktopPNG.length)
 
-      // Oversize requests clamp to the sidecar display instead of failing.
+      // Oversize requests clamp to the sidecar screen instead of failing.
       const bigRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/viewport`, { ...tokenHeaders(token), 
         data: { width: 3000, height: 2000 },
       })
       expect(bigRes.ok()).toBeTruthy()
-      expect(await bigRes.json()).toMatchObject({ width: 1920, height: 1080 })
+      const bigBody = (await bigRes.json()) as {
+        width: number; height: number; framebuffer: { width: number; height: number }
+      }
+      // The clamp target is the screen this preview actually got — the
+      // viewport that started it, not a fixed 1920x1080.
+      expect(bigBody.framebuffer.width).toBe(1280)
+      expect(bigBody.framebuffer.height).toBe(900)
+      expect([bigBody.width, bigBody.height]).toEqual([bigBody.framebuffer.width, bigBody.framebuffer.height])
       const bigPNG = await cdpScreenshot(request, projectID, token)
-      expect(pngSize(bigPNG)).toEqual({ width: 1920, height: 1080 })
+      expect(pngSize(bigPNG)).toEqual(bigBody.framebuffer)
 
       // Invalid sizes are rejected.
       const badRes = await request.post(`/api/projects/${projectURL(projectID)}/preview/tools/viewport`, { ...tokenHeaders(token), 
@@ -79,6 +91,7 @@ test.describe('preview chromium viewports', () => {
       test.skip(true, 'Docker engine unavailable — e2e skipped')
       return
     }
+
     await deleteAllProjects(request)
     try {
       const projectID = await createReactProject(request)

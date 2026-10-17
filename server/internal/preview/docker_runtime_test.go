@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -130,6 +131,44 @@ func TestDockerFactoryUsesPrivateNamespaceAndDirectIP(t *testing.T) {
 	}
 	if got := w.Endpoint(); got.CDP != directEndpoint || got.Display != "http://"+sidecarIP+":6080" {
 		t.Fatalf("endpoint = %#v, want direct sidecar IP", got)
+	}
+}
+
+// The framebuffer the sidecar boots with is the client's, not a fixed
+// 1920x1080: this is the pixel budget the whole VNC pipeline inherits.
+func TestDockerFactorySizesSidecarScreenToClientViewport(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		cfg          Config
+		wantW, wantH int
+	}{
+		{"phone retina", Config{ViewWidth: 390, ViewHeight: 844, DPR: 3}, 780, 1688},
+		{"no viewport keeps legacy screen", Config{}, DisplayWidth, DisplayHeight},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &runtimeDockerFake{inspect: docker.Container{Running: true, Status: "running", NetworkIP: sidecarIP}}
+			factory := &DockerFactory{Docker: fake, HTTPClient: cdpClient(t, sidecarIP+":9223"), PollEvery: time.Millisecond}
+			cfg := tc.cfg
+			cfg.ProjectID, cfg.ContainerID = "p1", "pcoder-p1"
+			w, err := factory.Start(context.Background(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer w.Close(context.Background())
+
+			if len(fake.specs) != 1 {
+				t.Fatalf("specs=%d, want 1", len(fake.specs))
+			}
+			env := strings.Join(fake.specs[0].Env, " ")
+			wantEnv := "WIDTH=" + strconv.Itoa(tc.wantW) + " HEIGHT=" + strconv.Itoa(tc.wantH)
+			if !strings.Contains(env, wantEnv) {
+				t.Fatalf("sidecar env %q missing %q", env, wantEnv)
+			}
+			gotW, gotH := w.Framebuffer()
+			if gotW != tc.wantW || gotH != tc.wantH {
+				t.Fatalf("worker framebuffer = %dx%d, want %dx%d", gotW, gotH, tc.wantW, tc.wantH)
+			}
+		})
 	}
 }
 

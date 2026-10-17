@@ -65,8 +65,14 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		defer obsFailAt(r, obs.PreviewStart, "preview start failed", &err, nil)()
+		// The client's viewport sizes the sidecar's X screen (the VNC
+		// framebuffer), so it must arrive with the start that creates it. All
+		// three fields are optional: absent viewport = legacy full-size screen.
 		var body struct {
-			Port int `json:"port"`
+			Port   int `json:"port"`
+			Width  int `json:"width"`
+			Height int `json:"height"`
+			DPR    int `json:"dpr"`
 		}
 		if !decodeBody(w, r, &body, false) {
 			return
@@ -76,7 +82,12 @@ func handlePreviewStart(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		worker, werr := ensurePreviewWorker(d, r, body.Port)
+		if !validViewport(body.Width, body.Height) {
+			err = errors.New("width and height must be at least 100")
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		worker, werr := ensurePreviewWorker(d, r, previewStartOpts{Port: body.Port, Width: body.Width, Height: body.Height, DPR: body.DPR})
 		if werr != nil {
 			err = werr
 			if errors.Is(werr, project.ErrNotFound) || errors.Is(werr, preview.ErrNotFound) {
@@ -424,7 +435,26 @@ func parseListeningPorts(output string) []map[string]any {
 	return slots
 }
 
-func ensurePreviewWorker(d Deps, r *http.Request, port ...int) (preview.Worker, error) {
+// validViewport accepts an absent viewport (both zero: callers with no client
+// keep the legacy screen) or one big enough to size a screen from.
+func validViewport(width, height int) bool {
+	if width == 0 && height == 0 {
+		return true
+	}
+	return width >= preview.MinViewport && height >= preview.MinViewport
+}
+
+// previewStartOpts is what a preview start knows about its client: the
+// target port and, when the caller has one, the viewport that will display
+// it. A zero viewport keeps the legacy full-size framebuffer.
+type previewStartOpts struct {
+	Port   int
+	Width  int
+	Height int
+	DPR    int
+}
+
+func ensurePreviewWorker(d Deps, r *http.Request, opts ...previewStartOpts) (preview.Worker, error) {
 	id := r.PathValue("id")
 	if d.Projects == nil {
 		return d.Preview.Get(id)
@@ -435,8 +465,9 @@ func ensurePreviewWorker(d Deps, r *http.Request, port ...int) (preview.Worker, 
 	cfg := preview.Config{
 		ProjectID: id, ContainerID: project.ContainerName(id),
 	}
-	if len(port) > 0 && port[0] > 0 {
-		cfg.Port = port[0]
+	if len(opts) > 0 {
+		cfg.Port = opts[0].Port
+		cfg.ViewWidth, cfg.ViewHeight, cfg.DPR = opts[0].Width, opts[0].Height, opts[0].DPR
 	}
 	return d.Preview.Ensure(r.Context(), cfg)
 }

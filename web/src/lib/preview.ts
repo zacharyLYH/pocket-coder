@@ -7,7 +7,13 @@ export function previewSurfacePath(projectId: string, token: string): string {
   const page = `/api/projects/${encodeURIComponent(projectId)}/preview/vnc_lite.html`
   const q = new URLSearchParams({
     autoconnect: 'true',
-    resize: 'scale',
+    // `scale`, NOT `resize`: vnc_lite.html reads `scale` into
+    // rfb.scaleViewport and ignores anything else (verified against the
+    // sidecar image: `resize=scale` left the canvas at framebuffer size and
+    // silently cropped it to the iframe). Scaling is what lets the framebuffer
+    // be the viewport x DPR — a 2x phone gets a 2x render fitted to its box
+    // instead of the top-left quarter of a bigger screen.
+    scale: 'true',
     reconnect: '1',
     reconnect_delay: '2000',
     path: websocketPath,

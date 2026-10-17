@@ -22,6 +22,15 @@ describe('previewSurfacePath token embedding', () => {
     expect(wsPath).toContain('token=tok123')
   })
 
+  // The framebuffer is the client viewport x DPR, so it can be bigger than
+  // the iframe's CSS box. Without scaling — or with the param name that
+  // vnc_lite.html ignores — the client shows only its top-left corner.
+  it('asks the noVNC client to scale the framebuffer into the iframe', () => {
+    const u = new URL(previewSurfacePath('proj/1', 'tok123'), 'http://x')
+    expect(u.searchParams.get('scale')).toBe('true')
+    expect(u.searchParams.get('resize')).toBeNull()
+  })
+
   it('round-trips special characters in project id and token', () => {
     const src = previewSurfacePath('owner/repo', 'a+b/c=d')
     const u = new URL(src, 'http://x')

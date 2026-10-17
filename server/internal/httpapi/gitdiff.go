@@ -222,7 +222,7 @@ func handleGitStatus(d Deps) http.HandlerFunc {
 				Path: path, Staged: codes[0], Unstaged: codes[1],
 				StagedAdd: s[0], StagedDel: s[1],
 				UnstagedAdd: u[0], UnstagedDel: u[1],
-				Binary:  binary[path],
+				Binary:   binary[path],
 				Conflict: isUnmerged(codes[0], codes[1]),
 			})
 		}

@@ -686,7 +686,7 @@ boot() {
   # original 504 Gateway Timeout source. The tags must match the constants
   # in server/internal/project/service.go and server/internal/preview/docker_runtime.go.
   docker build -t pcoder-project:v3 "$INSTALL_DIR/server/internal/project/image"
-  docker build -t pcoder-browser:v12 "$INSTALL_DIR/server/internal/preview/image"
+  docker build -t pcoder-browser:v13 "$INSTALL_DIR/server/internal/preview/image"
   log "probing SMTP delivery"
   # The image ENTRYPOINT is already ["pcoder"], so the subcommand is
   # appended bare (not `pcoder smtp-test`, which would repeat the binary).

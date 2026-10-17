@@ -224,9 +224,17 @@ func cdpForRequest(d Deps, r *http.Request) (*cdpSession, error) {
 // with the live session. A nil body skips the decode; fn's returned error
 // feeds the obs failure line.
 func withCDP(d Deps, w http.ResponseWriter, r *http.Request, event, failMsg string, body any, fn func(s *cdpSession) error) {
+	withCDPWorker(d, w, r, event, failMsg, body, func(s *cdpSession, _ preview.Worker) error { return fn(s) })
+}
+
+// withCDPWorker is withCDP plus the worker itself, for handlers that need
+// runtime facts about the sidecar (the X screen size that bounds the
+// Chromium window).
+func withCDPWorker(d Deps, w http.ResponseWriter, r *http.Request, event, failMsg string, body any, fn func(s *cdpSession, worker preview.Worker) error) {
 	var err error
 	defer obsFailAt(r, event, failMsg, &err, nil)()
-	if _, terr := previewTokenWorker(d, w, r); terr != nil {
+	worker, terr := previewTokenWorker(d, w, r)
+	if terr != nil {
 		err = terr
 		return
 	}
@@ -239,7 +247,7 @@ func withCDP(d Deps, w http.ResponseWriter, r *http.Request, event, failMsg stri
 		writeErr(w, http.StatusBadGateway, cerr.Error())
 		return
 	}
-	err = fn(s)
+	err = fn(s, worker)
 }
 
 // previewReadyTimeout bounds the synchronous readiness check in
@@ -682,37 +690,60 @@ func handlePreviewScroll(d Deps) http.HandlerFunc {
 	}
 }
 
+// viewportRequest is one client's CSS viewport as posed to the sidecar. DPR
+// rides along so the window can be sized in physical pixels while the layout
+// viewport (and therefore every media query) stays the client's CSS size.
+type viewportRequest struct {
+	Width  int  `json:"width"`
+	Height int  `json:"height"`
+	DPR    int  `json:"dpr"`
+	Mobile bool `json:"mobile"`
+}
+
+// applyViewport fits the Chromium window to the client's viewport at its
+// device scale factor and emulates that viewport, clamped to the sidecar's
+// framebuffer (no window manager can grow the X screen at runtime).
+// Returns the CSS viewport actually applied.
+func applyViewport(ctx context.Context, s cdpCaller, fbWidth, fbHeight int, req viewportRequest) (width, height, dpr int, err error) {
+	dpr = preview.ClampDPR(req.DPR)
+	width, height = preview.FitViewport(req.Width, req.Height, dpr, fbWidth, fbHeight)
+	// The window is the physical size: the noVNC client scales that down into
+	// the iframe's CSS box, so a 2x DPR phone gets a 2x render instead of a
+	// stretched 1x one.
+	if err2 := setWindowBounds(ctx, s, width*dpr, height*dpr); err2 != nil {
+		return 0, 0, 0, err2
+	}
+	if _, err2 := s.call(ctx, "Emulation.setDeviceMetricsOverride", map[string]any{
+		"width": width, "height": height,
+		"deviceScaleFactor": dpr, "mobile": req.Mobile,
+	}); err2 != nil {
+		return 0, 0, 0, err2
+	}
+	return width, height, dpr, nil
+}
+
 func handlePreviewViewport(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Width  int  `json:"width"`
-			Height int  `json:"height"`
-			Mobile bool `json:"mobile"`
-		}
-		withCDP(d, w, r, obs.PreviewViewport, "preview viewport failed", &body, func(s *cdpSession) error {
-			if body.Width < 100 || body.Height < 100 {
+		var body viewportRequest
+		withCDPWorker(d, w, r, obs.PreviewViewport, "preview viewport failed", &body, func(s *cdpSession, worker preview.Worker) error {
+			if body.Width < preview.MinViewport || body.Height < preview.MinViewport {
 				err := errors.New("width and height must be at least 100")
 				writeErr(w, http.StatusBadRequest, err.Error())
 				return err
 			}
-			// The X screen is fixed (no window manager to grow it), so clamp:
-			// the Chromium window can never exceed the framebuffer.
-			width := min(body.Width, preview.DisplayWidth)
-			height := min(body.Height, preview.DisplayHeight)
-			if berr := setWindowBounds(r.Context(), s, width, height); berr != nil {
-				writeInternalErr(w, "cdp window bounds", berr)
-				return berr
-			}
-			if _, verr := s.call(r.Context(), "Emulation.setDeviceMetricsOverride", map[string]any{
-				"width": width, "height": height,
-				"deviceScaleFactor": 1, "mobile": body.Mobile,
-			}); verr != nil {
+			fbWidth, fbHeight := worker.Framebuffer()
+			width, height, dpr, verr := applyViewport(r.Context(), s, fbWidth, fbHeight, body)
+			if verr != nil {
 				writeInternalErr(w, "cdp viewport", verr)
 				return verr
 			}
 			obs.Info(r.Context(), obs.PreviewViewport, "preview viewport set",
-				map[string]any{"width": width, "height": height, "mobile": body.Mobile})
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "width": width, "height": height})
+				map[string]any{"width": width, "height": height, "deviceScaleFactor": dpr,
+					"framebuffer": fmt.Sprintf("%dx%d", fbWidth, fbHeight), "mobile": body.Mobile})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok": true, "width": width, "height": height, "deviceScaleFactor": dpr,
+				"framebuffer": map[string]int{"width": fbWidth, "height": fbHeight},
+			})
 			return nil
 		})
 	}
@@ -721,7 +752,7 @@ func handlePreviewViewport(d Deps) http.HandlerFunc {
 // setWindowBounds resizes the Chromium app window itself (not just the
 // emulated layout viewport) so the 1:1 noVNC view keeps filling the frame
 // at any size instead of letterboxing inside a fixed window.
-func setWindowBounds(ctx context.Context, s *cdpSession, width, height int) error {
+func setWindowBounds(ctx context.Context, s cdpCaller, width, height int) error {
 	targetsRaw, err := s.call(ctx, "Target.getTargets", nil)
 	if err != nil {
 		return err

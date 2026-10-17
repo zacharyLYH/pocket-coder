@@ -17,7 +17,11 @@ import (
 )
 
 const (
-	DefaultBrowserImage = "pcoder-browser:v12"
+	// Bump on every image/ change: ensureBrowserImage only builds when the tag
+	// is missing, so a stale tag means a stale start-browser.
+	// v13: the framebuffer now comes from the client viewport (and the image no
+	// longer asks for window maximizing, which no WM honors).
+	DefaultBrowserImage = "pcoder-browser:v13"
 	// SidecarPorts are the preview browser's own ports. The sidecar shares
 	// the project's network namespace, so ss lists them alongside user
 	// ports. Keep this as the single source of truth — preview port
@@ -42,8 +46,9 @@ const (
 	relayNamePrefix = "pcoder-preview-relay-"
 )
 
-// DisplayWidth/Height is the sidecar's X screen size, the cap for the
-// preview page's auto-fit: window == screen == iframe at 1:1.
+// DisplayWidth/Height is the legacy sidecar X screen size, still used as the
+// fallback when a caller has no client viewport to size it from (see
+// FramebufferSize, which is what actually picks the screen for real clients).
 const (
 	DisplayWidth  = 1920
 	DisplayHeight = 1080
@@ -102,6 +107,11 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	if cfg.Port > 0 {
 		targetURL = "http://127.0.0.1:" + strconv.Itoa(cfg.Port)
 	}
+	// The X screen is the VNC framebuffer, so it is sized to the client that
+	// asked for the preview rather than to a fixed 1920x1080.
+	fbWidth, fbHeight := FramebufferSize(cfg.ViewWidth, cfg.ViewHeight, cfg.DPR)
+	log.Info("preview phase: framebuffer", "width", fbWidth, "height", fbHeight,
+		"viewport", fmt.Sprintf("%dx%d", cfg.ViewWidth, cfg.ViewHeight))
 	spec := docker.Spec{
 		Name:     "pcoder-preview-" + project.SanitizeName(cfg.ProjectID),
 		Image:    image,
@@ -110,7 +120,7 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 		Env: []string{
 			"BROWSER_TARGET=" + targetURL,
 			"BROWSER_PROFILE=/tmp/pcoder-browser-profile",
-			"WIDTH=" + strconv.Itoa(DisplayWidth), "HEIGHT=" + strconv.Itoa(DisplayHeight),
+			"WIDTH=" + strconv.Itoa(fbWidth), "HEIGHT=" + strconv.Itoa(fbHeight),
 			"CDP_PORT=" + strconv.Itoa(SidecarChromiumPort),
 			"CDP_PROXY_PORT=" + strconv.Itoa(SidecarCDPProxyPort),
 			"VNC_WEB_PORT=" + strconv.Itoa(SidecarNoVNCPort),
@@ -200,7 +210,7 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	log.Info("preview phase: wait for CDP", "duration", time.Since(t).Round(time.Millisecond), "endpoint", ep.CDP)
 
 	log.Info("preview started", "total_duration", time.Since(startTotal).Round(time.Millisecond), "relay", relayID != "")
-	return &dockerWorker{docker: f.Docker, id: cid, relayID: relayID, endpoint: ep}, nil
+	return &dockerWorker{docker: f.Docker, id: cid, relayID: relayID, endpoint: ep, framebuffer: [2]int{fbWidth, fbHeight}}, nil
 }
 
 // directCDPReady probes whether the server can complete a CDP version
@@ -294,9 +304,14 @@ type dockerWorker struct {
 	id       string
 	relayID  string // non-empty on Docker Desktop: the loopback relay dies with the worker
 	endpoint Endpoint
+	// framebuffer is the X screen from the WIDTHxHEIGHT env: the ceiling for
+	// the CDP window bounds.
+	framebuffer [2]int
 }
 
 func (w *dockerWorker) Endpoint() Endpoint { return w.endpoint }
+
+func (w *dockerWorker) Framebuffer() (int, int) { return w.framebuffer[0], w.framebuffer[1] }
 
 func (w *dockerWorker) Close(ctx context.Context) error {
 	var first error

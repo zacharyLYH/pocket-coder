@@ -16,6 +16,7 @@ type fakeWorker struct {
 func (w *fakeWorker) Endpoint() Endpoint {
 	return Endpoint{CDP: "private-cdp", Display: "private-display"}
 }
+func (w *fakeWorker) Framebuffer() (int, int) { return DisplayWidth, DisplayHeight }
 func (w *fakeWorker) Close(context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

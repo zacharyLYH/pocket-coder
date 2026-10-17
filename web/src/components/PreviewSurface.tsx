@@ -33,12 +33,12 @@ function isTouchDevice(): boolean {
 // On mobile, a back button is rendered because swipe-back gestures are
 // captured by the VNC canvas (cursor moves inside the remote desktop).
 //
-// The noVNC view uses resize=scale (see lib/preview) so the framebuffer
-// fills the iframe, then converges to ~1:1 once this page fits the sidecar
-// Chromium window to the iframe: after load and on every (debounced) resize
-// it reports the iframe size, and the backend resizes the Chromium window
-// to match. Syncing starts on iframe load — never before — so merely
-// opening the page can't resurrect a closed sidecar.
+// The noVNC view scales the framebuffer into the iframe (see lib/preview),
+// and on load plus every (debounced) resize this page reports its iframe
+// size and DPR: the backend resizes the Chromium window to viewport x DPR
+// and emulates the CSS viewport, so the frame stays pixel-aligned instead of
+// cropping a fixed-size desktop. Syncing starts on iframe load — never
+// before — so merely opening the page can't resurrect a closed sidecar.
 export function PreviewSurface({ projectId }: { projectId: string }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const [loaded, setLoaded] = useState(false)
@@ -102,10 +102,14 @@ export function PreviewSurface({ projectId }: { projectId: string }) {
       const width = Math.round(frame.clientWidth)
       const height = Math.round(frame.clientHeight)
       if (width < 100 || height < 100) return
+      // dpr decides the physical window size (and the emulated scale factor):
+      // the sidecar renders width*dpr pixels so the scaled-down VNC frame is
+      // sharp on a retina phone, while the layout viewport stays `width` CSS
+      // pixels so media queries see a phone.
       api(projectPath(projectId, '/preview/tools/viewport'), {
         method: 'POST',
         headers: { 'X-Preview-Token': token },
-        body: JSON.stringify({ width, height }),
+        body: JSON.stringify({ width, height, dpr: window.devicePixelRatio || 1 }),
       }).catch(() => {
         // Preview sidecar not up yet or gone — the next resize (or reopen)
         // syncs again. Never break the surface over a fit request.
