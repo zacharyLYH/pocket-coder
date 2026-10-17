@@ -246,7 +246,7 @@ export function NerdyStuffTab({ projectId }: { projectId: string }) {
                   <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-48">
+              <DropdownMenuContent align="start" className="w-48 max-h-64 overflow-y-auto">
                 {PANELS.map((p) => (
                   <DropdownMenuItem key={p} data-testid={`nerdy-panel-opt-${p}`} onSelect={() => setPanel(p)}>
                     <span className="flex-1">{panelLabel(p)}</span>
