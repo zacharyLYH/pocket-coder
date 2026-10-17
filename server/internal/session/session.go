@@ -1,6 +1,6 @@
 // Package session manages tmux sessions inside a project: plain-shell
-// sessions and harness launches — install-on-demand, CLI validation, and
-// the `|| echo` failure marker.
+// sessions and harness launches — install-on-demand, CLI validation, the
+// `|| echo` failure marker, and the shell handoff after the CLI exits.
 package session
 
 import (
@@ -504,9 +504,14 @@ func (s *Service) Kill(ctx context.Context, container, name string) error {
 // LaunchNamed is the launch pipeline: the harness must ALREADY be installed
 // in this project (installs are explicit, home-page, per project — never a
 // hidden download at launch), CLI validation (forced TTY, few-second
-// timeout), then a detached tmux session whose command ends with the
-// `|| echo` failure story. Restart uses it with an explicit name so the
-// suffix does not drift.
+// timeout), then a detached tmux session that runs the CLI, paints the
+// `|| echo` failure marker, and keeps the pane on an interactive shell.
+// The handoff matters: a CLI that exits (logout, crash, a browser-auth
+// failure) must not leave a dead pane, and the shell is where one-off auth
+// commands like `kiro-cli login --use-device-flow` belong. The shell loops:
+// exiting it respawns a fresh prompt rather than leaving a corpse, so a
+// session is only closed through the explicit Kill/Delete action. Restart
+// uses it with an explicit name so the suffix does not drift.
 func (s *Service) LaunchNamed(ctx context.Context, container, name string, h harness.Harness) (string, error) {
 	if !ValidName(name) {
 		return "", fmt.Errorf("%w: %q", ErrInvalidName, name)
@@ -537,7 +542,7 @@ func (s *Service) LaunchNamed(ctx context.Context, container, name string, h har
 	if err := s.validateCLI(ctx, container, harness.Binary(h)); err != nil {
 		return "", err
 	}
-	shellLine := harnessPath + fmt.Sprintf(`%s || echo "[%s exited: $?]"`, h.Command, h.Command)
+	shellLine := harnessPath + fmt.Sprintf(`%s || echo "[%s exited: $?]"; while :; do bash -l; done`, h.Command, h.Command)
 	res, err := s.dkr.Exec(ctx, container, newSessionArgs(name, dir,
 		[]string{"bash", "-lc", shellLine, ";", "set-option", "remain-on-exit", "on"}), false)
 	if err != nil {

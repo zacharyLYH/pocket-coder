@@ -600,7 +600,7 @@ func expectLaunch(md *dockermocks.MockClient, id, name string) {
 	lookup := []string{"bash", "-lc", harnessPath + "command -v fakecli"}
 	validate := []string{"bash", "-lc", harnessPath + "fakecli --version || fakecli --help"}
 	create := append([]string{"tmux", "new-session", "-d", "-s", name, "-c", "/workspace",
-		"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"`,
+		"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"; while :; do bash -l; done`,
 		";", "set-option", "remain-on-exit", "on",
 		";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...)
 	md.EXPECT().Exec(mock.Anything, "pcoder-"+id, probe, mock.Anything).
@@ -945,7 +945,7 @@ func expectLaunchNamed(md *dockermocks.MockClient, id, name string) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli 1.0\n"}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-"+id,
 		append([]string{"tmux", "new-session", "-d", "-s", name, "-c", "/workspace",
-			"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"`,
+			"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"; while :; do bash -l; done`,
 			";", "set-option", "remain-on-exit", "on",
 			";", "set-option", "-s", "escape-time", "0"}, session.ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil).Once()

@@ -276,7 +276,7 @@ func TestLaunchHappyPath(t *testing.T) {
 	d.EXPECT().Exec(mock.Anything, "c1", validateCmd, true).
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli 1.0\n"}, nil)
 	wantSession := append([]string{"tmux", "new-session", "-d", "-s", "fake-1", "-c", "/workspace",
-		"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"`,
+		"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"; while :; do bash -l; done`,
 		";", "set-option", "remain-on-exit", "on",
 		";", "set-option", "-s", "escape-time", "0"}, ThemeArgs()...)
 	d.EXPECT().Exec(mock.Anything, "c1", wantSession, false).
@@ -356,7 +356,7 @@ func TestLaunchNumberingAndRepoDir(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "1.0\n"}, nil)
 	d.EXPECT().Exec(mock.Anything, "c1",
 		append([]string{"tmux", "new-session", "-d", "-s", "fake-1", "-c", "/workspace/repo",
-			"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"`,
+			"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"; while :; do bash -l; done`,
 			";", "set-option", "remain-on-exit", "on",
 			";", "set-option", "-s", "escape-time", "0"}, ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
@@ -422,7 +422,7 @@ func TestLaunchRequiresInstalledHarness(t *testing.T) {
 			Return(docker.ExecResult{ExitCode: 0, Output: "1.0\n"}, nil)
 		d.EXPECT().Exec(mock.Anything, "c1",
 			append([]string{"tmux", "new-session", "-d", "-s", "fake-1", "-c", "/workspace",
-				"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"`,
+				"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"; while :; do bash -l; done`,
 				";", "set-option", "remain-on-exit", "on",
 				";", "set-option", "-s", "escape-time", "0"}, ThemeArgs()...), false).
 			Return(docker.ExecResult{ExitCode: 0}, nil)
@@ -506,7 +506,7 @@ func TestLaunchNamedPinsRestartArgv(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "1.0\n"}, nil)
 	d.EXPECT().Exec(mock.Anything, "c1",
 		append([]string{"tmux", "new-session", "-d", "-s", "fake-1", "-c", "/workspace",
-			"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"`,
+			"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"; while :; do bash -l; done`,
 			";", "set-option", "remain-on-exit", "on",
 			";", "set-option", "-s", "escape-time", "0"}, ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)

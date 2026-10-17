@@ -48,8 +48,9 @@ test.describe('boot bootstrap from seeded state', () => {
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(30_000) })
       await expect(page.getByText('Connected')).toBeVisible({ timeout: ciTimeout(30_000) })
 
-      // The session runs `opencode || echo "[opencode exited: $?]"` — a
-      // missing binary would paint the failure line instead of the TUI.
+      // The session runs `opencode || echo "[opencode exited: $?]"` then loops
+      // an interactive shell — a missing binary would paint the failure line
+      // instead of the TUI.
       await expect
         .poll(async () => page.locator('.xterm-rows').innerText(), { timeout: ciTimeout(120_000) })
         .toMatch(/Build|Connect|Ask anything/)

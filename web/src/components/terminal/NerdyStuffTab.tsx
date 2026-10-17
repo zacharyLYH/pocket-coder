@@ -298,7 +298,7 @@ export function NerdyStuffTab({ projectId }: { projectId: string }) {
 
         <div className="flex min-h-0 flex-1 flex-col gap-1 md:gap-2">
           {panel === 'overview' && (
-            <div className="flex flex-col gap-2" data-testid="nerdy-overview">
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto" data-testid="nerdy-overview">
               <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-lg border bg-card p-3">
                   <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">CPU</p>

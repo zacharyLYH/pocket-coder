@@ -152,7 +152,7 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 	}
 
 	// --- the || echo failure story: fakecli crashes with exit 9 two seconds
-	// in; remain-on-exit keeps the pane showing "[fakecli exited: 9]" ---
+	// in; the marker stays visible and the pane hands off to a shell ---
 	var exitLine string
 	for i := 0; i < 24; i++ {
 		time.Sleep(250 * time.Millisecond)
@@ -165,6 +165,47 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 	}
 	if !strings.Contains(exitLine, "[fakecli exited: 9]") {
 		t.Fatalf("the || echo failure story never appeared (captured %q)", exitLine)
+	}
+	// The pane must still take input after the CLI dies: auth commands are
+	// run there. `42` only exists as output, not in the typed command.
+	send := []string{"tmux", "send-keys", "-t", "fake-cli-1", `echo $((6*7))`, "Enter"}
+	if res, err := dkr.Exec(ctx, project.ContainerName(id), send, false); err != nil || res.ExitCode != 0 {
+		t.Fatalf("send into handed-off shell: %+v err=%v", res, err)
+	}
+	shellAlive := false
+	for i := 0; i < 8; i++ {
+		time.Sleep(250 * time.Millisecond)
+		capres, cerr := dkr.Exec(ctx, project.ContainerName(id),
+			[]string{"tmux", "capture-pane", "-t", "fake-cli-1", "-p"}, false)
+		if cerr == nil && capres.ExitCode == 0 && strings.Contains(capres.Output, "42") {
+			shellAlive = true
+			break
+		}
+	}
+	if !shellAlive {
+		t.Fatal("pane is dead after the CLI exited — the shell handoff is missing")
+	}
+	// Exiting the handed-off shell respawns a fresh one: a session is only
+	// closed through the explicit Kill/Delete action, never by `exit`.
+	if res, err := dkr.Exec(ctx, project.ContainerName(id), []string{"tmux", "send-keys", "-t", "fake-cli-1", "exit", "Enter"}, false); err != nil || res.ExitCode != 0 {
+		t.Fatalf("exit handed-off shell: %+v err=%v", res, err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if res, err := dkr.Exec(ctx, project.ContainerName(id), []string{"tmux", "send-keys", "-t", "fake-cli-1", `echo $((7*8))`, "Enter"}, false); err != nil || res.ExitCode != 0 {
+		t.Fatalf("send after shell exit: %+v err=%v", res, err)
+	}
+	respawned := false
+	for i := 0; i < 8; i++ {
+		time.Sleep(250 * time.Millisecond)
+		capres, cerr := dkr.Exec(ctx, project.ContainerName(id),
+			[]string{"tmux", "capture-pane", "-t", "fake-cli-1", "-p"}, false)
+		if cerr == nil && capres.ExitCode == 0 && strings.Contains(capres.Output, "56") {
+			respawned = true
+			break
+		}
+	}
+	if !respawned {
+		t.Fatal("exiting the shell killed the pane — the respawn loop is missing")
 	}
 
 	// --- not-a-CLI rejection with the exact PRD message ---
