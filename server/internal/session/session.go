@@ -41,6 +41,14 @@ const (
 	validateTimeout = 15 * time.Second // CLIs like freebuff download a platform binary on first run
 	repoDir         = "/workspace/repo"
 	fallbackRepoDir = "/workspace"
+
+	// harnessPath puts the directories CLI installers write to on PATH for
+	// every harness exec. The image sets them too, but containers created
+	// from an older image keep the old env forever. Probes must see exactly
+	// what the installers see: otherwise the UI offers Install for a binary
+	// that already exists at ~/.local/bin, the installer then detects it and
+	// dies at its overwrite prompt (no /dev/tty in an exec).
+	harnessPath = `export PATH="$HOME/.local/bin:$HOME/bin:$PATH"; `
 )
 
 // nameRe keeps names boring so they are safe as exec args, URL path
@@ -278,7 +286,7 @@ func (s *Service) Installed(ctx context.Context, container string, cmds []string
 	if len(cmds) == 0 {
 		return out, nil
 	}
-	script := `for c in ` + strings.Join(cmds, " ") + `; do command -v "$c" >/dev/null && echo "$c"; done`
+	script := harnessPath + `for c in ` + strings.Join(cmds, " ") + `; do command -v "$c" >/dev/null && echo "$c"; done`
 	res, err := s.dkr.Exec(ctx, container, []string{"bash", "-lc", script}, false)
 	if err != nil {
 		return nil, err
@@ -313,7 +321,7 @@ func (s *Service) RepoTarget(ctx context.Context, container string) (string, err
 
 // commandPath reports whether the harness binary exists in the container.
 func (s *Service) commandPath(ctx context.Context, container, cmd string) (bool, error) {
-	res, err := s.dkr.Exec(ctx, container, []string{"bash", "-lc", "command -v " + cmd}, false)
+	res, err := s.dkr.Exec(ctx, container, []string{"bash", "-lc", harnessPath + "command -v " + cmd}, false)
 	if err != nil {
 		return false, err
 	}
@@ -334,7 +342,7 @@ func (s *Service) Launch(ctx context.Context, container string, h harness.Harnes
 func (s *Service) runInstall(ctx context.Context, container string, h harness.Harness) error {
 	installCtx, cancel := context.WithTimeout(ctx, installTimeout)
 	defer cancel()
-	res, ierr := s.dkr.Exec(installCtx, container, []string{"bash", "-lc", h.Install}, false)
+	res, ierr := s.dkr.Exec(installCtx, container, []string{"bash", "-lc", harnessPath + h.Install}, false)
 	if ierr != nil {
 		return fmt.Errorf("install %q: %v", h.ID, ierr)
 	}
@@ -397,7 +405,7 @@ func (s *Service) validateCLI(ctx context.Context, container, cmd string) error 
 	vCtx, cancel := context.WithTimeout(ctx, validateTimeout)
 	defer cancel()
 	res, err := s.dkr.Exec(vCtx, container, []string{
-		"bash", "-lc", fmt.Sprintf("%s --version || %s --help", cmd, cmd),
+		"bash", "-lc", harnessPath + fmt.Sprintf("%s --version || %s --help", cmd, cmd),
 	}, true)
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -529,7 +537,7 @@ func (s *Service) LaunchNamed(ctx context.Context, container, name string, h har
 	if err := s.validateCLI(ctx, container, harness.Binary(h)); err != nil {
 		return "", err
 	}
-	shellLine := fmt.Sprintf(`%s || echo "[%s exited: $?]"`, h.Command, h.Command)
+	shellLine := harnessPath + fmt.Sprintf(`%s || echo "[%s exited: $?]"`, h.Command, h.Command)
 	res, err := s.dkr.Exec(ctx, container, newSessionArgs(name, dir,
 		[]string{"bash", "-lc", shellLine, ";", "set-option", "remain-on-exit", "on"}), false)
 	if err != nil {

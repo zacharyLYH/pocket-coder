@@ -195,8 +195,8 @@ func newHarness() harness.Harness {
 // binaries are only validated, missing ones run the install command first,
 // failures and install-less plugins are hard errors with usable messages.
 func TestInstallHarness(t *testing.T) {
-	lookup := []string{"bash", "-lc", "command -v fakecli"}
-	validate := []string{"bash", "-lc", "fakecli --version || fakecli --help"}
+	lookup := []string{"bash", "-lc", harnessPath + "command -v fakecli"}
+	validate := []string{"bash", "-lc", harnessPath + "fakecli --version || fakecli --help"}
 
 	t.Run("already installed only validates", func(t *testing.T) {
 		d := dockermocks.NewMockClient(t)
@@ -213,7 +213,7 @@ func TestInstallHarness(t *testing.T) {
 		d := dockermocks.NewMockClient(t)
 		h := newHarness()
 		h.Install = "npm i -g fakecli"
-		install := []string{"bash", "-lc", h.Install}
+		install := []string{"bash", "-lc", harnessPath + h.Install}
 		// misses: InstallHarness's initial probe; the post-install re-check hits
 		lookups := 0
 		d.EXPECT().Exec(mock.Anything, "c1", lookup, false).
@@ -239,7 +239,7 @@ func TestInstallHarness(t *testing.T) {
 		h.Install = "npm i -g fakecli"
 		d.EXPECT().Exec(mock.Anything, "c1", lookup, false).
 			Return(docker.ExecResult{ExitCode: 1}, nil)
-		d.EXPECT().Exec(mock.Anything, "c1", []string{"bash", "-lc", h.Install}, false).
+		d.EXPECT().Exec(mock.Anything, "c1", []string{"bash", "-lc", harnessPath + h.Install}, false).
 			Return(docker.ExecResult{ExitCode: 1, Output: "npm ERR! network unreachable"}, nil)
 		err := New(d).InstallHarness(context.Background(), "c1", h)
 		if err == nil || !strings.Contains(err.Error(), "npm ERR! network unreachable") {
@@ -270,13 +270,13 @@ func TestLaunchHappyPath(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "main\n"}, nil)
 	d.EXPECT().Exec(mock.Anything, "c1", []string{"test", "-d", "/workspace/repo/.git"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil) // no clone → /workspace
-	d.EXPECT().Exec(mock.Anything, "c1", []string{"bash", "-lc", "command -v fakecli"}, false).
+	d.EXPECT().Exec(mock.Anything, "c1", []string{"bash", "-lc", harnessPath + "command -v fakecli"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "/usr/local/bin/fakecli"}, nil)
-	validateCmd := []string{"bash", "-lc", "fakecli --version || fakecli --help"}
+	validateCmd := []string{"bash", "-lc", harnessPath + "fakecli --version || fakecli --help"}
 	d.EXPECT().Exec(mock.Anything, "c1", validateCmd, true).
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli 1.0\n"}, nil)
 	wantSession := append([]string{"tmux", "new-session", "-d", "-s", "fake-1", "-c", "/workspace",
-		"bash", "-lc", `fakecli || echo "[fakecli exited: $?]"`,
+		"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"`,
 		";", "set-option", "remain-on-exit", "on",
 		";", "set-option", "-s", "escape-time", "0"}, ThemeArgs()...)
 	d.EXPECT().Exec(mock.Anything, "c1", wantSession, false).
@@ -307,7 +307,7 @@ func TestLaunchWritesConfigBeforeValidation(t *testing.T) {
 				return docker.ExecResult{ExitCode: 0}, nil
 			case len(cmd) >= 1 && cmd[0] == "test":
 				return docker.ExecResult{ExitCode: 1}, nil
-			case len(cmd) == 3 && cmd[2] == "command -v fakecli":
+			case len(cmd) == 3 && cmd[2] == harnessPath+"command -v fakecli":
 				order = append(order, "lookup")
 				return docker.ExecResult{ExitCode: 0, Output: "/usr/bin/fakecli"}, nil
 			case tty:
@@ -349,14 +349,14 @@ func TestLaunchNumberingAndRepoDir(t *testing.T) {
 	// cloned repo present → sessions start in /workspace/repo
 	d.EXPECT().Exec(mock.Anything, "c1", []string{"test", "-d", "/workspace/repo/.git"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
-	d.EXPECT().Exec(mock.Anything, "c1", []string{"bash", "-lc", "command -v fakecli"}, false).
+	d.EXPECT().Exec(mock.Anything, "c1", []string{"bash", "-lc", harnessPath + "command -v fakecli"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "/usr/bin/fakecli\n"}, nil)
 	d.EXPECT().Exec(mock.Anything, "c1",
-		[]string{"bash", "-lc", "fakecli --version || fakecli --help"}, true).
+		[]string{"bash", "-lc", harnessPath + "fakecli --version || fakecli --help"}, true).
 		Return(docker.ExecResult{ExitCode: 0, Output: "1.0\n"}, nil)
 	d.EXPECT().Exec(mock.Anything, "c1",
 		append([]string{"tmux", "new-session", "-d", "-s", "fake-1", "-c", "/workspace/repo",
-			"bash", "-lc", `fakecli || echo "[fakecli exited: $?]"`,
+			"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"`,
 			";", "set-option", "remain-on-exit", "on",
 			";", "set-option", "-s", "escape-time", "0"}, ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
@@ -387,10 +387,10 @@ func TestLaunchRequiresInstalledHarness(t *testing.T) {
 					return docker.ExecResult{ExitCode: 0}, nil
 				case len(cmd) >= 1 && cmd[0] == "test":
 					return docker.ExecResult{ExitCode: 1}, nil // blank project
-				case len(cmd) == 3 && cmd[2] == "command -v fakecli":
+				case len(cmd) == 3 && cmd[2] == harnessPath+"command -v fakecli":
 					return docker.ExecResult{ExitCode: 1}, nil // missing
 				default:
-					if len(cmd) >= 2 && cmd[0] == "bash" && cmd[1] == "-lc" && cmd[2] == h.Install {
+					if len(cmd) >= 2 && cmd[0] == "bash" && cmd[1] == "-lc" && cmd[2] == harnessPath+h.Install {
 						ranInstall = true
 					}
 					return docker.ExecResult{}, nil
@@ -415,14 +415,14 @@ func TestLaunchRequiresInstalledHarness(t *testing.T) {
 			Return(docker.ExecResult{ExitCode: 0}, nil)
 		d.EXPECT().Exec(mock.Anything, "c1", []string{"test", "-d", "/workspace/repo/.git"}, false).
 			Return(docker.ExecResult{ExitCode: 1}, nil)
-		d.EXPECT().Exec(mock.Anything, "c1", []string{"bash", "-lc", "command -v fakecli"}, false).
+		d.EXPECT().Exec(mock.Anything, "c1", []string{"bash", "-lc", harnessPath + "command -v fakecli"}, false).
 			Return(docker.ExecResult{ExitCode: 0, Output: "/usr/bin/fakecli"}, nil)
 		d.EXPECT().Exec(mock.Anything, "c1",
-			[]string{"bash", "-lc", "fakecli --version || fakecli --help"}, true).
+			[]string{"bash", "-lc", harnessPath + "fakecli --version || fakecli --help"}, true).
 			Return(docker.ExecResult{ExitCode: 0, Output: "1.0\n"}, nil)
 		d.EXPECT().Exec(mock.Anything, "c1",
 			append([]string{"tmux", "new-session", "-d", "-s", "fake-1", "-c", "/workspace",
-				"bash", "-lc", `fakecli || echo "[fakecli exited: $?]"`,
+				"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"`,
 				";", "set-option", "remain-on-exit", "on",
 				";", "set-option", "-s", "escape-time", "0"}, ThemeArgs()...), false).
 			Return(docker.ExecResult{ExitCode: 0}, nil)
@@ -500,13 +500,13 @@ func TestLaunchNamedPinsRestartArgv(t *testing.T) {
 
 	d.EXPECT().Exec(mock.Anything, "c1", []string{"test", "-d", "/workspace/repo/.git"}, false).
 		Return(docker.ExecResult{ExitCode: 1}, nil)
-	d.EXPECT().Exec(mock.Anything, "c1", []string{"bash", "-lc", "command -v fakecli"}, false).
+	d.EXPECT().Exec(mock.Anything, "c1", []string{"bash", "-lc", harnessPath + "command -v fakecli"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "found\n"}, nil)
 	d.EXPECT().Exec(mock.Anything, "c1", mock.Anything, true).
 		Return(docker.ExecResult{ExitCode: 0, Output: "1.0\n"}, nil)
 	d.EXPECT().Exec(mock.Anything, "c1",
 		append([]string{"tmux", "new-session", "-d", "-s", "fake-1", "-c", "/workspace",
-			"bash", "-lc", `fakecli || echo "[fakecli exited: $?]"`,
+			"bash", "-lc", harnessPath + `fakecli || echo "[fakecli exited: $?]"`,
 			";", "set-option", "remain-on-exit", "on",
 			";", "set-option", "-s", "escape-time", "0"}, ThemeArgs()...), false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)

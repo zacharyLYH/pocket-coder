@@ -72,7 +72,7 @@ func TestProjectHealthInSync(t *testing.T) {
 		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "main\noc-1\n"}, nil).Once()
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
-		[]string{"bash", "-lc", `for c in fakecli bash; do command -v "$c" >/dev/null && echo "$c"; done`}, false).
+		[]string{"bash", "-lc", harnessPath + `for c in fakecli bash; do command -v "$c" >/dev/null && echo "$c"; done`}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli\nbash\n"}, nil).Once()
 
 	h := New(d)
@@ -111,7 +111,7 @@ func TestProjectHealthFindsDriftBothWays(t *testing.T) {
 		[]string{"tmux", "list-sessions", "-F", "#{session_name}"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "stray-1\n"}, nil).Once()
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
-		[]string{"bash", "-lc", `for c in fakecli; do command -v "$c" >/dev/null && echo "$c"; done`}, false).
+		[]string{"bash", "-lc", harnessPath + `for c in fakecli; do command -v "$c" >/dev/null && echo "$c"; done`}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "\n"}, nil).Once()
 
 	h := New(d)

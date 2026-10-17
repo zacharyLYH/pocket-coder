@@ -34,9 +34,9 @@ func TestInstallHarnessEndpoint(t *testing.T) {
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 
 	// running project: lookup (miss) → install → re-lookup (hit) → validate
-	lookup := []string{"bash", "-lc", "command -v fakecli"}
-	install := []string{"bash", "-lc", "npm i -g fakecli"}
-	validate := []string{"bash", "-lc", "fakecli --version || fakecli --help"}
+	lookup := []string{"bash", "-lc", harnessPath + "command -v fakecli"}
+	install := []string{"bash", "-lc", harnessPath + "npm i -g fakecli"}
+	validate := []string{"bash", "-lc", harnessPath + "fakecli --version || fakecli --help"}
 	// misses: InstallHarness's initial probe; the post-install re-check hits
 	lookups := 0
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", lookup, false).
@@ -187,7 +187,7 @@ func TestProjectHarnessesShowsInstalled(t *testing.T) {
 
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
-		[]string{"bash", "-lc", `for c in fakecli ghosty vi; do command -v "$c" >/dev/null && echo "$c"; done`}, false).
+		[]string{"bash", "-lc", harnessPath + `for c in fakecli ghosty vi; do command -v "$c" >/dev/null && echo "$c"; done`}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli\nvi\n"}, nil)
 
 	h := New(d)
@@ -244,7 +244,7 @@ func TestProjectHarnessesShowsInstalling(t *testing.T) {
 		t.Helper()
 		md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
 		md.EXPECT().Exec(mock.Anything, "pcoder-abc",
-			[]string{"bash", "-lc", `for c in fakecli; do command -v "$c" >/dev/null && echo "$c"; done`}, false).
+			[]string{"bash", "-lc", harnessPath + `for c in fakecli; do command -v "$c" >/dev/null && echo "$c"; done`}, false).
 			Return(docker.ExecResult{ExitCode: 1}, nil).Once()
 		rec := authedGet(t, h, cookie, "/api/projects/abc/harnesses")
 		if rec.Code != http.StatusOK {

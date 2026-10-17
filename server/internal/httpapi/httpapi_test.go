@@ -211,6 +211,11 @@ func (f previewTestFactory) Start(context.Context, preview.Config) (preview.Work
 	return previewTestWorker{ep: f.ep}, nil
 }
 
+// harnessPath mirrors the prelude session puts before every harness exec.
+// Probes must look where CLI installers write; otherwise a present binary
+// reads as "missing" and the UI offers Install for an already-installed CLI.
+const harnessPath = `export PATH="$HOME/.local/bin:$HOME/bin:$PATH"; `
+
 func TestHealth(t *testing.T) {
 	d, _ := newTestDeps(t)
 	h := New(d)
