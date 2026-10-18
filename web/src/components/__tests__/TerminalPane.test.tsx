@@ -9,6 +9,21 @@ function hostRef(): RefObject<HTMLDivElement | null> {
   return { current: document.createElement('div') }
 }
 
+function outputFrame(text: string): Uint8Array {
+  const payload = new TextEncoder().encode(text)
+  const frame = new Uint8Array(payload.length + 1)
+  frame[0] = 0
+  frame.set(payload, 1)
+  return frame
+}
+
+function exitFrame(code: number): Uint8Array {
+  const frame = new Uint8Array(5)
+  frame[0] = 1
+  new DataView(frame.buffer).setInt32(1, code, false)
+  return frame
+}
+
 let wsInstances: MockWebSocket[] = []
 
 // Buffer mode drives the touch bridge: 'normal' has scrollback,
@@ -105,8 +120,9 @@ describe('TerminalPane output coalescing', () => {
     await new Promise((r) => setTimeout(r, 50))
     wsInstances[0]?.open()
     await new Promise((r) => setTimeout(r, 10))
+    expect(wsInstances[0]?.binaryType).toBe('arraybuffer')
 
-    const send = (data: string) => wsInstances[0]!.onmessage!({ data: JSON.stringify({ type: 'output', data }) } as MessageEvent)
+    const send = (data: string) => wsInstances[0]!.onmessage!({ data: outputFrame(data) } as MessageEvent)
     for (let i = 0; i < 50; i++) send(`line-${i}\r\n`)
 
     expect(scheduled.length).toBe(1) // one frame scheduled for 50 frames of output
@@ -129,9 +145,9 @@ describe('TerminalPane output coalescing', () => {
     wsInstances[0]?.open()
     await new Promise((r) => setTimeout(r, 10))
 
-    const send = (msg: unknown) => wsInstances[0]!.onmessage!({ data: JSON.stringify(msg) } as MessageEvent)
-    send({ type: 'output', data: 'tail-line\r\n' })
-    send({ type: 'exit', code: 1 })
+    const send = (data: Uint8Array) => wsInstances[0]!.onmessage!({ data } as MessageEvent)
+    send(outputFrame('tail-line\r\n'))
+    send(exitFrame(1))
 
     const written = write.mock.calls.map(([d]) => d as string).join('')
     expect(written).toContain('tail-line')

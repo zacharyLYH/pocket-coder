@@ -6,6 +6,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,13 +32,10 @@ type wsIn struct {
 	Cols int    `json:"cols,omitempty"`
 }
 
-// wsOut is a server→browser frame. output is raw pty bytes; exit ends the
-// stream with the attach's exit code.
-type wsOut struct {
-	Type string `json:"type"` // "output" | "exit"
-	Data string `json:"data,omitempty"`
-	Code int    `json:"code,omitempty"`
-}
+const (
+	opOutput byte = 0x00
+	opExit   byte = 0x01
+)
 
 // The session cookie is SameSite=Strict, so a cross-site handshake cannot
 // carry it, and RequireAuth already rejected unauthenticated upgrades.
@@ -166,8 +164,8 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 
 	var wmu sync.Mutex // gorilla writes are not concurrent-safe
 
-	// The pty emits raw bytes that can end mid multi-byte character, but JSON
-	// frames must carry valid UTF-8. The writer holds back a trailing
+	// The pty emits raw bytes that can end mid multi-byte character. Binary
+	// frames are decoded independently by the browser, so hold back a trailing
 	// incomplete sequence (at most 3 bytes) until the next chunk completes
 	// it. carry is only touched under wmu.
 	var carry []byte
@@ -183,11 +181,10 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 		if n == 0 {
 			return len(p), nil // nothing frameable yet; more bytes will come
 		}
-		frame, err := json.Marshal(wsOut{Type: "output", Data: string(buf[:n])})
-		if err != nil {
-			return 0, err
-		}
-		if err := conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+		frame := make([]byte, 1+n)
+		frame[0] = opOutput
+		copy(frame[1:], buf[:n])
+		if err := conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
 			return 0, err
 		}
 		return len(p), nil
@@ -198,8 +195,11 @@ func runTerminal(ctx context.Context, cancel context.CancelFunc, svc *session.Se
 	exitFrame := func(code int, detail string) {
 		wmu.Lock()
 		defer wmu.Unlock()
-		frame, _ := json.Marshal(wsOut{Type: "exit", Code: code, Data: detail})
-		_ = conn.WriteMessage(websocket.TextMessage, frame)
+		frame := make([]byte, 5+len(detail))
+		frame[0] = opExit
+		binary.BigEndian.PutUint32(frame[1:5], uint32(int32(code)))
+		copy(frame[5:], detail)
+		_ = conn.WriteMessage(websocket.BinaryMessage, frame)
 	}
 
 	execID, attachDone, err := svc.Attach(ctx, container, name, inR, out, out)

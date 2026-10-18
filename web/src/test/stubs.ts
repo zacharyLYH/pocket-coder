@@ -10,6 +10,7 @@ export class MockWebSocket {
   static CLOSED = 3
   static instances: MockWebSocket[] = []
   readyState = 0
+  binaryType: BinaryType = 'blob'
   onopen: (() => void) | null = null
   onmessage: ((ev: MessageEvent) => void) | null = null
   onclose: (() => void) | null = null

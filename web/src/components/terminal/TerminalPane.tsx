@@ -260,6 +260,7 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
 
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
       ws = new WebSocket(`${proto}://${location.host}/ws/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(session)}`)
+      ws.binaryType = 'arraybuffer'
       wsRef.current = ws
 
       ws.onopen = () => {
@@ -273,9 +274,9 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
       }
       ws.onmessage = (ev) => {
         if (disposed) return
-        // Proxies and extensions can inject non-JSON bytes; a malformed
-        // frame is ignored so one bad message never kills the terminal.
-        const frame = parseTerminalFrame(ev.data as string)
+        // Malformed or unknown binary frames are ignored so one bad message
+        // never kills the terminal.
+        const frame = parseTerminalFrame(ev.data as ArrayBuffer | Uint8Array | string)
         if (!frame) return
         if (frame.type === 'output') enqueueWrite(frame.data ?? '')
         if (frame.type === 'exit') {

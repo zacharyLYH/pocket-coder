@@ -7,7 +7,7 @@
 package httpapi
 
 import (
-	"encoding/json"
+	"encoding/binary"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -57,21 +57,21 @@ func TestTerminalLiveLifecycle(t *testing.T) {
 		var seen strings.Builder
 		for time.Now().Before(deadline) {
 			_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-			_, raw, err := conn.ReadMessage()
+			kind, raw, err := conn.ReadMessage()
 			if err != nil {
 				t.Fatalf("read waiting for %q: %v (seen %q)", want, err, seen.String())
 			}
-			var f wsOut
-			if json.Unmarshal(raw, &f) != nil {
+			if kind != websocket.BinaryMessage || len(raw) == 0 {
 				continue
 			}
-			if f.Type == "exit" {
-				t.Fatalf("server ended the terminal: code=%d detail=%q", f.Code, f.Data)
+			switch raw[0] {
+			case opExit:
+				if len(raw) >= 5 {
+					t.Fatalf("server ended the terminal: code=%d detail=%q", int32(binary.BigEndian.Uint32(raw[1:5])), string(raw[5:]))
+				}
+			case opOutput:
+				seen.Write(raw[1:])
 			}
-			if f.Type != "output" {
-				continue
-			}
-			seen.WriteString(f.Data)
 			if strings.Contains(seen.String(), want) {
 				return seen.String()
 			}

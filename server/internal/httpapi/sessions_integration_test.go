@@ -8,6 +8,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -281,15 +282,21 @@ func TestRealTUIGate(t *testing.T) {
 		var seen strings.Builder
 		for i := 0; i < 200; i++ {
 			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-			_, raw, err := conn.ReadMessage()
+			kind, raw, err := conn.ReadMessage()
 			if err != nil {
 				t.Fatalf("read waiting for %q (seen %q): %v", want, seen.String(), err)
 			}
-			var f wsOut
-			if json.Unmarshal(raw, &f) != nil || f.Type != "output" {
+			if kind != websocket.BinaryMessage || len(raw) == 0 {
 				continue
 			}
-			seen.WriteString(f.Data)
+			switch raw[0] {
+			case opOutput:
+				seen.Write(raw[1:])
+			case opExit:
+				if len(raw) >= 5 {
+					t.Fatalf("server ended the terminal: code=%d detail=%q", int32(binary.BigEndian.Uint32(raw[1:5])), string(raw[5:]))
+				}
+			}
 			if strings.Contains(seen.String(), want) {
 				return seen.String()
 			}

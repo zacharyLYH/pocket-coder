@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -423,21 +424,38 @@ func TestTerminalRoundTrip(t *testing.T) {
 			t.Fatalf("send: %v", err)
 		}
 	}
-	readFrame := func(want string) wsOut {
+	readFrame := func(want string) (f struct {
+		Type string
+		Data string
+		Code int
+	}) {
 		t.Helper()
 		if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 			t.Fatalf("deadline: %v", err)
 		}
 		for {
-			_, raw, err := conn.ReadMessage()
+			kind, raw, err := conn.ReadMessage()
 			if err != nil {
 				t.Fatalf("read waiting for %q frame: %v", want, err)
 			}
-			var f wsOut
-			if json.Unmarshal(raw, &f) != nil || f.Type != want {
+			if kind != websocket.BinaryMessage || len(raw) == 0 {
 				continue // tolerate junk frames, as the handler does
 			}
-			return f
+			switch raw[0] {
+			case opOutput:
+				f.Type, f.Data = "output", string(raw[1:])
+			case opExit:
+				if len(raw) < 5 {
+					continue
+				}
+				f.Type, f.Code = "exit", int(int32(binary.BigEndian.Uint32(raw[1:5])))
+				f.Data = string(raw[5:])
+			default:
+				continue
+			}
+			if f.Type == want {
+				return f
+			}
 		}
 	}
 

@@ -13,6 +13,10 @@ import { terminalUrl } from './helpers'
 // captured to prove no arrow-key input escapes during scroll.
 const FAKE_ID = 'e2e/scroll-fake'
 
+function binaryOutput(text: string): Buffer {
+  return Buffer.concat([Buffer.from([0]), Buffer.from(text, 'utf8')])
+}
+
 function lines(start: number, end: number): string {
   let out = ''
   for (let i = start; i <= end; i++) {
@@ -36,7 +40,7 @@ test.describe('terminal scroll', () => {
         // opens, so answering it means the terminal is ready — no sleep.
         if (!serverSent) {
           serverSent = true
-          ws.send(JSON.stringify({ type: 'output', data: lines(1, 200) }))
+          ws.send(binaryOutput(lines(1, 200)))
         }
       })
     })
@@ -122,7 +126,7 @@ test.describe('terminal scroll (mobile)', () => {
           serverSent = true
           // Enter alternate screen like `tmux attach` does, then emit output:
           // scrollLines is a noop here by design, scroll lives in tmux.
-          ws.send(JSON.stringify({ type: 'output', data: '\x1b[?1049h' + lines(1, 200) }))
+          ws.send(binaryOutput('\x1b[?1049h' + lines(1, 200)))
         }
       })
     })

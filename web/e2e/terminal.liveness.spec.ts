@@ -18,6 +18,10 @@ const FAKE_ID = 'e2e/liveness-fake'
 
 const DOTS = 400
 
+function binaryOutput(text: string): Buffer {
+  return Buffer.concat([Buffer.from([0]), Buffer.from(text, 'utf8')])
+}
+
 function colors(): string {
   let out = ''
   for (let i = 0; i < 200; i++) {
@@ -86,7 +90,7 @@ async function dial(page: Page, frames: string[]): Promise<string[]> {
       clientFrames.push(msg.toString())
       if (!sent) {
         sent = true
-        for (const data of frames) ws.send(JSON.stringify({ type: 'output', data }))
+        for (const data of frames) ws.send(binaryOutput(data))
       }
     })
   })
@@ -94,6 +98,27 @@ async function dial(page: Page, frames: string[]): Promise<string[]> {
   await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
   return clientFrames
 }
+
+test('binary frames preserve terminal text and cut ANSI-heavy wire bytes', async ({ page }) => {
+  await mockSessions(page)
+  const text = '\x1b[32mPASS ✓\x1b[0m\r\n中文 🙂\r\n' + '\x1b[34mANSI\x1b[0m '.repeat(100)
+  const frame = binaryOutput(text)
+  const legacyBytes = Buffer.byteLength(JSON.stringify({ type: 'output', data: text }))
+
+  await page.routeWebSocket(/\/ws\/projects\//, (ws) => {
+    let sent = false
+    ws.onMessage(() => {
+      if (sent) return
+      sent = true
+      ws.send(frame)
+    })
+  })
+  await page.goto(terminalUrl(FAKE_ID, 'main'))
+  const rows = page.locator('.xterm-rows')
+  await expect(rows).toContainText('PASS ✓', { timeout: ciTimeout(15_000) })
+  await expect(rows).toContainText('中文 🙂', { timeout: ciTimeout(15_000) })
+  expect(frame.byteLength).toBeLessThan(legacyBytes * 0.6)
+})
 
 for (const [name, viewport] of [
   ['desktop', { width: 1280, height: 720 }],

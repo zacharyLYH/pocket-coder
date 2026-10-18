@@ -2,7 +2,7 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/binary"
 	"io"
 	"net/http/httptest"
 	"testing"
@@ -50,22 +50,25 @@ func TestTerminalOutputSurvivesUTF8SplitAcrossFrames(t *testing.T) {
 	var got []byte
 	for {
 		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-		_, raw, err := conn.ReadMessage()
+		kind, raw, err := conn.ReadMessage()
 		if err != nil {
 			t.Fatalf("read frames: %v", err)
 		}
-		var f struct {
-			Type string `json:"type"`
-			Data string `json:"data"`
-			Code int    `json:"code"`
+		if kind != websocket.BinaryMessage || len(raw) == 0 {
+			t.Fatalf("got frame kind %d payload % x", kind, raw)
 		}
-		if err := json.Unmarshal(raw, &f); err != nil {
-			t.Fatalf("bad frame %q: %v", raw, err)
+		switch raw[0] {
+		case opOutput:
+			got = append(got, raw[1:]...)
+		case opExit:
+			if len(raw) < 5 || int32(binary.BigEndian.Uint32(raw[1:5])) != 0 {
+				t.Fatalf("bad exit frame % x", raw)
+			}
+			break
+		default:
+			t.Fatalf("unknown opcode %d", raw[0])
 		}
-		if f.Type == "output" {
-			got = append(got, f.Data...)
-		}
-		if f.Type == "exit" {
+		if raw[0] == opExit {
 			break
 		}
 	}
@@ -73,8 +76,6 @@ func TestTerminalOutputSurvivesUTF8SplitAcrossFrames(t *testing.T) {
 		t.Fatalf("browser saw %q (% x), want \"héllo\"", got, got)
 	}
 }
-
-var _ = websocket.TextMessage // keep the import if the loop above changes
 
 // Table test for the boundary finder itself: emoji (4 bytes), CJK (3 bytes),
 // ASCII passthrough, and malformed bytes that must never be held forever.
