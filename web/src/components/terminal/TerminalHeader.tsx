@@ -38,7 +38,7 @@ import type { ConnStatus } from '@/components/terminal/TerminalPane'
 // which is not visible while transported into a fixed view.
 const FIXED_LABELS: Record<string, string> = { codemap: 'Codemap', diff: 'Git', preview: 'Preview', nerdy: 'Nerdy Stuff' }
 
-export function TerminalHeader({ projectId, current, status, view, fontSize, defaultFontSize, onBack, onRestart, onRename, onKill, onZoomIn, onZoomOut, onZoomReset }: {
+export function TerminalHeader({ projectId, current, status, view, fontSize, defaultFontSize, onBack, onRestart, onRename, onKill, onZoomIn, onZoomOut, onZoomReset, onOpenShortcuts }: {
   projectId: string
   current: string
   status: ConnStatus
@@ -52,6 +52,7 @@ export function TerminalHeader({ projectId, current, status, view, fontSize, def
   onZoomIn: () => void
   onZoomOut: () => void
   onZoomReset: () => void
+  onOpenShortcuts: () => void
 }) {
   const isFixedView = view !== 'terminal'
   const fixedLabel = isFixedView ? (FIXED_LABELS[view] ?? view) : ''
@@ -152,6 +153,8 @@ export function TerminalHeader({ projectId, current, status, view, fontSize, def
                   </DropdownMenuRadioGroup>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={onOpenShortcuts} data-testid="terminal-action-shortcuts">Shortcuts…</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}

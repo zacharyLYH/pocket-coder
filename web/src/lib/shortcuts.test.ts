@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { looksLikeKeys, toServerRow, validateDraft } from '@/lib/shortcuts'
+import { keydownToLabel, looksLikeKeys, parseKeyCombo, toServerRow, validateDraft } from '@/lib/shortcuts'
 
 describe('unified shortcuts', () => {
   it('resolves key combos vs commands from the text', () => {
@@ -21,5 +21,13 @@ describe('unified shortcuts', () => {
     expect(() => validateDraft({ name: 'dev', text: 'x' }, rows, 's-1')).not.toThrow()
     expect(() => validateDraft({ name: '', text: 'x' }, rows)).toThrow('non-empty')
     expect(() => validateDraft({ name: 'ok', text: '  ' }, rows)).toThrow('non-empty')
+  })
+
+  it('captures and resolves Shift-Tab distinctly', () => {
+    const event = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, cancelable: true })
+    expect(keydownToLabel(event)).toBe('Shift-Tab')
+    expect(event.defaultPrevented).toBe(true)
+    expect(parseKeyCombo('Shift-Tab')).toBe('\x1b[Z')
+    expect(looksLikeKeys('Shift-Tab')).toBe(true)
   })
 })

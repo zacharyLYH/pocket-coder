@@ -8,7 +8,7 @@ export const ALIAS_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
 // unrecognized passes through verbatim so power users can paste raw
 // sequences like \x1b[A.
 const NAMED: Record<string, string> = {
-  esc: '\x1b', escape: '\x1b', tab: '\t',
+  esc: '\x1b', escape: '\x1b', tab: '\t', 'shift-tab': '\x1b[Z',
   up: '\x1b[A', down: '\x1b[B', left: '\x1b[D', right: '\x1b[C',
   enter: '\r', backspace: '\x7f',
 }
@@ -32,6 +32,10 @@ export function keydownToLabel(e: KeyboardEvent | React.KeyboardEvent): string |
   const named: Record<string, string> = {
     Escape: 'Esc', Tab: 'Tab', Enter: 'Enter', Backspace: 'Backspace',
     ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+  }
+  if (e.key === 'Tab' && e.shiftKey) {
+    e.preventDefault()
+    return 'Shift-Tab'
   }
   if (named[e.key]) {
     if (e.key === 'Backspace' && !mod) return null

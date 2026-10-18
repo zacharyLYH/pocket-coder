@@ -117,7 +117,7 @@ export function ShortcutsModal({ projectId, open, onOpenChange, onSaved, onRun }
                       <EllipsisVertical className="size-4" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
+                  <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                     <DropdownMenuItem
                       onSelect={() => { setError(null); setForm({ id: s.id, name: s.alias, text: shortcutText(s) }) }}>
                       <Pencil className="size-4" /> Edit

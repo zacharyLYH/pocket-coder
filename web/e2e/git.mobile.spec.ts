@@ -230,31 +230,50 @@ test.describe('git branches (mobile)', () => {
   })
 })
 
-test.describe('terminal keys (mobile)', () => {
+test.describe('terminal accessory keys (mobile)', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
 
-  test('keys live in the shortcuts modal', async ({ page }) => {
+  test('fixed keys and user-defined keys are available from the accessory row', async ({ page }) => {
     resetGitState()
     await mockGit(page)
     await page.route('**/api/projects/demo%2Fgit', (r) =>
       r.fulfill({
         json: {
           shortcuts: [
-            { id: 'default-esc', alias: 'Esc', kind: 'keys', keys: 'Esc' },
-            { id: 'default-ctrl-c', alias: 'Ctrl-C', kind: 'keys', keys: 'Ctrl-C' },
+            { id: 'mine-ctrl-c', alias: 'My interrupt', kind: 'keys', keys: 'Ctrl-C' },
+            { id: 'dev', alias: 'dev', kind: 'cmd', command: 'npm run dev' },
           ],
         },
       }))
+    const clientFrames: string[] = []
+    await page.routeWebSocket(/\/ws\/projects\//, (ws) => {
+      ws.onMessage((message) => clientFrames.push(message.toString()))
+    })
     await page.goto(terminalUrl(PROJECT, 'main'))
-    await page.getByTestId('tab-shortcuts').click()
-    const dialog = page.getByRole('dialog')
-    // Row tap runs: no separate play button on the terminal modal.
-    await expect(dialog.getByTestId('sc-row-Esc')).toBeVisible()
-    await expect(dialog.getByTestId('sc-row-Ctrl-C')).toBeVisible()
-    await expect(dialog).toHaveScreenshot('git-mobile-shortcuts.png')
+    await expect(page.getByTestId('accessory-keys')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'My interrupt' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'dev' })).toBeVisible()
+    await page.getByRole('button', { name: 'dev' }).scrollIntoViewIfNeeded()
+    await expect(page.getByRole('button', { name: 'My interrupt' })).toBeInViewport()
+    await expect(page.getByRole('button', { name: 'dev' })).toBeInViewport()
+    await expect(page.getByTestId('accessory-keys')).toHaveScreenshot('terminal-accessory-keys-mobile.png')
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await expect(page.getByTestId('accessory-keys')).toHaveScreenshot('terminal-accessory-keys-mobile-dark.png')
+    await page.emulateMedia({ colorScheme: 'light' })
+    await page.getByRole('button', { name: 'Esc' }).click()
+    await page.getByRole('button', { name: 'Shift-Tab' }).click()
+    await page.getByRole('button', { name: 'My interrupt' }).click()
+    await expect.poll(() => clientFrames.filter((f) => f.includes('"input"')).length).toBe(3)
+    expect(clientFrames.some((f) => f.includes('\\u001b[Z'))).toBe(true)
+    const injectRequest = page.waitForRequest((request) => request.url().includes('/sessions/main/inject'))
+    await page.getByRole('button', { name: 'dev' }).click()
+    expect((await injectRequest).postDataJSON()).toEqual({ command: 'npm run dev' })
 
-    // running a key sends terminal input without any network: the modal closes
-    await dialog.getByTestId('sc-row-Ctrl-C').click()
-    await expect(dialog).not.toBeVisible()
+    await page.getByTestId('terminal-actions-trigger').click()
+    await page.getByTestId('terminal-action-shortcuts').click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByTestId('sc-row-My interrupt')).toBeVisible()
+    await expect(dialog.getByTestId('sc-row-Esc')).toHaveCount(0)
+    await expect(dialog).toHaveScreenshot('git-mobile-shortcuts.png')
   })
 })

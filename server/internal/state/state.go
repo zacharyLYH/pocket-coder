@@ -55,23 +55,6 @@ type Shortcut struct {
 	Keys    string `json:"keys,omitempty"`
 }
 
-// DefaultShortcuts is the starter list for newly cloned projects: one
-// command to install and start the app, plus the key sends a phone
-// keyboard cannot type. Fresh copies only, callers must not mutate the
-// result in place.
-func DefaultShortcuts() []Shortcut {
-	return []Shortcut{
-		{ID: "default-esc", Alias: "Esc", Kind: "keys", Keys: "Esc"},
-		{ID: "default-tab", Alias: "Tab", Kind: "keys", Keys: "Tab"},
-		{ID: "default-up", Alias: "Up", Kind: "keys", Keys: "Up"},
-		{ID: "default-down", Alias: "Down", Kind: "keys", Keys: "Down"},
-		{ID: "default-left", Alias: "Left", Kind: "keys", Keys: "Left"},
-		{ID: "default-right", Alias: "Right", Kind: "keys", Keys: "Right"},
-		{ID: "default-ctrl-c", Alias: "Ctrl-C", Kind: "keys", Keys: "Ctrl-C"},
-		{ID: "default-ctrl-d", Alias: "Ctrl-D", Kind: "keys", Keys: "Ctrl-D"},
-	}
-}
-
 // Project is one project. Only what cannot be defaulted; the id is the
 // repo's owner/repo (the display name), and the container/volumes are
 // derived from it.
@@ -191,7 +174,7 @@ func Open(dataDir string, seed Bootstrap) (*Store, error) {
 		return nil, fmt.Errorf("read %s: %w", s.path, err)
 	}
 	s.seed(seed)
-	if !fresh { // loaded an existing doc — nothing to persist
+	if !fresh { // loaded existing state — leave it untouched
 		return s, nil
 	}
 	if err := s.save(); err != nil {

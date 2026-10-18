@@ -21,8 +21,7 @@ test.describe('shortcuts', () => {
       const dialog = page.getByRole('dialog')
       await expect(dialog).toBeVisible()
       await dialog.getByTestId('sc-add').click()
-      // New projects ship default shortcuts, so the add form's row index is
-      // not 0 — target its labelled inputs instead of an index.
+      // New projects start with an empty, user-defined shortcuts list.
       await dialog.getByLabel('Shortcut name').fill('dev')
       await dialog.getByLabel('Shortcut value').fill('npm run dev -- --host 0.0.0.0 --port 3000')
       await expect(dialog).toHaveScreenshot('shortcuts-modal.png')
@@ -54,11 +53,18 @@ test.describe('shortcuts', () => {
       await expect(page.getByTestId(`project-card-${id}`)).toBeVisible({ timeout: ciTimeout(10_000) })
       await page.getByTestId(`project-card-${id}`).getByRole('button', { name: 'Terminal' }).click()
       await expect(page.locator('.xterm-screen')).toBeVisible({ timeout: ciTimeout(15_000) })
-      await page.getByTestId('tab-shortcuts').click()
+      await page.getByTestId('terminal-actions-trigger').click()
+      await page.getByTestId('terminal-action-shortcuts').click()
       const dialog = page.getByRole('dialog')
       await expect(dialog).toBeVisible()
       // Row tap runs: no separate play button on the terminal modal.
       await expect(dialog.getByTestId('sc-row-hello')).toBeVisible()
+      await dialog.getByTestId('sc-menu-hello').click()
+      await page.getByRole('menuitem', { name: 'Edit' }).click()
+      await expect(dialog.getByLabel('Shortcut name')).toHaveValue('hello')
+      await dialog.getByRole('button', { name: 'Cancel' }).click()
+      await expect(dialog).toBeVisible()
+      await expect(page.locator('.xterm-rows')).not.toContainText('hello-quick')
       await expect(page).toHaveScreenshot('shortcuts-modal-run.png')
       await dialog.getByTestId('sc-row-hello').click()
       await expect(dialog).not.toBeVisible({ timeout: ciTimeout(5_000) })

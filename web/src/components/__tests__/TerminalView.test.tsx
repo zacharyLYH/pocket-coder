@@ -220,6 +220,7 @@ describe('TerminalView session management', () => {
     // Terminal mode shows session actions.
     expect(screen.getByTestId('terminal-actions-trigger')).toBeTruthy()
     expect(screen.getByTestId('current-session').textContent).toContain('helper-1')
+    expect(screen.getByTestId('accessory-keys')).toBeTruthy()
 
     const ensurePosts = () => fetchCalls.filter(c => c.url.endsWith('/sessions') && c.method === 'POST')
     await waitFor(() => { expect(ensurePosts().length).toBeGreaterThanOrEqual(1) })
@@ -227,6 +228,7 @@ describe('TerminalView session management', () => {
 
     // Transport into Diff: no Actions menu, fixed title instead of session name.
     await act(async () => { fireEvent.click(screen.getByTestId('tab-diff')) })
+    expect(screen.getByTestId('accessory-keys')).toBeTruthy()
     expect(screen.getByTestId('fixed-view-title').textContent).toContain('Git')
     expect(screen.queryByTestId('terminal-actions-trigger')).toBeNull()
     expect(screen.queryByTestId('current-session')).toBeNull()

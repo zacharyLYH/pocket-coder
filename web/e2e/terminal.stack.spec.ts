@@ -136,6 +136,15 @@ test('real OpenCode session renders through the backend terminal bridge', async 
 
     const terminalText = await page.locator('.xterm-rows').innerText()
     expect(terminalText).toMatch(/Build|Connect|Ask anything/)
+
+    // OpenCode's Build/Plan mode is controlled by Tab in the real TUI.
+    await page.locator('.xterm-screen').click()
+    await page.getByRole('button', { name: 'Tab', exact: true }).click()
+    await expect.poll(() => page.locator('.xterm-rows').innerText(), { timeout: ciTimeout(10_000) }).toMatch(/Plan/)
+    await expect(page).toHaveScreenshot('terminal-opencode-plan.png', {
+      animations: 'disabled',
+      caret: 'hide',
+    })
   } finally {
     await deleteAllProjects(page.request)
   }

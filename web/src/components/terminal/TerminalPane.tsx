@@ -5,7 +5,7 @@ import '@xterm/xterm/css/xterm.css'
 
 import { projectPath } from '@/lib/api'
 import { parseTerminalFrame } from '@/lib/terminalFrame'
-import { TERM_INPUT_EVENT } from '@/components/terminal/QuickKeys'
+import { TERM_INPUT_EVENT, TERM_PASTE_EVENT } from '@/components/terminal/QuickKeys'
 
 export type ConnStatus = 'connecting' | 'live' | 'ended'
 
@@ -172,7 +172,14 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
       }
     }
     window.addEventListener(TERM_INPUT_EVENT, onInput)
-    return () => window.removeEventListener(TERM_INPUT_EVENT, onInput)
+    const onPaste = (e: Event) => {
+      termRef.current?.paste((e as CustomEvent<string>).detail)
+    }
+    window.addEventListener(TERM_PASTE_EVENT, onPaste)
+    return () => {
+      window.removeEventListener(TERM_INPUT_EVENT, onInput)
+      window.removeEventListener(TERM_PASTE_EVENT, onPaste)
+    }
   }, [])
 
   useEffect(() => {

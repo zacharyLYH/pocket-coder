@@ -109,7 +109,7 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 			"createdAt":   kp.CreatedAt,
 		},
 		"projects": map[string]any{
-			proj.ID: map[string]any{"repo": "git@github.com:x/hello.git", "shortcuts": state.DefaultShortcuts()},
+			proj.ID: map[string]any{"repo": "git@github.com:x/hello.git"},
 		},
 	})
 

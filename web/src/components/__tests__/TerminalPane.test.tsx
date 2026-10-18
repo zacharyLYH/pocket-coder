@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import type { RefObject } from 'react'
 import { render } from '@testing-library/react'
 import { TerminalPane } from '@/components/terminal/TerminalPane'
+import { pasteTermText } from '@/components/terminal/QuickKeys'
 import { mockFetch } from '@/test/mockFetch'
 import { MockWebSocket, stubWebSocket } from '@/test/stubs'
 
@@ -28,12 +29,13 @@ let wsInstances: MockWebSocket[] = []
 
 // Buffer mode drives the touch bridge: 'normal' has scrollback,
 // 'alternate' is `tmux attach` (no scrollback, tmux owns scroll via mouse).
-const { scrollLines, opened, opts, buf, write } = vi.hoisted(() => ({
+const { scrollLines, opened, opts, buf, write, paste } = vi.hoisted(() => ({
   scrollLines: vi.fn(),
   opened: vi.fn(),
   opts: { v: null as Record<string, unknown> | null },
   buf: { type: 'normal' as 'normal' | 'alternate' },
   write: vi.fn(),
+  paste: vi.fn(),
 }))
 
 vi.mock('@xterm/xterm', () => ({
@@ -44,6 +46,7 @@ vi.mock('@xterm/xterm', () => ({
       dispose: vi.fn(),
       focus: vi.fn(),
       write,
+      paste,
       onData: vi.fn(),
       scrollLines,
       cols: 80,
@@ -69,6 +72,7 @@ beforeEach(() => {
   scrollLines.mockClear()
   opened.mockClear()
   write.mockClear()
+  paste.mockClear()
   opts.v = null
   buf.type = 'normal'
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver)
@@ -108,6 +112,13 @@ describe('TerminalPane liveness + spaciousness options', () => {
 })
 
 describe('TerminalPane output coalescing', () => {
+  it('routes clipboard text through xterm paste handling', async () => {
+    render(<TerminalPane projectId="abc" session="main" redial={0} fontSize={14} hostRef={hostRef()} onStatus={vi.fn()} onError={vi.fn()} />)
+    await new Promise((r) => setTimeout(r, 20))
+    pasteTermText('multi\nline')
+    expect(paste).toHaveBeenCalledWith('multi\nline')
+  })
+
   // One write per animation frame: a burst of PTY frames used to hit
   // term.write() once per frame, which kept the parser and DOM renderer on
   // the main thread for the whole burst.

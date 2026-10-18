@@ -181,7 +181,7 @@ func (s *Service) Create(ctx context.Context, repoURL, branch string) (string, P
 	if _, err := s.store.Get(id); err == nil {
 		return "", Project{}, fmt.Errorf("%w: project %q", ErrConflict, id)
 	}
-	p := Project{Repo: repoURL, Branch: branch, Shortcuts: state.DefaultShortcuts()}
+	p := Project{Repo: repoURL, Branch: branch}
 	if err := s.store.Create(id, p); err != nil {
 		return "", Project{}, err
 	}

@@ -12,7 +12,6 @@ import (
 
 	"pcoder/internal/docker"
 	"pcoder/internal/project"
-	"pcoder/internal/state"
 	"pcoder/internal/state/statetest"
 )
 
@@ -64,7 +63,7 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": ""},
 		"projects": map[string]any{
-			created.ID: map[string]any{"repo": "git@github.com:x/hello.git", "shortcuts": state.DefaultShortcuts()},
+			created.ID: map[string]any{"repo": "git@github.com:x/hello.git"},
 		},
 	})
 
