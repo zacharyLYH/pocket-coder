@@ -87,6 +87,12 @@ test.describe('diff tab with changes', () => {
     try {
       // File list shows both the modified and the untracked file.
       await expect(page.getByTestId('diff-file-list')).toBeVisible({ timeout: ciTimeout(30_000) })
+      const listBox = await page.getByTestId('diff-file-list').boundingBox()
+      const actionsBox = await page.getByTestId('git-actions').boundingBox()
+      const viewport = page.viewportSize()
+      expect(listBox && actionsBox && viewport).toBeTruthy()
+      expect(listBox!.height).toBeGreaterThanOrEqual(viewport!.height / 2)
+      expect(actionsBox!.y).toBeGreaterThanOrEqual(listBox!.y + listBox!.height)
       await shotDiffTab(page, 'diff-file-list.png')
       await expect(page.getByText('hello.txt')).toBeVisible({ timeout: ciTimeout(15_000) })
       await expect(page.getByText('untracked.txt')).toBeVisible({ timeout: ciTimeout(15_000) })
@@ -94,22 +100,23 @@ test.describe('diff tab with changes', () => {
       // Expand the modified file: hunks render with per-hunk actions. The
       // viewer builds row structure before filling line text, so wait for
       // the added line's text (not just the row boxes) before screenshotting.
-      await page.getByText('hello.txt').click()
+      await page.getByTestId('diff-file-toggle').filter({ hasText: 'hello.txt' }).click()
       await expect(page.getByTestId('diff-stage-hunk').first()).toBeVisible({ timeout: ciTimeout(30_000) })
       await expect(
         page.getByTestId('diff-file').locator('.diff-table-body').getByText('world').first(),
       ).toBeVisible({ timeout: ciTimeout(30_000) })
       await shotDiffTab(page, 'diff-file-open.png')
 
-      // Quote a hunk into the notepad.
+      // Quote opens the comment dialog. Add the comment and the note lands
+      // in the always-visible Ask-AI column.
       await page.getByTestId('diff-quote-hunk').first().click()
-      await expect(page.getByTestId('diff-notes')).toContainText('hello.txt', { timeout: ciTimeout(10_000) })
+      await expect(page.getByTestId('quote-dialog')).toBeVisible({ timeout: ciTimeout(10_000) })
+      await page.getByTestId('quote-comment').fill('Does this append break callers?')
+      await page.getByTestId('quote-add').click()
+      await expect(page.getByTestId('quote-dialog')).toBeHidden()
+      await expect(page.getByTestId('diff-notes')).toHaveValue(/hello\.txt/)
+      await expect(page.getByTestId('diff-notes')).toHaveValue(/append break callers/)
       await shotDiffTab(page, 'diff-notepad.png')
-
-      // Close the notepad so the file list regains full height: with the
-      // tall notes drawer open, staged rows would fall below the list's
-      // scroll fold and the final shot would miss them.
-      await page.getByTestId('diff-notepad-toggle').click()
 
       // Stage the file: it moves from Unstaged to Staged. The staged diff
       // refetches after the move. Anchor every wait past the reload: the

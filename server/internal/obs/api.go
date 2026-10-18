@@ -3,19 +3,27 @@ package obs
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 )
 
 // Staged write path. Configure once at boot; Info/Warn/Error then write one
-// project line to the observe file + stderr (plus the events sink when one
-// is configured — production passes nil: events.log holds only the global
-// audit for actions with no project, written by explicit Appends, never by
-// fan-out). The project rides in ctx (see WithProject) — it never changes
-// through a request's lifecycle, so call sites pass only key, message, data.
-// Key identifies the use case and is shared by a use case's info and error
-// lines alike (level carries the outcome); data is plain attrs (nil ok);
-// error values stringify instead of marshaling as {}.
+// server log line (message, routing keys, and every data attr) and, when the
+// ctx carries a project, the same line to that project's observe file (plus
+// the events sink when one is configured — production passes nil: events.log
+// holds only the global audit for actions with no project, written by
+// explicit Appends, never by fan-out). The project rides in ctx (see
+// WithProject) — it never changes through a request's lifecycle, so call
+// sites pass only key, message, data. Key identifies the use case and is
+// shared by a use case's info and error lines alike (level carries the
+// outcome); data is plain attrs (nil ok); error values stringify instead of
+// marshaling as {}.
+//
+// Division of labour: use obs for anything worth observing — the server log
+// gets it too, so a line never lives only in the store. Use plain slog for
+// process noise that has no use-case/project meaning (boot, janitor sweeps,
+// background retries the UI never lists).
 var (
 	apiMu sync.Mutex
 	apiSt *Store
@@ -97,9 +105,6 @@ func Error(ctx context.Context, key, msg string, data map[string]any) {
 
 func emit(ctx context.Context, level, key, msg string, data map[string]any) {
 	project := ProjectOf(ctx)
-	if project == "" {
-		return
-	}
 	trace := TraceOf(ctx)
 	if trace == "" {
 		trace = "none"
@@ -114,6 +119,13 @@ func emit(ctx context.Context, level, key, msg string, data map[string]any) {
 	}
 	if len(clean) == 0 {
 		clean = nil
+	}
+	// Server log first, unconditionally: an observe line that lives nowhere
+	// but the store is invisible exactly when you need it (page broken, no
+	// project in ctx yet). Project-scoped writes below are the extra copy.
+	logLine(level, msg, project, key, trace, clean)
+	if project == "" {
+		return
 	}
 	apiMu.Lock()
 	st, fn := apiSt, apiEv
@@ -132,14 +144,39 @@ func emit(ctx context.Context, level, key, msg string, data map[string]any) {
 		}
 		fn(key, ed)
 	}
-	// stderr stays terse: message plus routing keys (full data is in the
-	// file and the event).
+}
+
+// logLine writes the server-log copy of an observe line: same message and
+// routing keys, plus the full data payload that used to exist only in the
+// observe file. Keys are sorted so two runs of the same event read alike;
+// a data key that would shadow an envelope key is prefixed with data_ so
+// the line keeps both values.
+func logLine(level, msg, project, key, trace string, data map[string]any) {
+	attrs := make([]any, 0, 6+2*len(data))
+	attrs = append(attrs, "type", key)
+	if project != "" {
+		attrs = append(attrs, "project", project)
+	}
+	attrs = append(attrs, "trace", trace)
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		name := k
+		switch k {
+		case "type", "project", "trace", "level", "msg", "time":
+			name = "data_" + k
+		}
+		attrs = append(attrs, name, data[k])
+	}
 	switch level {
 	case "error":
-		slog.Error(msg, "project", project, "type", key, "trace", trace)
+		slog.Error(msg, attrs...)
 	case "warn":
-		slog.Warn(msg, "project", project, "type", key, "trace", trace)
+		slog.Warn(msg, attrs...)
 	default:
-		slog.Info(msg, "project", project, "type", key, "trace", trace)
+		slog.Info(msg, attrs...)
 	}
 }

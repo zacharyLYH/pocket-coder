@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"pcoder/internal/docker"
+	"pcoder/internal/obs"
 	"pcoder/internal/project"
 )
 
@@ -89,7 +89,10 @@ type DockerFactory struct {
 
 func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	startTotal := time.Now()
-	log := slog.With("project", cfg.ProjectID)
+	// Stamp the project here: the factory knows it even when the caller's ctx
+	// doesn't (tool + butler paths), and phase lines belong in the project's
+	// observe file as well as the server log.
+	ctx = obs.WithSource(obs.WithProject(ctx, cfg.ProjectID), obs.SourcePreview)
 
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
@@ -106,7 +109,9 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 		if err := f.ensureImage(ctx, ir, image); err != nil {
 			return nil, fmt.Errorf("ensure browser image: %w", err)
 		}
-		log.Info("preview phase: ensure image", "duration", time.Since(t).Round(time.Millisecond))
+		obs.Info(ctx, obs.PreviewPhase, "preview phase: ensure image", map[string]any{
+			"duration": time.Since(t).Round(time.Millisecond),
+		})
 	}
 	targetURL := "http://127.0.0.1:3000"
 	if cfg.Port > 0 {
@@ -116,8 +121,10 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	// first frame is already the right size. It is only a seed: Xtigervnc
 	// resizes the live desktop when the surface syncs a new viewport.
 	fbWidth, fbHeight := FramebufferSize(cfg.ViewWidth, cfg.ViewHeight)
-	log.Info("preview phase: framebuffer seed", "width", fbWidth, "height", fbHeight,
-		"viewport", fmt.Sprintf("%dx%d", cfg.ViewWidth, cfg.ViewHeight))
+	obs.Info(ctx, obs.PreviewPhase, "preview phase: framebuffer seed", map[string]any{
+		"width": fbWidth, "height": fbHeight,
+		"viewport": fmt.Sprintf("%dx%d", cfg.ViewWidth, cfg.ViewHeight),
+	})
 	spec := docker.Spec{
 		Name:     sidecarNamePrefix + project.SanitizeName(cfg.ProjectID),
 		Image:    image,
@@ -146,7 +153,9 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	if len(shortCID) > 12 {
 		shortCID = shortCID[:12]
 	}
-	log.Info("preview phase: run sidecar", "duration", time.Since(t).Round(time.Millisecond), "container", shortCID)
+	obs.Info(ctx, obs.PreviewPhase, "preview phase: run sidecar", map[string]any{
+		"duration": time.Since(t).Round(time.Millisecond), "container": shortCID,
+	})
 
 	var relayID string
 	cleanup := func() {
@@ -176,7 +185,9 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 		cleanup()
 		return nil, fmt.Errorf("inspect project container: %w", err)
 	}
-	log.Info("preview phase: inspect containers", "duration", time.Since(t).Round(time.Millisecond))
+	obs.Info(ctx, obs.PreviewPhase, "preview phase: inspect containers", map[string]any{
+		"duration": time.Since(t).Round(time.Millisecond),
+	})
 
 	if project.NetworkIP == "" {
 		cleanup()
@@ -188,7 +199,9 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	}
 	t = time.Now()
 	direct := directCDPReady(ctx, f.HTTPClient, ep.CDP, f.PollEvery)
-	log.Info("preview phase: direct CDP probe", "duration", time.Since(t).Round(time.Millisecond), "reachable", direct)
+	obs.Info(ctx, obs.PreviewPhase, "preview phase: direct CDP probe", map[string]any{
+		"duration": time.Since(t).Round(time.Millisecond), "reachable": direct,
+	})
 	if !direct {
 		t = time.Now()
 		var relayEp Endpoint
@@ -197,7 +210,9 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 			cleanup()
 			return nil, err
 		}
-		log.Info("preview phase: start relay", "duration", time.Since(t).Round(time.Millisecond), "cdp", relayEp.CDP)
+		obs.Info(ctx, obs.PreviewPhase, "preview phase: start relay", map[string]any{
+			"duration": time.Since(t).Round(time.Millisecond), "cdp": relayEp.CDP,
+		})
 		ep = relayEp
 	}
 	// A wedged CDP must fail the start, not hang the request.
@@ -209,13 +224,19 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 	if err := WaitForCDP(waitCtx, f.HTTPClient, ep.CDP, f.PollEvery); err != nil {
-		log.Error("preview phase: wait for CDP", "duration", time.Since(t).Round(time.Millisecond), "endpoint", ep.CDP, "err", err)
+		obs.Error(ctx, obs.PreviewPhase, "preview phase: wait for CDP failed", map[string]any{
+			"duration": time.Since(t).Round(time.Millisecond), "endpoint": ep.CDP, "err": err,
+		})
 		cleanup()
 		return nil, err
 	}
-	log.Info("preview phase: wait for CDP", "duration", time.Since(t).Round(time.Millisecond), "endpoint", ep.CDP)
+	obs.Info(ctx, obs.PreviewPhase, "preview phase: wait for CDP", map[string]any{
+		"duration": time.Since(t).Round(time.Millisecond), "endpoint": ep.CDP,
+	})
 
-	log.Info("preview started", "total_duration", time.Since(startTotal).Round(time.Millisecond), "relay", relayID != "")
+	obs.Info(ctx, obs.PreviewStart, "preview worker ready", map[string]any{
+		"total_duration": time.Since(startTotal).Round(time.Millisecond), "relay": relayID != "",
+	})
 	return &dockerWorker{docker: f.Docker, id: cid, relayID: relayID, endpoint: ep}, nil
 }
 

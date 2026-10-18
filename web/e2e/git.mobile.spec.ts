@@ -28,8 +28,14 @@ test.describe('git tab (mobile)', () => {
     await expect(page.getByTestId('git-message')).toBeVisible()
     await expect(page.getByTestId('git-generate-message')).toBeVisible()
 
+    // Stage is available without opening the file, and the row shows a
+    // pointer cursor because the whole label area is the dropdown trigger.
+    const toggle = page.getByTestId('diff-file-toggle')
+    await expect(toggle).toHaveClass(/cursor-pointer/)
+    await expect(page.getByTestId('diff-stage-file')).toBeVisible()
+
     // Expand the file: hunks render at 3 context lines…
-    await page.getByTestId('diff-file').click()
+    await toggle.click()
     await expect(page.getByTestId('diff-stage-hunk').first()).toBeVisible()
     await expect(page.getByTestId('diff-context-bump')).toContainText('Context: 3')
 
@@ -38,6 +44,7 @@ test.describe('git tab (mobile)', () => {
     await expect(page.getByTestId('diff-context-bump')).toContainText('Context: 10')
     await page.getByTestId('git-collapse-all').click()
     await expect(page.getByTestId('diff-stage-hunk')).toBeHidden()
+    await expect(page.getByTestId('diff-stage-file')).toBeVisible()
 
     // One CTA, label changes with state: Stage all → Commit → Push.
     await expect(page.getByTestId('git-primary-action')).toHaveText('Stage all')
@@ -67,6 +74,48 @@ test.describe('git tab (mobile)', () => {
     await expect(page.getByTestId('git-ship')).toHaveScreenshot('git-mobile-desc.png')
   })
 
+  // Pins the Quote button's whole job: expand a file, open the comment
+  // dialog, add a comment, and land path + patch + comment in the notes
+  // without an uncaught error. The pageerror listener is the point: a
+  // thrown exception still leaves the UI usable, so value-only assertions
+  // would miss it.
+  test('quote opens the comment dialog and appends to notes without throwing', async ({ page }) => {
+    const pageErrors: string[] = []
+    page.on('pageerror', (e) => pageErrors.push(e.message))
+    await openGitTab(page)
+
+    const listBox = await page.getByTestId('diff-file-list').boundingBox()
+    const actionsBox = await page.getByTestId('git-actions').boundingBox()
+    const viewport = page.viewportSize()
+    expect(listBox && actionsBox && viewport).toBeTruthy()
+    expect(listBox!.height).toBeGreaterThanOrEqual(viewport!.height / 2)
+    expect(actionsBox!.y).toBeGreaterThanOrEqual(listBox!.y + listBox!.height)
+
+    await page.getByTestId('diff-file-toggle').click()
+    await page.getByTestId('diff-quote-hunk').first().click()
+
+    const dialog = page.getByTestId('quote-dialog')
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('hello.txt')
+    await page.getByTestId('quote-comment').fill('Is this value sanitized?')
+    await page.getByTestId('quote-add').click()
+
+    const notes = page.getByTestId('diff-notes')
+    await expect(dialog).toBeHidden()
+    await expect(notes).toBeVisible()
+    await expect(notes).toHaveValue(/hello\.txt/)
+    await expect(notes).toHaveValue(/\+world/)
+    await expect(notes).toHaveValue(/Is this value sanitized\?/)
+
+    // The point of the layout: commit and notes split the deck side by side.
+    const commitBox = await page.getByTestId('git-commit-section').boundingBox()
+    const notesBox = await page.getByTestId('diff-notepad').boundingBox()
+    expect(commitBox && notesBox).toBeTruthy()
+    expect(Math.abs(commitBox!.width - notesBox!.width)).toBeLessThan(2)
+    expect(commitBox!.x).toBeLessThan(notesBox!.x)
+    expect(pageErrors).toEqual([])
+  })
+
   test('generate fills the message; explain jumps to codemap', async ({ page }) => {
     await openGitTab(page)
     await page.getByTestId('git-generate-message').click()
@@ -87,7 +136,7 @@ test.describe('git tab (mobile)', () => {
 
   test('working-tree explain is disabled on a clean tree', async ({ page }) => {
     await openGitTab(page)
-    await page.getByTestId('diff-file').click()
+    await page.getByTestId('diff-file-toggle').click()
     await expect(page.getByTestId('git-explain-tree')).toBeEnabled()
     await page.getByTestId('git-primary-action').click() // Stage all
     await page.getByTestId('git-message').fill('feat: add world greeting')
@@ -146,7 +195,7 @@ test.describe('git tab (mobile)', () => {
     // Conflicts sort above the normal sections and never offer staging.
     await expect(page.getByTestId('diff-conflicts')).toContainText('Conflicts (1)')
     await expect(page.getByTestId('diff-conflict-badge')).toHaveCount(1)
-    await page.getByTestId('diff-conflicts').getByTestId('diff-file').click()
+    await page.getByTestId('diff-conflicts').getByTestId('diff-file-toggle').click()
     await expect(page.getByTestId('diff-conflicts').getByTestId('diff-stage-file')).toHaveCount(0)
     await expect(page.getByTestId('diff-tab')).toHaveScreenshot('git-mobile-conflict.png')
   })

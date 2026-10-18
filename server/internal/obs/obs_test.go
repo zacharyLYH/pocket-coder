@@ -1,10 +1,12 @@
 package obs
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"log/slog"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -225,5 +227,30 @@ func TestSearchMatchesTraceID(t *testing.T) {
 	part, _, _ := s.Read("o/r", 0, 0, 200, "", "", "", "", "bbbb")
 	if len(part) != 1 || part[0].Msg != "second line" {
 		t.Fatalf("partial trace search -> %+v", part)
+	}
+}
+
+// The server log is not a subset of the observe file: every Info/Warn/Error
+// line reaches slog with its full data, project or not, so a line that only
+// exists in the store can never hide from someone reading the process log.
+func TestServerLogCopy(t *testing.T) {
+	testStore(t, nil)
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	Info(WithProject(context.Background(), "o/r"), PreviewPhase, "scoped line",
+		map[string]any{"duration": "92ms"})
+	Warn(context.Background(), PreviewPhase, "unscoped line", nil)
+
+	out := buf.String()
+	for _, want := range []string{"scoped line", "project=o/r", "duration=92ms", "type=preview.phase"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("server log missing %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "unscoped line") {
+		t.Fatalf("project-less line was dropped:\n%s", out)
 	}
 }

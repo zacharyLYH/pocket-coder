@@ -4,9 +4,9 @@ import type { GitBranchList } from '@/lib/types'
 
 // Branch sheet (§5): bottom sheet listing local + remote branches with
 // create. Pure presentational: switching state lives in DiffTab.
-export function BranchSheet({ branches, gitBusy, newBranch, onNewBranch, hasUpstream, ahead, onClose, onSwitch }: {
+export function BranchSheet({ branches, busy, newBranch, onNewBranch, hasUpstream, ahead, onClose, onSwitch }: {
   branches: GitBranchList | null
-  gitBusy: string | null
+  busy: string | null
   newBranch: string
   onNewBranch: (v: string) => void
   hasUpstream: boolean
@@ -26,35 +26,37 @@ export function BranchSheet({ branches, gitBusy, newBranch, onNewBranch, hasUpst
           <>
             <p className="pb-1 text-xs text-muted-foreground">Current: {branches.current}{branches.detached ? ' (detached)' : ''}</p>
             {[...branches.local].sort((a, b) => (a.name === branches.current ? -1 : b.name === branches.current ? 1 : 0)).map((b) => (
-              <button
+              <Button
                 key={b.name}
-                className="flex min-h-[44px] w-full items-center justify-between px-2 text-left text-sm"
+                variant="ghost"
+                className="h-auto min-h-[44px] w-full justify-between px-2 text-left text-sm font-normal"
                 onClick={() => void onSwitch(b.name)}
-                disabled={gitBusy !== null || b.name === branches.current}
+                disabled={busy !== null || b.name === branches.current}
                 data-testid="git-branch-local"
               >
                 <span>{b.name}</span>
                 <span className="text-xs text-muted-foreground">{b.relativeTime}</span>
-              </button>
+              </Button>
             ))}
             {branches.remote.map((b) => (
-              <button
+              <Button
                 key={b.name}
-                className="flex min-h-[44px] w-full items-center justify-between px-2 text-left text-sm text-muted-foreground"
+                variant="ghost"
+                className="h-auto min-h-[44px] w-full justify-between px-2 text-left text-sm font-normal text-muted-foreground"
                 onClick={() => void onSwitch(b.name)}
-                disabled={gitBusy !== null}
+                disabled={busy !== null}
                 data-testid="git-branch-remote"
               >
                 <span>origin/{b.name}</span>
                 <span className="text-xs">{b.relativeTime}</span>
-              </button>
+              </Button>
             ))}
             <div className="mt-2 flex gap-2 border-t pt-2">
               <Input placeholder="New branch name" value={newBranch} onChange={(e) => onNewBranch(e.target.value)} data-testid="git-branch-new-name" />
               <Button
                 size="sm"
                 className="min-h-[44px]"
-                disabled={gitBusy !== null || !newBranch.trim()}
+                disabled={busy !== null || !newBranch.trim()}
                 onClick={() => void onSwitch(newBranch.trim(), true)}
                 data-testid="git-branch-create"
               >

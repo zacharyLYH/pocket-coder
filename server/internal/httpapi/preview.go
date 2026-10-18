@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -308,10 +307,10 @@ func handlePreviewHeartbeat(d Deps) http.HandlerFunc {
 		if _, terr := previewTokenWorker(d, w, r); terr != nil {
 			return
 		}
+		// Reached only with a valid token, so each line is proof of tokened
+		// presence. The token itself is never logged, and the server log gets
+		// its own copy from obs.
 		obs.Info(r.Context(), obs.PreviewHeartbeat, "preview heartbeat", nil)
-		// Reached only with a valid token, so each line is proof of
-		// tokened presence. The token itself is never logged.
-		slog.Info("preview heartbeat", "project", r.PathValue("id"))
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }

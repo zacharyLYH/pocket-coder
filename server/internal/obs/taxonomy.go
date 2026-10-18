@@ -90,6 +90,7 @@ const (
 
 	// Preview worker + tools.
 	PreviewStart        = "preview.start"
+	PreviewPhase        = "preview.phase"
 	PreviewClose        = "preview.close"
 	PreviewOpen         = "preview.open"
 	PreviewStatus       = "preview.status"
