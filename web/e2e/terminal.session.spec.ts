@@ -37,6 +37,8 @@ test.describe('session switcher', () => {
     // pinned views sit in the same strip, colour-coded apart from sessions
     await expect(page.getByTestId('tab-diff')).toBeVisible()
     await expect(page).toHaveScreenshot('terminal-session-tabs.png')
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await expect(page).toHaveScreenshot('terminal-session-tabs-dark.png')
   })
 
   test('new tab button opens dialog', async ({ page }) => {

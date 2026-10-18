@@ -84,7 +84,7 @@ export function TerminalTabs({ sessions, current, view, showCodemap, onSelectSes
             view === f.id
               ? 'bg-amber-500/25 text-foreground'
               : 'bg-amber-500/10 text-muted-foreground'
-          }`}
+          } ${view === f.id ? 'dark:bg-amber-500/25' : 'dark:bg-amber-500/10'}`}
         >
           {f.label}
         </Button>
