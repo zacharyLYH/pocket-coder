@@ -19,7 +19,7 @@ import (
 // (shared fixtures).
 
 func TestProjectsRequireAuth(t *testing.T) {
-	d, _, _, _ := newProjectDeps(t)
+	d, _, _ := newProjectDeps(t)
 	h := New(d)
 	if rec := get(t, h, "/api/projects"); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /api/projects unauthed: %d, want 401", rec.Code)
@@ -30,7 +30,7 @@ func TestProjectsRequireAuth(t *testing.T) {
 }
 
 func TestCreateListGetProjectAPI(t *testing.T) {
-	d, md, pinOut, st := newProjectDeps(t)
+	d, md, st := newProjectDeps(t)
 	h := New(d)
 
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
@@ -39,7 +39,7 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 	md.EXPECT().Exec(mock.Anything, "cid", []string{"git", "clone", "git@github.com:x/hello.git", "/workspace/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	rec := authedPost(t, h, cookie, "/api/projects", `{"repoUrl":"https://github.com/x/hello.git"}`)
 	if rec.Code != http.StatusCreated {
@@ -87,7 +87,7 @@ func TestCreateListGetProjectAPI(t *testing.T) {
 }
 
 func TestCreateCloneFailureSurfacesDetail(t *testing.T) {
-	d, md, pinOut, _ := newProjectDeps(t)
+	d, md, _ := newProjectDeps(t)
 	h := New(d)
 
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
@@ -96,7 +96,7 @@ func TestCreateCloneFailureSurfacesDetail(t *testing.T) {
 	md.EXPECT().Exec(mock.Anything, "cid", mock.Anything, false).
 		Return(docker.ExecResult{ExitCode: 128, Output: "fatal: repository not found"}, nil)
 
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects", `{"repoUrl":"https://github.com/x/nope.git"}`)
 	// SSH-era clone failures surface the deploy-key rot signal, not raw
 	// git output: the fix is re-adding the server key, not debugging refs.
@@ -107,9 +107,9 @@ func TestCreateCloneFailureSurfacesDetail(t *testing.T) {
 }
 
 func TestCreateRequiresGitHubRepo(t *testing.T) {
-	d, md, pinOut, _ := newProjectDeps(t)
+	d, md, _ := newProjectDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	for _, body := range []string{
 		`{}`,
@@ -126,7 +126,7 @@ func TestCreateRequiresGitHubRepo(t *testing.T) {
 }
 
 func TestCreateDuplicateRepoIsConflict(t *testing.T) {
-	d, md, pinOut, _ := newProjectDeps(t)
+	d, md, _ := newProjectDeps(t)
 	h := New(d)
 
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
@@ -135,7 +135,7 @@ func TestCreateDuplicateRepoIsConflict(t *testing.T) {
 	md.EXPECT().Exec(mock.Anything, "cid", mock.Anything, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	body := `{"repoUrl":"https://github.com/x/hello.git"}`
 	if rec := authedPost(t, h, cookie, "/api/projects", body); rec.Code != http.StatusCreated {
 		t.Fatalf("first create: %d %q", rec.Code, rec.Body)
@@ -147,9 +147,9 @@ func TestCreateDuplicateRepoIsConflict(t *testing.T) {
 }
 
 func TestCreateInvalidBodyIs400(t *testing.T) {
-	d, _, pinOut, _ := newProjectDeps(t)
+	d, _, _ := newProjectDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects", `{invalid json`)
 	want := "{\"error\":\"invalid JSON body\"}\n"
 	if rec.Code != http.StatusBadRequest || rec.Body.String() != want {
@@ -158,9 +158,9 @@ func TestCreateInvalidBodyIs400(t *testing.T) {
 }
 
 func TestGetEngineFailureIs500(t *testing.T) {
-	d, md, pinOut, dataDir := newProjectDeps(t)
+	d, md, dataDir := newProjectDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	if err := project.Open(dataDir).Create("abc", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
 		t.Fatal(err)
@@ -176,9 +176,9 @@ func TestGetEngineFailureIs500(t *testing.T) {
 // Metadata exists but the container is gone (scope=container deleted earlier):
 // ops must map the engine's not-found to a 404 with its own message.
 func TestOpMissingContainerIs404(t *testing.T) {
-	d, md, pinOut, dataDir := newProjectDeps(t)
+	d, md, dataDir := newProjectDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	if err := project.Open(dataDir).Create("abc", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
 		t.Fatal(err)
@@ -194,9 +194,9 @@ func TestOpMissingContainerIs404(t *testing.T) {
 }
 
 func TestProjectOpsAndScopesAPI(t *testing.T) {
-	d, _, pinOut, _ := newProjectDeps(t)
+	d, _, _ := newProjectDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	cases := []struct {
 		method, path string
@@ -227,7 +227,7 @@ func TestProjectOpsAndScopesAPI(t *testing.T) {
 // guarantee: when a container is missing but the project exists on disk,
 // EnsureContainer inside the handler recreates it.
 func TestLazyReconciliationViaSessionHandler(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	// first call: container missing → triggers reconciliation
@@ -243,7 +243,7 @@ func TestLazyReconciliationViaSessionHandler(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 1, Output: "no server running"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedGet(t, h, cookie, "/api/projects/abc/sessions")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list sessions after reconcile: %d %s", rec.Code, rec.Body)

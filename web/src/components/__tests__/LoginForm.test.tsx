@@ -4,36 +4,40 @@ import { LoginForm } from '@/components/LoginForm'
 import { mockFetch } from '@/test/mockFetch'
 import { stubMatchMedia } from '@/test/stubs'
 
-// Unit tests for the login flow's request/verify steps and error surface.
+// Unit tests for the email + password login: one generic error for every
+// failure, success hands the email up to the app session flow.
 describe('LoginForm', () => {
-  it('moves to the PIN step after requesting a code, and shows request errors', async () => {
+  it('logs in with email and password', async () => {
     vi.stubGlobal('fetch', mockFetch((url, init) => {
-      if (url === '/api/auth/request-pin' && init?.method === 'POST') {
+      if (url === '/api/auth/login' && init?.method === 'POST') {
         const body = JSON.parse(String(init.body))
-        if (body.email === 'reject@example.com') return { status: 400, body: { error: 'unknown email' } }
-        return { status: 200, body: { ok: true } }
-      }
-      if (url === '/api/auth/verify' && init?.method === 'POST') {
-        return { status: 200, body: { email: JSON.parse(String(init.body)).email } }
+        if (body.password === 'wrong') return { status: 401, body: { error: 'invalid email or password' } }
+        return { status: 200, body: { email: body.email } }
       }
       return undefined
     }))
     const onLoggedIn = vi.fn()
     render(<LoginForm onLoggedIn={onLoggedIn} />)
 
-    fireEvent.change(screen.getByPlaceholderText('you@example.com'), { target: { value: 'reject@example.com' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send code' }))
-    // the request-pin step surfaces the HTTP status, not the body detail
-    expect(await screen.findByText('HTTP 400')).toBeInTheDocument()
-    expect(screen.queryByPlaceholderText('6-digit PIN')).not.toBeInTheDocument()
-
     fireEvent.change(screen.getByPlaceholderText('you@example.com'), { target: { value: 'me@example.com' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send code' }))
-    expect(await screen.findByPlaceholderText('6-digit PIN')).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'wrong' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Log in' }))
+    // Invalid credentials surface ONE generic message — never which half failed.
+    expect(await screen.findByText('Invalid email or password.')).toBeInTheDocument()
+    expect(onLoggedIn).not.toHaveBeenCalled()
 
-    fireEvent.change(screen.getByPlaceholderText('6-digit PIN'), { target: { value: '123456' } })
+    fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'correct-password' } })
     fireEvent.click(screen.getByRole('button', { name: 'Log in' }))
     await waitFor(() => expect(onLoggedIn).toHaveBeenCalledWith('me@example.com'))
+  })
+
+  it('shows the same generic error when the server is unreachable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down') }))
+    render(<LoginForm onLoggedIn={vi.fn()} />)
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), { target: { value: 'me@example.com' } })
+    fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: 'whatever' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Log in' }))
+    expect(await screen.findByText('Invalid email or password.')).toBeInTheDocument()
   })
 })
 

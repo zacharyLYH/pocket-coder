@@ -49,7 +49,7 @@ func projectIDByRepo(t *testing.T, d Deps, repo string) string {
 }
 
 func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	if err := st.Mutate(func(doc *state.Document) error {
 		doc.User.Email = "me@example.com"
 		return nil
@@ -58,7 +58,7 @@ func TestStateSurvivesInterleavedAPITraffic(t *testing.T) {
 	}
 	d.Projects.SetSSHKeys(d.SSHKeys)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// ─── docker mock: permissive catch-alls (registered FIRST, so the
 	// specific expectations below win). Only success/failure matters here.

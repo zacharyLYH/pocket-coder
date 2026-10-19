@@ -1,14 +1,11 @@
 package auth
 
 import (
-	"bytes"
-	"context"
 	"crypto/tls"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"regexp"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,228 +13,245 @@ import (
 
 const testSecret = "0123456789abcdef0123456789abcdef"
 
-func newService(t *testing.T) (*Service, *bytes.Buffer) {
+// Everything below runs at test Argon2id params: TestMain swaps them in
+// for the whole package, so hashing is milliseconds, not seconds.
+func TestMain(m *testing.M) {
+	restore := TestParams()
+	code := m.Run()
+	restore()
+	os.Exit(code)
+}
+
+func newService(t *testing.T, password string) (*Service, string) {
 	t.Helper()
-	var out bytes.Buffer
-	return New("me@example.com", []byte(testSecret), ConsoleMailer{Out: &out}), &out
-}
-
-func TestPINFlowRoundTrip(t *testing.T) {
-	svc, out := newService(t)
-	ctx := context.Background()
-
-	if err := svc.RequestPIN(ctx, "me@example.com"); err != nil {
-		t.Fatalf("request pin: %v", err)
-	}
-	pin := regexp.MustCompile(`\d{6}`).FindString(out.String())
-	if pin == "" {
-		t.Fatalf("no pin printed: %q", out.String())
-	}
-
-	token, err := svc.Verify("me@example.com", pin)
+	hash, err := HashPassword(password)
 	if err != nil {
-		t.Fatalf("verify: %v", err)
-	}
-	// the token verifies and carries the email
-	email, err := svc.verifyToken(token)
-	if err != nil || email != "me@example.com" {
-		t.Fatalf("verifyToken = %q, %v", email, err)
-	}
-
-	// a used pin is gone
-	if _, err := svc.Verify("me@example.com", pin); !errors.Is(err, ErrInvalidPIN) {
-		t.Fatalf("reuse of consumed pin: %v", err)
-	}
-}
-
-func TestWrongEmailIsSilent(t *testing.T) {
-	svc, out := newService(t)
-	err := svc.RequestPIN(context.Background(), "other@example.com")
-	if !errors.Is(err, ErrNotConfiguredEmail) {
-		t.Fatalf("err = %v, want ErrNotConfiguredEmail", err)
-	}
-	if out.Len() != 0 {
-		t.Fatalf("pin printed for unconfigured email: %q", out.String())
-	}
-	if _, err := svc.Verify("other@example.com", "123456"); !errors.Is(err, ErrInvalidPIN) {
-		t.Fatalf("verify wrong email: %v", err)
-	}
-}
-
-func TestWrongPinBurnsAttempts(t *testing.T) {
-	svc, out := newService(t)
-	if err := svc.RequestPIN(context.Background(), "me@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	pin := regexp.MustCompile(`\d{6}`).FindString(out.String())
+	return New("me@example.com", hash, 1, []byte(testSecret)), password
+}
 
-	for i := 0; i < maxVerifyAttempts; i++ {
-		if _, err := svc.Verify("me@example.com", "000000"); !errors.Is(err, ErrInvalidPIN) {
-			t.Fatalf("attempt %d: err = %v, want ErrInvalidPIN", i, err)
+// The spec's core loop: setup hashes + persists, login verifies, wrong
+// password fails, restart (new Service from the same stored values) works.
+func TestLoginRoundTrip(t *testing.T) {
+	svc, password := newService(t, "correct horse battery")
+
+	tok, err := svc.Login("me@example.com", password, "1.2.3.4")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	cl, err := svc.verifyToken(tok)
+	if err != nil || cl.Subject != "me@example.com" {
+		t.Fatalf("verifyToken = %+v, %v", cl, err)
+	}
+	if cl.AuthVersion != 1 {
+		t.Fatalf("token ver = %d, want 1", cl.AuthVersion)
+	}
+
+	if _, err := svc.Login("me@example.com", "wrong password", "1.2.3.4"); err == nil {
+		t.Fatal("wrong password accepted")
+	}
+
+	// "restart": rebuild the service from the same persisted values
+	restarted := New("me@example.com", svc.passHash, 1, []byte(testSecret))
+	if _, err := restarted.Login("me@example.com", password, "1.2.3.4"); err != nil {
+		t.Fatalf("login after restart: %v", err)
+	}
+}
+
+// Hashing uses Argon2id with a unique salt per password: same plaintext,
+// different bytes, and the encoding names argon2id (never a fast SHA).
+func TestHashIsArgon2idWithUniqueSalt(t *testing.T) {
+	a, err := HashPassword("same-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := HashPassword("same-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Fatal("two hashes of the same password are identical — salt not unique")
+	}
+	for _, h := range []string{a, b} {
+		if !strings.HasPrefix(h, "$argon2id$") {
+			t.Fatalf("hash = %q, want argon2id", h)
 		}
 	}
-	// the correct pin is now locked out too
-	if _, err := svc.Verify("me@example.com", pin); !errors.Is(err, ErrRateLimited) {
-		t.Fatalf("after lockout: %v, want ErrRateLimited", err)
+}
+
+// Unknown email and wrong password are indistinguishable: same error, and
+// the unknown-email path still burns a hash comparison (timing parity).
+func TestUnknownEmailAndWrongPasswordIdentical(t *testing.T) {
+	svc, _ := newService(t, "correct horse battery")
+	_, errA := svc.Login("nobody@example.com", "some password", "1.2.3.4")
+	_, errB := svc.Login("me@example.com", "wrong password", "1.2.3.4")
+	if errA == nil || errB == nil {
+		t.Fatalf("expected both to fail: %v, %v", errA, errB)
+	}
+	if errA.Error() != errB.Error() {
+		t.Fatalf("errors differ: %q vs %q", errA, errB)
 	}
 }
 
-func TestRequestRateLimit(t *testing.T) {
-	svc, _ := newService(t)
-	ctx := context.Background()
-	for i := 0; i < maxPinRequests; i++ {
-		if err := svc.RequestPIN(ctx, "me@example.com"); err != nil {
-			t.Fatalf("request %d: %v", i, err)
+// Before setup runs, no password exists: every login fails closed.
+func TestNoPasswordConfiguredFailsClosed(t *testing.T) {
+	svc := New("me@example.com", "", 0, []byte(testSecret))
+	if _, err := svc.Login("me@example.com", "anything", "1.2.3.4"); err == nil {
+		t.Fatal("login with no configured password succeeded")
+	}
+}
+
+// A stored malformed hash must fail closed, never panic or accept.
+func TestMalformedStoredHashFailsClosed(t *testing.T) {
+	svc := New("me@example.com", "not-a-hash", 1, []byte(testSecret))
+	if _, err := svc.Login("me@example.com", "anything", "1.2.3.4"); err == nil {
+		t.Fatal("malformed hash accepted")
+	}
+}
+
+// Rate limits: per-source budget and a whole-instance budget, both in a
+// rolling window; success clears the source's budget.
+func TestLoginRateLimits(t *testing.T) {
+	svc, _ := newService(t, "correct horse battery")
+	for i := 0; i < maxFailsPerSource; i++ {
+		if _, err := svc.Login("me@example.com", "wrong", "10.0.0.1"); err != ErrInvalidCredentials {
+			t.Fatalf("attempt %d: %v", i, err)
 		}
 	}
-	if err := svc.RequestPIN(ctx, "me@example.com"); !errors.Is(err, ErrRateLimited) {
-		t.Fatalf("6th request: %v, want ErrRateLimited", err)
+	if _, err := svc.Login("me@example.com", "wrong", "10.0.0.1"); err != ErrRateLimited {
+		t.Fatalf("per-source limit: %v, want ErrRateLimited", err)
+	}
+	// a different source still works within its own budget
+	if _, err := svc.Login("me@example.com", "wrong", "10.0.0.2"); err != ErrInvalidCredentials {
+		t.Fatalf("other source: %v", err)
+	}
+
+	// instance-wide budget: many sources can't dodge the limit either
+	for i := 0; i < maxFailsPerInstance; i++ {
+		svc.Login("me@example.com", "wrong", "10.0.0."+string(rune('a'+i%26)))
+	}
+	if _, err := svc.Login("me@example.com", "wrong", "10.9.9.9"); err != ErrRateLimited {
+		t.Fatalf("instance limit: %v, want ErrRateLimited", err)
+	}
+
+	// success clears that source
+	svc2, _ := newService(t, "correct horse battery")
+	for i := 0; i < 3; i++ {
+		svc2.Login("me@example.com", "wrong", "10.0.0.5")
+	}
+	if _, err := svc2.Login("me@example.com", "correct horse battery", "10.0.0.5"); err != nil {
+		t.Fatalf("success under budget: %v", err)
 	}
 }
 
-func TestPinExpiry(t *testing.T) {
-	svc, out := newService(t)
-	svc.pinTTL = time.Minute
-	svc.now = func() time.Time { return time.Unix(1_000_000, 0) }
-	if err := svc.RequestPIN(context.Background(), "me@example.com"); err != nil {
-		t.Fatal(err)
+// The window rolls: old failures expire instead of permanently locking
+// out a mistyping owner.
+func TestRateLimitWindowExpires(t *testing.T) {
+	svc, _ := newService(t, "correct horse battery")
+	now := time.Unix(1_000_000, 0)
+	svc.now = func() time.Time { return now }
+	for i := 0; i < maxFailsPerSource; i++ {
+		svc.Login("me@example.com", "wrong", "10.0.0.1")
 	}
-	pin := regexp.MustCompile(`\d{6}`).FindString(out.String())
-
-	svc.now = func() time.Time { return time.Unix(1_000_000, 0).Add(time.Minute + time.Second) }
-	if _, err := svc.Verify("me@example.com", pin); !errors.Is(err, ErrInvalidPIN) {
-		t.Fatalf("expired pin: %v, want ErrInvalidPIN", err)
+	if _, err := svc.Login("me@example.com", "wrong", "10.0.0.1"); err != ErrRateLimited {
+		t.Fatalf("want limited, got %v", err)
 	}
-}
-
-func TestTokenExpiryAndTamper(t *testing.T) {
-	svc, _ := newService(t)
-
-	tok, err := svc.issueToken("me@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.verifyToken(tok); err != nil {
-		t.Fatalf("fresh token should verify: %v", err)
-	}
-
-	// tampered payload
-	parts := strings.Split(tok, ".")
-	parts[1] = "AAAA"
-	if _, err := svc.verifyToken(strings.Join(parts, ".")); err == nil {
-		t.Fatal("tampered token verified")
-	}
-
-	// wrong secret
-	other := New("me@example.com", []byte("fedcba9876543210fedcba9876543210"), ConsoleMailer{Out: &bytes.Buffer{}})
-	if _, err := other.verifyToken(tok); err == nil {
-		t.Fatal("token verified with wrong secret")
-	}
-
-	// expired
-	expired := New("me@example.com", []byte(testSecret), ConsoleMailer{Out: &bytes.Buffer{}})
-	expired.now = func() time.Time { return time.Unix(1_000_000, 0) }
-	oldTok, err := expired.issueToken("me@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc.now = func() time.Time { return time.Unix(1_000_000, 0).Add(TokenTTL + time.Second) }
-	if _, err := svc.verifyToken(oldTok); err == nil {
-		t.Fatal("expired token verified")
+	now = now.Add(rateWindow + time.Minute)
+	if _, err := svc.Login("me@example.com", "wrong", "10.0.0.1"); err != ErrInvalidCredentials {
+		t.Fatalf("after window: %v, want ErrInvalidCredentials", err)
 	}
 }
 
-func TestLoadOrCreateSecret(t *testing.T) {
-	dir := t.TempDir()
-	path := dir + "/jwt-secret"
-	s1, err := LoadOrCreateSecret(path)
+// Applying a new password bumps authVersion: old tokens are rejected on
+// every authed route, immediately, without waiting for expiry.
+func TestAuthVersionInvalidatesTokens(t *testing.T) {
+	svc, _ := newService(t, "correct horse battery")
+	tok, err := svc.Login("me@example.com", "correct horse battery", "1.2.3.4")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s1) < secretMinLength {
-		t.Fatalf("secret only %d bytes", len(s1))
-	}
-	info, err := statPerms(t, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info != 0o600 {
-		t.Fatalf("secret perms = %o, want 600", info)
-	}
-	s2, err := LoadOrCreateSecret(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(s1, s2) {
-		t.Fatal("secret changed between loads")
-	}
-}
 
-func TestMiddleware(t *testing.T) {
-	svc, _ := newService(t)
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if svc.Email(r) != "me@example.com" {
-			http.Error(w, "no email in context", http.StatusInternalServerError)
-			return
-		}
+	handled := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		handled = true
 		w.WriteHeader(http.StatusOK)
 	})
-	h := svc.RequireAuth(next)
+	serve := func(s *Service, token string) int {
+		handled = false
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+		req.AddCookie(&http.Cookie{Name: CookieName, Value: token})
+		s.RequireAuth(next).ServeHTTP(rec, req)
+		if handled && rec.Code != 200 {
+			t.Fatal("handler ran but status is not 200")
+		}
+		return rec.Code
+	}
+	if code := serve(svc, tok); code != 200 {
+		t.Fatalf("valid token: %d, want 200", code)
+	}
 
-	tok, err := svc.issueToken("me@example.com")
+	// rotation: SetPassword persists a new hash + bumped generation, then
+	// the server restarts and rebuilds the service from those values.
+	newHash, err := HashPassword("a-brand-new-password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	cases := []struct {
-		name   string
-		cookie *http.Cookie
-		want   int
-	}{
-		{"no cookie", nil, http.StatusUnauthorized},
-		{"garbage cookie", &http.Cookie{Name: CookieName, Value: "garbage"}, http.StatusUnauthorized},
-		{"valid cookie", &http.Cookie{Name: CookieName, Value: tok}, http.StatusOK},
+	restarted := New("me@example.com", newHash, 2, []byte(testSecret))
+	if code := serve(restarted, tok); code != 401 {
+		t.Fatalf("pre-rotation token after restart: %d, want 401", code)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			if tc.cookie != nil {
-				req.AddCookie(tc.cookie)
-			}
-			h.ServeHTTP(rec, req)
-			if rec.Code != tc.want {
-				t.Fatalf("%s: %d, want %d", tc.name, rec.Code, tc.want)
-			}
-		})
+	// the old password is dead; the new credential issues a live token
+	if _, err := restarted.Login("me@example.com", "correct horse battery", "1.2.3.4"); err == nil {
+		t.Fatal("old password accepted after rotation")
+	}
+	fresh, err := restarted.Login("me@example.com", "a-brand-new-password", "1.2.3.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := serve(restarted, fresh); code != 200 {
+		t.Fatalf("fresh token: %d, want 200", code)
 	}
 }
 
-// TestMailerMocked proves any Mailer substitutes for a real one: one
-// method, so a hand struct beats the generated mock.
-func TestMailerMocked(t *testing.T) {
-	m := mailerFunc(func(_ context.Context, email, pin string) error {
-		if email != "me@example.com" || pin == "" {
-			t.Errorf("SendPIN(%q, %q)", email, pin)
-		}
-		return nil
-	})
-	svc := New("me@example.com", []byte(testSecret), m)
-	if err := svc.RequestPIN(context.Background(), "me@example.com"); err != nil {
-		t.Fatalf("request pin: %v", err)
+func TestNormalizeEmail(t *testing.T) {
+	if got := NormalizeEmail("  Owner@Example.COM "); got != "owner@example.com" {
+		t.Fatalf("NormalizeEmail = %q", got)
 	}
 }
 
-type mailerFunc func(ctx context.Context, email, pin string) error
-
-func (f mailerFunc) SendPIN(ctx context.Context, email, pin string) error {
-	return f(ctx, email, pin)
+// LoadOrCreateSecret: generated once, 0600, reused across "restarts".
+func TestLoadOrCreateSecret(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data", "jwt-secret")
+	first, err := LoadOrCreateSecret(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) < 32 {
+		t.Fatalf("secret too short: %d", len(first))
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("secret perms = %o, want 600", info.Mode().Perm())
+	}
+	second, err := LoadOrCreateSecret(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatal("secret rotated on reload — every session would die")
+	}
 }
 
-// SetCookie must mark the session cookie Secure whenever the request arrived
-// encrypted — directly over TLS or via a reverse proxy reporting https — so
-// the cookie never rides plaintext HTTP in production.
-func TestSetCookieSecureFlag(t *testing.T) {
-	svc, _ := newService(t)
+// Cookie flags: Secure mirrors the request (TLS or proxy-reported https),
+// HttpOnly always, logout flips MaxAge negative with the same Secure bit
+// (a non-Secure delete cannot clear a Secure cookie).
+func TestCookieFlags(t *testing.T) {
+	svc, _ := newService(t, "pw")
 	cases := []struct {
 		name      string
 		tls       bool
@@ -259,74 +273,31 @@ func TestSetCookieSecureFlag(t *testing.T) {
 			}
 			rec := httptest.NewRecorder()
 			svc.SetCookie(rec, req, "tok")
+			set := findCookie(t, rec, false)
+			if set.Secure != tc.want || !set.HttpOnly || set.SameSite != http.SameSiteStrictMode {
+				t.Fatalf("set cookie = %+v", set)
+			}
 
-			var got *http.Cookie
-			for _, c := range rec.Result().Cookies() {
-				if c.Name == CookieName {
-					got = c
-				}
-			}
-			if got == nil {
-				t.Fatal("no session cookie set")
-			}
-			if got.Secure != tc.want {
-				t.Fatalf("Secure = %v, want %v", got.Secure, tc.want)
+			rec2 := httptest.NewRecorder()
+			svc.ClearCookie(rec2, req)
+			clear := findCookie(t, rec2, true)
+			if clear.Secure != tc.want || clear.MaxAge >= 0 || clear.Value != "" {
+				t.Fatalf("clear cookie = %+v", clear)
 			}
 		})
 	}
 }
 
-func statPerms(t *testing.T, path string) (os.FileMode, error) {
+func findCookie(t *testing.T, rec *httptest.ResponseRecorder, expired bool) *http.Cookie {
 	t.Helper()
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0, err
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == CookieName {
+			if expired && c.MaxAge >= 0 {
+				t.Fatalf("clearing cookie not expired: %+v", c)
+			}
+			return c
+		}
 	}
-	return info.Mode().Perm(), nil
-}
-
-// ClearCookie must mirror SetCookie's Secure logic: a non-Secure Set-Cookie
-// cannot delete a Secure cookie, so without this logout on HTTPS leaves the
-// session alive in the browser.
-func TestClearCookieMirrorsSecureFlag(t *testing.T) {
-	svc, _ := newService(t)
-	cases := []struct {
-		name      string
-		tls       bool
-		forwarded string
-		want      bool
-	}{
-		{"plain http dev", false, "", false},
-		{"direct tls", true, "", true},
-		{"behind https proxy", false, "https", true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			if tc.tls {
-				req.TLS = &tls.ConnectionState{}
-			}
-			if tc.forwarded != "" {
-				req.Header.Set("X-Forwarded-Proto", tc.forwarded)
-			}
-			rec := httptest.NewRecorder()
-			svc.ClearCookie(rec, req)
-
-			var got *http.Cookie
-			for _, c := range rec.Result().Cookies() {
-				if c.Name == CookieName {
-					got = c
-				}
-			}
-			if got == nil {
-				t.Fatal("no session cookie set")
-			}
-			if got.Secure != tc.want {
-				t.Fatalf("Secure = %v, want %v", got.Secure, tc.want)
-			}
-			if got.MaxAge >= 0 || got.Value != "" {
-				t.Fatalf("clearing cookie = value %q maxAge %d, want empty + negative", got.Value, got.MaxAge)
-			}
-		})
-	}
+	t.Fatal("no session cookie")
+	return nil
 }

@@ -21,7 +21,6 @@ import (
 // scriptedCDP is a fake Chromium: /json/list advertises one page target and
 // the websocket answers Page.navigate / Runtime.evaluate from scripts.
 type scriptedCDP struct {
-	t              *testing.T
 	mu             sync.Mutex
 	navigateResult string
 	eval           func(expr string) string
@@ -78,7 +77,7 @@ func startTestDeps(t *testing.T, script *scriptedCDP, projectID string) (http.Ha
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	m := preview.NewManager(previewTestFactory{ep: preview.Endpoint{CDP: srv.URL}})
 	if _, err := m.Ensure(context.Background(), preview.Config{ProjectID: projectID, ContainerID: "pcoder-" + projectID}); err != nil {
 		t.Fatal(err)
@@ -86,7 +85,7 @@ func startTestDeps(t *testing.T, script *scriptedCDP, projectID string) (http.Ha
 	d.Preview = m
 	t.Cleanup(func() { evictCDP(projectID) })
 	h := New(d)
-	return h, loginCookie(t, h, pinOut)
+	return h, loginCookie(t, h)
 }
 
 // (authedPostCtx lives in httpapi_test.go; authedPost delegates to it.)

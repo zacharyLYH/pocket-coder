@@ -4,20 +4,20 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/zacharyLYH/pocket-coder/main/deploy/setup.sh | bash -s -- \
 #     --email you@example.com \
-#     --smtp-password "xxxx app password"
+#     --password "your-login-password"
 #
 # Five sections, linear and flat: parse_args → validate → install_deps →
-# write_env → boot. Unknown flags are a hard error. Credentials go in
-# server/.env — the same file local dev uses, and the one both compose
-# files read via env_file.
+# write_env → boot. Unknown flags are a hard error. Only the account EMAIL
+# goes in server/.env (the same file local dev uses, and the one both
+# compose files read via env_file); the password is piped on stdin to the
+# backend's set-password command, hashed there, and never written down.
 #
 # Test hook: --test (or PCODER_SETUP_TEST=1 in the environment, as used
 # through `curl ... | VAR=1 bash -s -- ...`) runs a pure-local self-test
 # with zero side effects: no root needed, no apt/dnf, no docker, no clone,
-# no network, no email. Stub binaries on PATH stand in for the platform
-# tools, so validate, install_deps, and even boot() execute for real
-# against a call log. Runtime: ~2s. Live SMTP delivery + live boot stay
-# manual per-release (one real Gmail run).
+# no network. Stub binaries on PATH stand in for the platform tools, so
+# validate, install_deps, and even boot() execute for real against a call
+# log. Runtime: ~2s. Live boot stays manual per-release.
 set -euo pipefail
 
 REPO_URL="${PCODER_SETUP_REPO:-https://github.com/zacharyLYH/pocket-coder}"
@@ -27,7 +27,6 @@ REPO_BRANCH="${PCODER_SETUP_BRANCH:-main}"
 # always wins, and an existing install keeps its location.
 INSTALL_DIR="${PCODER_INSTALL_DIR:-/opt/pocket-coder/src}"
 EMAIL=""
-SMTP_PASSWORD=""
 OS="$(uname -s 2>/dev/null || printf unknown)" # Darwin vs Linux — Mac has no apt/dnf/systemd
 # Homebrew + Docker Desktop helpers live outside the default PATH in
 # non-interactive shells (curl|bash): pick them up so git/docker and the
@@ -41,11 +40,13 @@ die() { printf '[setup] ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat >&2 <<'EOF'
-Usage: setup.sh --email you@example.com --smtp-password "xxxx app password"
+Usage: setup.sh --email you@example.com --password "your-login-password"
 
 Bootstraps Pocket Coder on a fresh Linux box or a Mac (Docker Desktop):
-installs git + docker, clones the repo, writes server/.env, validates
-SMTP delivery, and boots the production stack on port 8080.
+installs git + docker, clones the repo, writes server/.env, sets the
+instance login password, and boots the production stack on port 8080.
+
+Re-run the same command anytime to update — and to rotate the password.
 
 Mac: install Docker Desktop first
 (https://www.docker.com/products/docker-desktop/), launch it, then re-run.
@@ -59,13 +60,13 @@ EOF
 parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
-      --email|--smtp-password)
+      --email|--password)
         # A shift past $# neither fails reliably under set -e (it can spin
         # the while loop) nor says anything — guard first, loudly.
         [ $# -ge 2 ] || { usage; die "$1 needs a value"; }
         case "$1" in
           --email) EMAIL="$2" ;;
-          --smtp-password) SMTP_PASSWORD="$2" ;;
+          --password) PASSWORD="$2" ;;
         esac
         shift 2 ;;
       --test) TEST_MODE=1; shift ;;
@@ -75,10 +76,12 @@ parse_args() {
   done
   if [ "$TEST_MODE" = "1" ]; then
     : "${EMAIL:=test@example.com}"
-    : "${SMTP_PASSWORD:=test}"
+    : "${PASSWORD:=test-password-123}"
   fi
   [ -n "$EMAIL" ] || { usage; die "--email is required"; }
-  [ -n "$SMTP_PASSWORD" ] || { usage; die "--smtp-password is required"; }
+  [ -n "$PASSWORD" ] || { usage; die "--password is required"; }
+  # Same floor the backend enforces; catching it here saves a full install.
+  [ "${#PASSWORD}" -ge 8 ] || { usage; die "--password must be at least 8 characters"; }
   # Same shape the server gates boot on (config.Load emailRe): fail fast
   # here with usage, not halfway through an install.
   [[ "$EMAIL" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] \
@@ -403,21 +406,14 @@ install_compose_plugin_linux() {
   chmod +x "$dest"
 }
 
-# 4. write_env — fresh file, locked down, exactly the Gmail contract.
-# SMTP_HOST/SMTP_PORT are honored from the environment when pre-set (lets
-# non-Gmail users re-run with overrides); otherwise the server's Gmail
-# defaults apply and nothing is written for them.
+# 4. write_env — fresh file, locked down, exactly the account contract.
+# The email is an identifier, not a secret; the password is deliberately
+# NOT here: it travels on stdin to the backend's set-password command, so
+# it never lands in .env, compose args, or logs.
 write_env() {
   mkdir -p "$INSTALL_DIR/server"
   tmp="$(mktemp)"
-  {
-    printf 'PCODER_LOGIN_EMAIL=%s\n' "$EMAIL"
-    printf 'SMTP_USER=%s\n' "$EMAIL"
-    printf 'SMTP_FROM=%s\n' "$EMAIL"
-    printf 'SMTP_PASSWORD=%s\n' "$SMTP_PASSWORD"
-    [ -z "${SMTP_HOST:-}" ] || printf 'SMTP_HOST=%s\n' "$SMTP_HOST"
-    [ -z "${SMTP_PORT:-}" ] || printf 'SMTP_PORT=%s\n' "$SMTP_PORT"
-  } > "$tmp"
+  printf 'PCODER_AUTH_EMAIL=%s\n' "$EMAIL" > "$tmp"
   chmod 600 "$tmp"
   # mv preserves the mode, so no second chmod needed.
   mv "$tmp" "$INSTALL_DIR/server/.env"
@@ -426,27 +422,24 @@ write_env() {
 
 # test_main — the --test self-test: pure-local, zero side effects, ~1s.
 # Runs parse-adjacent checks plus the real write_env into a temp dir
-# (exercises the exact Gmail .env contract), asserts the file, then
+# (exercises the exact account .env contract), asserts the file, then
 # deletes everything. Mocks: root, distro, disk/RAM/port, apt/dnf,
-# docker, clone, SMTP delivery, boot. Full delivery + boot stay manual
-# per-release (one real Gmail run).
+# docker, clone, password setter, boot. Live boot stays manual per-release.
 test_main() {
   INSTALL_DIR="$(mktemp -d)"
   # shellcheck disable=SC2064
   trap "rm -rf '$INSTALL_DIR'" EXIT
   write_env
-  for line in "PCODER_LOGIN_EMAIL=$EMAIL" "SMTP_USER=$EMAIL" "SMTP_FROM=$EMAIL" "SMTP_PASSWORD=$SMTP_PASSWORD"; do
-    grep -qx "$line" "$INSTALL_DIR/server/.env" \
-      || die "test: $line missing from .env"
-  done
-  # Host/port fall through to the server's Gmail defaults — nothing
-  # written for them unless explicitly overridden.
-  for key in SMTP_HOST SMTP_PORT; do
-    val=""; case "$key" in SMTP_HOST) val="${SMTP_HOST:-}";; SMTP_PORT) val="${SMTP_PORT:-}";; esac
-    if [ -z "$val" ] && grep -q "^$key=" "$INSTALL_DIR/server/.env"; then
-      die "test: $key written without override"
-    fi
-  done
+  grep -qx "PCODER_AUTH_EMAIL=$EMAIL" "$INSTALL_DIR/server/.env" \
+    || die "test: PCODER_AUTH_EMAIL missing from .env"
+  # The password must not be anywhere in .env — it goes to the backend on
+  # stdin and is stored only as a hash in the data volume.
+  if grep -q "$PASSWORD" "$INSTALL_DIR/server/.env"; then
+    die "test: password leaked into .env"
+  fi
+  if grep -qi 'smtp' "$INSTALL_DIR/server/.env"; then
+    die "test: SMTP leftovers in .env"
+  fi
   # Negative probes run parse_args in a subshell (no recursion into
   # test_main, no root/docker needed): bad invocations must fail LOUDLY
   # with usage on stderr — under curl|bash, silence is all the operator sees.
@@ -461,9 +454,10 @@ test_main() {
       esac
     fi
   }
-  probe_reject "missing --email value" --email --smtp-password x
-  probe_reject "missing --smtp-password value" --email a@b.cd --smtp-password
-  probe_reject "bad email" --email not-an-email --smtp-password x
+  probe_reject "missing --email value" --email --password x
+  probe_reject "missing --password value" --email a@b.cd --password
+  probe_reject "bad email" --email not-an-email --password x
+  probe_reject "short password" --email a@b.cd --password short
   probe_reject "unknown flag" --bogus
   # Phase 2: run validate + install_deps against stubbed platform tools.
   # Fake docker (healthy daemon, compose present) and failing init shims
@@ -515,8 +509,8 @@ test_main() {
   # Phase 5: boot() end-to-end with stubbed git/docker/curl/sleep plus a
   # call log. No images, no daemon, no network — but the real sequencing,
   # the health retry loop, and every failure exit execute. Switches
-  # (exported so the stub processes see them): PCODER_TEST_SMTP_FAIL=1
-  # kills the smtp-test probe, PCODER_TEST_HEALTH_FAIL=1 fails every
+  # (exported so the stub processes see them): PCODER_TEST_PASSWORD_FAIL=1
+  # kills the password setter, PCODER_TEST_HEALTH_FAIL=1 fails every
   # health poll, PCODER_TEST_HEALTH_OK_AFTER=N succeeds on the Nth poll.
   cat > "$stub/git" <<'EOF'
 #!/bin/sh
@@ -530,8 +524,10 @@ EOF
   cat > "$stub/docker" <<'EOF'
 #!/bin/sh
 echo "docker $*" >> "$PCODER_TEST_LOG"
-if [ "${1:-} ${2:-}" = "compose run" ] && [ "${PCODER_TEST_SMTP_FAIL:-0}" = "1" ]; then
-  exit 1
+if [ "${1:-} ${2:-}" = "compose run" ]; then
+  # The setter reads the password on stdin; drain it so the pipe closes.
+  cat > /dev/null
+  [ "${PCODER_TEST_PASSWORD_FAIL:-0}" = "1" ] && exit 1
 fi
 exit 0
 EOF
@@ -579,8 +575,16 @@ EOF
   [ -f "$INSTALL_DIR/bootroot/server/.env" ] || die "test: boot wrote no .env"
   [ "$(grep -c "localhost:8080/health" "$PCODER_TEST_LOG")" = "3" ] \
     || die "test: health retry loop polled wrong number of times"
-  order_ok "git clone" "compose build" "pcoder-project" "pcoder-browser" "smtp-test" "compose up" \
+  order_ok "git clone" "compose build" "pcoder-project" "pcoder-browser" "set-password" "compose up" \
     || die "test: boot ran steps out of order"
+  # The password must never reach the call log (docker args or output).
+  if grep -q "$PASSWORD" "$PCODER_TEST_LOG"; then
+    die "test: password leaked into the docker call log"
+  fi
+  # No install/update path may drop the named data volume.
+  if grep -q "volume rm" "$PCODER_TEST_LOG"; then
+    die "test: boot removed a volume"
+  fi
   unset PCODER_TEST_HEALTH_OK_AFTER
   # Update path: existing checkout fetches, never re-clones.
   mkdir -p "$INSTALL_DIR/bootroot2/.git"
@@ -589,19 +593,19 @@ EOF
     || die "test: boot update path failed"
   grep -q " fetch " "$PCODER_TEST_LOG" || die "test: update path skipped fetch"
   grep -q " clone " "$PCODER_TEST_LOG" && die "test: update path cloned over existing repo"
-  # Dead SMTP aborts before boot with the Gmail hint.
-  export PCODER_TEST_SMTP_FAIL=1
+  # A failed credential write aborts before boot, loudly.
+  export PCODER_TEST_PASSWORD_FAIL=1
   : > "$PCODER_TEST_LOG"
   if out="$( (INSTALL_DIR="$INSTALL_DIR/bootroot3" boot) 2>&1 )"; then
-    die "test: boot with dead SMTP exited 0, want failure"
+    die "test: boot with a failed password setter exited 0, want failure"
   else
     case "$out" in
-      *"SMTP delivery failed"*) ;;
-      *) die "test: SMTP failure misreported (output was: $out)" ;;
+      *"setting the login password failed"*) ;;
+      *) die "test: password failure misreported (output was: $out)" ;;
     esac
   fi
-  grep -q "compose up" "$PCODER_TEST_LOG" && die "test: boot launched the stack after SMTP failure"
-  unset PCODER_TEST_SMTP_FAIL
+  grep -q "compose up" "$PCODER_TEST_LOG" && die "test: boot launched the stack after a failed credential write"
+  unset PCODER_TEST_PASSWORD_FAIL
   # Unhealthy server: all 60 polls, diagnostics, then the loud exit.
   export PCODER_TEST_HEALTH_FAIL=1
   : > "$PCODER_TEST_LOG"
@@ -617,7 +621,7 @@ EOF
   grep -q "compose logs" "$PCODER_TEST_LOG" || die "test: health timeout dumped no diagnostics"
   [ "$(grep -c "localhost:8080/health" "$PCODER_TEST_LOG")" = "60" ] \
     || die "test: health loop gave up early"
-  log "TEST MODE PASS — arg parsing, validation, install-dir, and stubbed boot all good (live SMTP + live boot stay manual per-release)"
+  log "TEST MODE PASS — arg parsing, validation, install-dir, and stubbed boot all good (live boot stays manual per-release)"
   trap - EXIT
   rm -rf "$INSTALL_DIR"
 }
@@ -653,12 +657,11 @@ get_ip_mac() {
   printf '%s' "$ip"
 }
 
-# 5. boot — fetch/pull → build → smtp-test → up → wait healthy → banner.
+# 5. boot — fetch/pull → build → set-password → up → wait healthy → banner.
 # Update-safe: the same curl command re-runs on an existing install.
 # `server/.env` is gitignored so fetch+reset never deletes it (write_env
-# refreshes it above), and the pcoder-data volume is never removed here
-# — the server seeds a fresh volume from server/.env on first boot and
-# leaves existing state alone, so projects and credentials survive.
+# refreshes it above), and the pcoder-data volume is never removed here:
+# projects and the stored password hash survive an update.
 boot() {
   if [ -d "$INSTALL_DIR/.git" ]; then
     log "repo exists — fetching $REPO_BRANCH"
@@ -672,9 +675,9 @@ boot() {
     fi
   fi
   cd "$INSTALL_DIR"
-  # Credentials land in server/.env after the repo exists (fresh clone
-  # or fetch+reset), so the file is always there for the smtp-test probe
-  # and the compose env_file below.
+  # The account email lands in server/.env after the repo exists (fresh
+  # clone or fetch+reset), so the file is always there for the compose
+  # env_file below.
   write_env
   # The stack network is external (declared, not managed): ensure it
   # before the stack uses it.
@@ -688,11 +691,16 @@ boot() {
   # a drift guard test (cmd/server) fails the build when they stop matching.
   docker build -t pcoder-project:v4 "$INSTALL_DIR/server/internal/project/image"
   docker build -t pcoder-browser:v14 "$INSTALL_DIR/server/internal/preview/image"
-  log "probing SMTP delivery"
+  # The credential write needs the stack stopped: the setter rewrites
+  # state.json, and a live server would clobber it from memory.
+  docker compose down >/dev/null 2>&1 || true
+  log "setting the login password"
   # The image ENTRYPOINT is already ["pcoder"], so the subcommand is
-  # appended bare (not `pcoder smtp-test`, which would repeat the binary).
-  if ! docker compose run --rm server smtp-test; then
-    die "SMTP delivery failed — check the Gmail app-password steps in the README, then re-run this script"
+  # appended bare (not `pcoder set-password`, which would repeat the
+  # binary). --rm: one-shot. -T: no TTY, so stdin is the pipe. The
+  # password travels on stdin — never an argument, never in .env.
+  if ! printf '%s' "$PASSWORD" | docker compose run --rm -T server set-password; then
+    die "setting the login password failed — re-run this script"
   fi
   log "booting the stack"
   docker compose up -d
@@ -715,8 +723,7 @@ boot() {
 
 [setup] done — Pocket Coder is live:
 [setup]   URL:   http://$ip:8080
-[setup]   login: $EMAIL (PIN arrives by email)
-[setup]   A setup-complete test email is on its way to your inbox.
+[setup]   login: $EMAIL (the password you passed to this script)
 EOF
 }
 

@@ -13,7 +13,7 @@ import (
 // There is no stored git identity or token to rotate: clone and pull auth
 // failures always point at the server deploy key.
 func TestGitPullAuthErrorCopy(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
@@ -23,7 +23,7 @@ func TestGitPullAuthErrorCopy(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 128, Output: "fatal: Authentication failed"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/git/pull", "")
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("pull failure: got %d %q, want 502", rec.Code, rec.Body)

@@ -80,7 +80,7 @@ func tokenDeps(t *testing.T, script *scriptedCDP, projectID string) (http.Handle
 	t.Cleanup(disp.Close)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	m := preview.NewManager(previewTestFactory{ep: preview.Endpoint{CDP: srv.URL, Display: disp.URL}})
 	d.Sessions = session.New(dockermocks.NewMockClient(t))
 	if _, err := m.Ensure(t.Context(), preview.Config{ProjectID: projectID, ContainerID: "pcoder-" + projectID}); err != nil {
@@ -89,7 +89,7 @@ func tokenDeps(t *testing.T, script *scriptedCDP, projectID string) (http.Handle
 	d.Preview = m
 	t.Cleanup(func() { evictCDP(projectID) })
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tok := previewTokenFor(t, h, cookie, projectID)
 	return h, cookie, tok
 }

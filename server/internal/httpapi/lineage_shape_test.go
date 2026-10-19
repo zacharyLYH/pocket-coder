@@ -78,7 +78,7 @@ func assertReadableLineage(t *testing.T, raw []byte, wantPrompt string) map[stri
 }
 
 func TestLineageShapeButler(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git", Branch: "main"}); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestLineageShapeButler(t *testing.T) {
 	)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	rec := butlerPost(t, h, cookie, `{"prompt":"brief me"}`, http.StatusOK)
 	last := finalBody(t, rec)
@@ -127,7 +127,7 @@ func TestLineageShapeButler(t *testing.T) {
 }
 
 func TestLineageShapeCodemap(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockSearchRead(md, "main.go:10:func main() {\n", "func main() {\n")
@@ -150,7 +150,7 @@ func TestLineageShapeCodemap(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tid := postCodemapTurn(t, h, cookie, `{"prompt":"where is main?"}`)
 	thread := waitCodemapSettled(t, h, cookie, tid)
 	turns, _ := thread["turns"].([]any)

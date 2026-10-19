@@ -45,7 +45,7 @@ const sleepyInstall = "printf '#!/bin/sh\\nexit 0\\n' > /usr/local/bin/sleepy &&
 // exists inside the project at exactly the path the tool reads, byte for
 // byte — written before the launch command ever runs.
 func TestHarnessConfigLandsInContainer(t *testing.T) {
-	h, dkr, _, pinOut, _, st := newLiveDeps(t)
+	h, dkr, _, _, st := newLiveDeps(t)
 
 	if _, err := harness.New(st).Save(harness.Harness{
 		Name: "Cfg CLI", Command: "fakecli", Install: fakeCLIInstall,
@@ -54,7 +54,7 @@ func TestHarnessConfigLandsInContainer(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cookie := login(t, h, pinOut)
+	cookie := login(t, h)
 
 	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "")
 	waitForStatus(t, h, cookie, id, "running")
@@ -90,12 +90,12 @@ func TestHarnessConfigLandsInContainer(t *testing.T) {
 }
 
 func TestHarnessSessionLifecycle(t *testing.T) {
-	h, dkr, _, pinOut, ev, st := newLiveDeps(t)
+	h, dkr, _, ev, st := newLiveDeps(t)
 
 	writePlugin(t, st, "Fake CLI", "fakecli", fakeCLIInstall)
 	writePlugin(t, st, "Sleepy", "sleepy", sleepyInstall)
 
-	cookie := login(t, h, pinOut)
+	cookie := login(t, h)
 
 	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "")
 	waitForStatus(t, h, cookie, id, "running")
@@ -246,13 +246,13 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 // browser sends actually edits the file the TUI holds — the same interaction
 // pattern as coding CLIs, no downloads needed.
 func TestRealTUIGate(t *testing.T) {
-	h, dkr, _, pinOut, ev, st := newLiveDeps(t)
+	h, dkr, _, ev, st := newLiveDeps(t)
 
 	// vi opens hello.txt in the session workdir (/workspace/repo — sessions
 	// start in the clone); write-quit makes the session exit, which lets us
 	// assert keystroke fidelity by reading the file back
 	writePlugin(t, st, "Vi", "vi hello.txt", "")
-	cookie := login(t, h, pinOut)
+	cookie := login(t, h)
 
 	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "")
 	waitForStatus(t, h, cookie, id, "running")

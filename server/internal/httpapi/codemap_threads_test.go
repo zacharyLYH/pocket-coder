@@ -23,10 +23,10 @@ func authedMethodBody(t *testing.T, h http.Handler, cookie *http.Cookie, method,
 // created implicitly by POST /codemap, titles are immutable. This pins
 // get/list/delete, the runningThreadId surface, and the gone routes.
 func TestCodemapThreadsGetListDelete(t *testing.T) {
-	d, _, pinOut, st := newSessionDeps(t)
+	d, _, st := newSessionDeps(t)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// Seed a thread via the store (POST /codemap would need a model).
 	tid, _, err := d.Codemaps.ReserveNewThread("abc", "where is login?", "s", nil)
@@ -121,7 +121,7 @@ func TestCodemapThreadsGetListDelete(t *testing.T) {
 // Posting a turn without a threadId implicitly creates the folder chat
 // (202 reserve, no 201 anywhere).
 func TestCodemapPostAutoCreatesThread(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
@@ -129,7 +129,7 @@ func TestCodemapPostAutoCreatesThread(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tid := postCodemapTurn(t, h, cookie, `{"prompt":"where is main?"}`)
 	waitCodemapSettled(t, h, cookie, tid)
 	rec := authedGet(t, h, cookie, "/api/projects/abc/codemap/threads")
@@ -149,7 +149,7 @@ func TestCodemapPostAutoCreatesThread(t *testing.T) {
 // The in-flight run is visible as a running row while a POST runs, and
 // ready once it completes — the remount path the tab relies on.
 func TestCodemapRowStatusTracksRun(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
@@ -171,7 +171,7 @@ func TestCodemapRowStatusTracksRun(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		done <- authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"where is main?"}`)

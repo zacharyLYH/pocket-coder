@@ -38,10 +38,10 @@ func readStateFileT(t *testing.T, st *state.Store) []byte {
 }
 
 func TestAIModelsListEmpty(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	d.State = mustOpenState(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedGet(t, h, cookie, "/api/ai/models")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get: got %d %q, want 200", rec.Code, rec.Body)
@@ -58,10 +58,10 @@ func TestAIModelsListEmpty(t *testing.T) {
 }
 
 func TestAISaveRejectsMissingFields(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	d.State = mustOpenState(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	for _, body := range []string{
 		`{"baseURL":"http://x","model":"m"}`,
 		`{"baseURL":"","apiKey":"k","model":"m"}`,
@@ -75,7 +75,7 @@ func TestAISaveRejectsMissingFields(t *testing.T) {
 }
 
 func TestAISaveTestsBeforeSaving(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	st := mustOpenState(t)
 	d.State = st
 	// Fake model refuses everything: save must fail AND store nothing.
@@ -83,7 +83,7 @@ func TestAISaveTestsBeforeSaving(t *testing.T) {
 		http.Error(w, `{"error":{"message":"bad key"}}`, http.StatusUnauthorized)
 	})
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/ai/models",
 		`{"baseURL":`+strconv.Quote(f.srv.URL)+`,"apiKey":"k","model":"m"}`)
 	if rec.Code != http.StatusBadGateway {
@@ -102,7 +102,7 @@ func TestAISaveTestsBeforeSaving(t *testing.T) {
 }
 
 func TestAISaveSuccess(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	st := mustOpenState(t)
 	d.State = st
 	f := newFakeModel(t, func(w http.ResponseWriter, body map[string]any) {
@@ -118,7 +118,7 @@ func TestAISaveSuccess(t *testing.T) {
 		writeCompletion(w, "stop", `{"ok":true}`, nil)
 	})
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/ai/models",
 		`{"label":"main","baseURL":`+strconv.Quote(f.srv.URL)+`,"apiKey":"k","model":"m"}`)
 	if rec.Code != http.StatusCreated {
@@ -143,13 +143,13 @@ func TestAISaveSuccess(t *testing.T) {
 }
 
 func TestAITestEndpointShapes(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	d.State = mustOpenState(t)
 	f := newFakeModel(t, func(w http.ResponseWriter, body map[string]any) {
 		writeCompletion(w, "stop", `{"ok":true}`, nil)
 	})
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/ai/models",
 		`{"label":"m","baseURL":`+strconv.Quote(f.srv.URL)+`,"apiKey":"k","model":"m"}`)
 	if rec.Code != http.StatusCreated {
@@ -180,11 +180,11 @@ func TestAITestEndpointShapes(t *testing.T) {
 }
 
 func TestCodemapNoKey(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	_ = md
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"hi"}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("no key: got %d %q, want 409", rec.Code, rec.Body)
@@ -192,12 +192,12 @@ func TestCodemapNoKey(t *testing.T) {
 }
 
 func TestCodemapBadPrompt(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	_ = md
 	seedProject(t, st, "abc")
 	seedAI(t, st, "http://127.0.0.1:1")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	for _, body := range []string{`{"prompt":""}`, `{"prompt":"   "}`, `{"prompt":"` + strings.Repeat("x", 4001) + `"}`} {
 		rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", body)
 		if rec.Code != http.StatusBadRequest {
@@ -207,11 +207,11 @@ func TestCodemapBadPrompt(t *testing.T) {
 }
 
 func TestCodemapUnknownProject(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	_ = md
 	seedAI(t, st, "http://127.0.0.1:1")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/nope/codemap", `{"prompt":"hi"}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown project: got %d %q, want 404", rec.Code, rec.Body)
@@ -255,7 +255,7 @@ func mustReadTurnFile(t *testing.T, d Deps, project, threadID string, n int) []b
 }
 
 func TestCodemapSuccess(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockSearchRead(md, "main.go:10:func main() {\n", "func main() {\n")
@@ -307,7 +307,7 @@ func TestCodemapSuccess(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tid := postCodemapTurn(t, h, cookie, `{"prompt":"where is main?"}`)
 	thread := waitCodemapSettled(t, h, cookie, tid)
 	rawThread, _ := json.Marshal(thread)
@@ -531,7 +531,7 @@ func TestCodemapSuccess(t *testing.T) {
 // a model reaching for it gets "unknown tool" and the turn still
 // completes off the repo tools.
 func TestCodemapHasNoTodoTool(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "go.mod\ninternal/\n")
 	mockHydrate(md, "func main() {\n")
@@ -555,7 +555,7 @@ func TestCodemapHasNoTodoTool(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tid := postCodemapTurn(t, h, cookie, `{"prompt":"map the entrypoints and summarize the flow"}`)
 	th := waitCodemapSettled(t, h, cookie, tid)
 	turns, _ := th["turns"].([]any)
@@ -583,7 +583,7 @@ func TestCodemapHasNoTodoTool(t *testing.T) {
 }
 
 func TestCodemapModelBadJSON(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	f := newFakeModel(t,
@@ -601,7 +601,7 @@ func TestCodemapModelBadJSON(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tid := postCodemapTurn(t, h, cookie, `{"prompt":"hi"}`)
 	thread := waitCodemapSettled(t, h, cookie, tid)
 	turns, _ := thread["turns"].([]any)
@@ -641,7 +641,7 @@ func TestCodemapModelBadJSON(t *testing.T) {
 }
 
 func TestCodemapBusy(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	release := make(chan struct{})
@@ -663,7 +663,7 @@ func TestCodemapBusy(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		done <- authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"first"}`)
@@ -703,11 +703,11 @@ func TestCodemapBusy(t *testing.T) {
 }
 
 func TestCodemapFileValidation(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockEnsure(md)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	for _, path := range []string{
 		"/api/projects/abc/file?path=/etc/passwd&start=1&end=2",
 		"/api/projects/abc/file?path=../x&start=1&end=2",
@@ -724,10 +724,10 @@ func TestCodemapFileValidation(t *testing.T) {
 }
 
 func TestCodemapFileBinaryAndMoved(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// Binary: sed output with NUL.
 	mockRepoDir(md, "newsha")

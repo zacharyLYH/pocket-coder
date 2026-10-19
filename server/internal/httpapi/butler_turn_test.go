@@ -73,7 +73,7 @@ func TestButlerHistoryReplaysToolSteps(t *testing.T) {
 // the frontend: fake model at HTTP, mocked engine, real store, plain-JSON
 // turn, real transcript on disk.
 func TestButlerTurnBriefMeFlow(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git", Branch: "main"}); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestButlerTurnBriefMeFlow(t *testing.T) {
 	)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	tid := postButlerTurn(t, h, cookie, `{"prompt":"brief me"}`)
 	settled := waitThreadSettled(t, h, cookie, tid)
@@ -165,7 +165,7 @@ func TestButlerTurnBriefMeFlow(t *testing.T) {
 // list back from the tool, then replaces it with completed items. The final
 // state is persisted in lineage, not inferred from the assistant's prose.
 func TestButlerTodoLifecyclePersistsCheckedItems(t *testing.T) {
-	d, _, pinOut, st := newSessionDeps(t)
+	d, _, st := newSessionDeps(t)
 	var secondRound map[string]any
 	f := newFakeModel(t, scopeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
@@ -181,7 +181,7 @@ func TestButlerTodoLifecyclePersistsCheckedItems(t *testing.T) {
 	)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tid := postButlerTurn(t, h, cookie, `{"prompt":"inspect projects and report findings"}`)
 	settled := waitThreadSettled(t, h, cookie, tid)
 	if got := settledTurnAnswer(t, settled); got != "All findings are reported." {
@@ -212,11 +212,11 @@ func TestButlerTodoLifecyclePersistsCheckedItems(t *testing.T) {
 // A whitespace-only prompt is a 400 with no side effects: no thread, no
 // model call. The fake has zero scripted calls, so any LLM burn fails.
 func TestButlerRejectsBlankPrompt(t *testing.T) {
-	d, _, pinOut, st := newSessionDeps(t)
+	d, _, st := newSessionDeps(t)
 	f := newFakeModel(t)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	rec := butlerPost(t, h, cookie, `{"prompt":"   "}`, http.StatusBadRequest)
 	if !strings.Contains(rec.Body.String(), "1-2000") {
@@ -234,7 +234,7 @@ func TestButlerRejectsBlankPrompt(t *testing.T) {
 // Turn-level integration for writes: the model proposes, the turn carries
 // the confirm card, and only the explicit apply runs the docker call.
 func TestButlerTurnProposeFlow(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	if err := project.Open(st).Create("a/b", project.Project{Repo: "https://github.com/x/hello.git"}); err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestButlerTurnProposeFlow(t *testing.T) {
 	)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	tid := postButlerTurn(t, h, cookie, `{"prompt":"stop the api project"}`)
 	settled := waitThreadSettled(t, h, cookie, tid)
@@ -301,7 +301,7 @@ func TestButlerTurnProposeFlow(t *testing.T) {
 // thread: retry must 409 until the card resolves instead of stacking new
 // cards onto the locked thread.
 func TestButlerRetryBlockedWhileApprovalPending(t *testing.T) {
-	d, _, pinOut, st := newSessionDeps(t)
+	d, _, st := newSessionDeps(t)
 	empty := func(w http.ResponseWriter, _ map[string]any) {
 		writeCompletion(w, "stop", "", nil)
 	}
@@ -313,7 +313,7 @@ func TestButlerRetryBlockedWhileApprovalPending(t *testing.T) {
 	)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	tid := postButlerTurn(t, h, cookie, `{"prompt":"close the preview"}`)
 	waitThreadSettled(t, h, cookie, tid) // settles as awaiting (pending card)
@@ -348,11 +348,6 @@ func scopeAllow(w http.ResponseWriter, _ map[string]any) {
 	writeCompletion(w, "stop", `{"can_help":true}`, nil)
 }
 
-// scopeDeny scripts the gate's refuse verdict.
-func scopeDeny(w http.ResponseWriter, _ map[string]any) {
-	writeCompletion(w, "stop", `{"can_help":false}`, nil)
-}
-
 // codeAllow scripts the codemap gate's allow verdict, same contract as
 // scopeAllow: the classifier call precedes the loop's rounds.
 func codeAllow(w http.ResponseWriter, _ map[string]any) {
@@ -372,7 +367,7 @@ func butlerPost(t *testing.T, h http.Handler, cookie *http.Cookie, body string, 
 // Full turn round-trip with the model faked at HTTP: POST answers plain
 // JSON; the transcript persists globally.
 func TestButlerTurnRoundTrip(t *testing.T) {
-	d, _, pinOut, st := newSessionDeps(t)
+	d, _, st := newSessionDeps(t)
 	f := newFakeModel(t, scopeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
 			writeCompletion(w, "stop", "All three projects are healthy.", nil)
@@ -380,7 +375,7 @@ func TestButlerTurnRoundTrip(t *testing.T) {
 	)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	tid := postButlerTurn(t, h, cookie, `{"prompt":"brief me","projectHint":"a/b"}`)
 	settled := waitThreadSettled(t, h, cookie, tid)
@@ -456,7 +451,7 @@ func TestButlerTurnRoundTrip(t *testing.T) {
 
 // Second POST while busy gets 409; unknown thread 404s; empty prompt 400s.
 func TestButlerTurnGuards(t *testing.T) {
-	d, _, pinOut, st := newSessionDeps(t)
+	d, _, st := newSessionDeps(t)
 	f := newFakeModel(t,
 		func(w http.ResponseWriter, _ map[string]any) {
 			writeCompletion(w, "stop", "hi", nil)
@@ -464,7 +459,7 @@ func TestButlerTurnGuards(t *testing.T) {
 	)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	butlerPost(t, h, cookie, `{"prompt":""}`, http.StatusBadRequest)
 	butlerPost(t, h, cookie, `{"prompt":"x","threadId":"abc"}`, http.StatusNotFound)
@@ -482,9 +477,9 @@ func TestButlerTurnGuards(t *testing.T) {
 
 // No model configured: 409, and the butler routes vanish without a store.
 func TestButlerNeedsModel(t *testing.T) {
-	d, _, pinOut, _ := newSessionDeps(t)
+	d, _, _ := newSessionDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	if rec := authedPost(t, h, cookie, "/api/butler/turn", `{"prompt":"hi"}`); rec.Code != http.StatusConflict {
 		t.Fatalf("no model: got %d, want 409", rec.Code)
 	}
@@ -494,7 +489,7 @@ func TestButlerNeedsModel(t *testing.T) {
 // with a JSON error carrying threadId + threadTitle: the client keeps
 // the reserved turn and can retry.
 func TestButlerTurnFailurePersistsAndStreamsError(t *testing.T) {
-	d, _, pinOut, st := newSessionDeps(t)
+	d, _, st := newSessionDeps(t)
 	empty := func(w http.ResponseWriter, _ map[string]any) {
 		writeCompletion(w, "stop", "", nil) // empty answer → loop error
 	}
@@ -503,7 +498,7 @@ func TestButlerTurnFailurePersistsAndStreamsError(t *testing.T) {
 	f := newFakeModel(t, scopeAllow, empty, empty, empty)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	tid := postButlerTurn(t, h, cookie, `{"prompt":"brief me"}`)
 	// The model fails in the background; the reserved turn settles as failed
@@ -560,7 +555,7 @@ func TestButlerTurnFailurePersistsAndStreamsError(t *testing.T) {
 // final text) still terminates. The loop must burn its budget and close
 // out — never hang, never loop forever.
 func TestButlerTurnLoopCapsAtMaxSteps(t *testing.T) {
-	d, _, pinOut, st := newSessionDeps(t)
+	d, _, st := newSessionDeps(t)
 	calls := 0
 	toolRound := func(w http.ResponseWriter, _ map[string]any) {
 		calls++
@@ -578,7 +573,7 @@ func TestButlerTurnLoopCapsAtMaxSteps(t *testing.T) {
 	f := newFakeModel(t, steps...)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	tid := postButlerTurn(t, h, cookie, `{"prompt":"brief me"}`)
 	settled := waitThreadSettled(t, h, cookie, tid)
@@ -648,7 +643,7 @@ func TestWriteTurnErrShape(t *testing.T) {
 // Prompt limits count runes, not bytes: 2000 emoji (8000 bytes) are a
 // legal prompt; 2001 ASCII chars are not.
 func TestButlerPromptRuneLimit(t *testing.T) {
-	d, _, pinOut, st := newSessionDeps(t)
+	d, _, st := newSessionDeps(t)
 	f := newFakeModel(t, scopeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
 			writeCompletion(w, "stop", "noted", nil)
@@ -656,7 +651,7 @@ func TestButlerPromptRuneLimit(t *testing.T) {
 	)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	butlerPost(t, h, cookie, `{"prompt":"`+strings.Repeat("x", 2001)+`"}`, http.StatusBadRequest)
 	butlerPost(t, h, cookie, `{"prompt":"`+strings.Repeat("🙂", 2001)+`"}`, http.StatusBadRequest)
@@ -670,7 +665,7 @@ func TestButlerPromptRuneLimit(t *testing.T) {
 // GET threads reports the in-flight thread as a running row while a turn
 // runs, and ready once it completes — the remount path the sheet relies on.
 func TestButlerThreadsReportsRunningThread(t *testing.T) {
-	d, _, pinOut, st := newSessionDeps(t)
+	d, _, st := newSessionDeps(t)
 	release := make(chan struct{})
 	var once sync.Once
 	f := newFakeModel(t, scopeAllow,
@@ -681,7 +676,7 @@ func TestButlerThreadsReportsRunningThread(t *testing.T) {
 	)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
@@ -737,7 +732,7 @@ func TestButlerThreadsReportsRunningThread(t *testing.T) {
 // butler.turn audits the completed turn like codemap.turn does: thread,
 // turn, prompt excerpt, and step count — not just the thread id.
 func TestButlerTurnAuditEvent(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	_ = md
 	f := newFakeModel(t, scopeAllow,
 		func(w http.ResponseWriter, _ map[string]any) {
@@ -746,7 +741,7 @@ func TestButlerTurnAuditEvent(t *testing.T) {
 	)
 	seedAI(t, st, f.srv.URL)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := butlerPost(t, h, cookie, `{"prompt":"audit me"}`, http.StatusOK)
 	last := finalBody(t, rec)
 	tid, _ := last["threadId"].(string)

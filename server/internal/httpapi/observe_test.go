@@ -15,9 +15,9 @@ import (
 )
 
 func TestObserveRoundTrip(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	id := "x/hello"
 	ctx := obs.WithProject(context.Background(), id)
 	esc := "/api/projects/" + url.PathEscape(id)
@@ -90,9 +90,9 @@ func TestObserveRoundTrip(t *testing.T) {
 }
 
 func TestObserveErrors(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	id := "x/hello"
 	ctx := obs.WithProject(context.Background(), id)
 	esc := "/api/projects/" + url.PathEscape(id)
@@ -112,9 +112,9 @@ func TestObserveErrors(t *testing.T) {
 }
 
 func TestObserveMeta(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedGet(t, h, cookie, "/api/observe/meta")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("meta: %d %q", rec.Code, rec.Body.String())
@@ -139,9 +139,9 @@ func TestObserveMeta(t *testing.T) {
 }
 
 func TestObserveStats(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedGet(t, h, cookie, "/api/projects/"+url.PathEscape("x/hello")+"/observe/stats")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("stats: %d %q", rec.Code, rec.Body.String())
@@ -153,7 +153,7 @@ func TestObserveStats(t *testing.T) {
 }
 
 func TestObserveStatsRunning(t *testing.T) {
-	d, md, pinOut, st := newProjectDeps(t)
+	d, md, st := newProjectDeps(t)
 	seedProject(t, st, "abc")
 	d.Docker = md
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").
@@ -167,7 +167,7 @@ func TestObserveStatsRunning(t *testing.T) {
 		[]string{"df", "-k", "/workspace"}, false).
 		Return(docker.ExecResult{ExitCode: 0, Output: "Filesystem 1K-blocks Used Available Use% Mounted\n/dev/x 1000 200 800 20% /workspace"}, nil)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedGet(t, h, cookie, "/api/projects/abc/observe/stats")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("stats: %d %q", rec.Code, rec.Body.String())
@@ -188,14 +188,14 @@ func TestObserveStatsRunning(t *testing.T) {
 }
 
 func TestObserveCreateSharesTrace(t *testing.T) {
-	d, md, pinOut, _ := newProjectDeps(t)
+	d, md, _ := newProjectDeps(t)
 	h := New(d)
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
 	md.EXPECT().InspectImage(mock.Anything, project.ProjectImage).Return(nil)
 	md.EXPECT().Run(mock.Anything, mock.Anything).Return("cid", nil)
 	md.EXPECT().Exec(mock.Anything, "cid", []string{"git", "clone", "git@github.com:x/hello.git", "/workspace/repo"}, false).
 		Return(docker.ExecResult{ExitCode: 0}, nil)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects", `{"repoUrl":"https://github.com/x/hello.git"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %q", rec.Code, rec.Body.String())

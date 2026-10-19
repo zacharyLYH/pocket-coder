@@ -27,11 +27,11 @@ func authedPatch(t *testing.T, h http.Handler, cookie *http.Cookie, path, body s
 // Saving the shortcuts list (commands and keys alike) persists it, and
 // GET serves it back with no other command surface.
 func TestShortcutsPatchGetRoundTrip(t *testing.T) {
-	d, md, pinOut, st := newProjectDeps(t)
+	d, md, st := newProjectDeps(t)
 	h := New(d)
 	const id = "x/hello"
 	seedProject(t, st, id)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	patch := `{"shortcuts":[
 		{"id":"s-dev","alias":"dev","kind":"cmd","command":"npm run dev"},
@@ -68,11 +68,11 @@ func TestShortcutsPatchGetRoundTrip(t *testing.T) {
 }
 
 func TestShortcutsPatchValidation(t *testing.T) {
-	d, _, pinOut, st := newProjectDeps(t)
+	d, _, st := newProjectDeps(t)
 	h := New(d)
 	const id = "x/hello"
 	seedProject(t, st, id)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	path := "/api/projects/" + url.PathEscape(id)
 
 	for _, body := range []string{

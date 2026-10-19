@@ -19,10 +19,10 @@ test('shows the login form at /login when logged out', async ({ page }) => {
   await page.goto('/login')
   // Cold Vite + loaded CI can take a while for first paint + auth check.
   await expect(page.getByPlaceholder('you@example.com')).toBeVisible({ timeout: ciTimeout(30_000) })
-  await expect(page.getByRole('button', { name: 'Send code' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Log in' })).toBeVisible()
 })
 
-test('logs in with a PIN and lands in the app', async ({ page }) => {
+test('logs in with a password and lands in the app', async ({ page }) => {
   await login(page)
   await expect(page).toHaveURL(/\/app$/)
 })

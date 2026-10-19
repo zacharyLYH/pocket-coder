@@ -67,7 +67,7 @@ func bodiesContain(bodies []map[string]any, sub string) bool {
 // tool_calls + tool results with outputs, prior sections, then the new
 // prompt. Client-supplied history is ignored (unknown field).
 func TestCodemapFollowupReplaysThread(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
@@ -119,7 +119,7 @@ func TestCodemapFollowupReplaysThread(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	tid := postCodemapTurn(t, h, cookie, `{"prompt":"where is main?"}`)
 	waitCodemapSettled(t, h, cookie, tid)
@@ -176,7 +176,7 @@ func TestCodemapFollowupReplaysThread(t *testing.T) {
 // Fresh chats send only the current prompt: no user/tool history.
 // The loop call carries no schema; the format call does.
 func TestCodemapFreshChatHasNoHistory(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
@@ -196,7 +196,7 @@ func TestCodemapFreshChatHasNoHistory(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tid := postCodemapTurn(t, h, cookie, `{"prompt":"where is main?"}`)
 	waitCodemapSettled(t, h, cookie, tid)
 	if len(bodies) != 3 {
@@ -224,13 +224,13 @@ func TestCodemapFreshChatHasNoHistory(t *testing.T) {
 
 // Unknown thread IDs 404 before burning a model call.
 func TestCodemapUnknownThread(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockEnsure(md)
 	f := newFakeModel(t)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"hi","threadId":"nope"}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown thread: got %d %q, want 404", rec.Code, rec.Body)
@@ -243,7 +243,7 @@ func TestCodemapUnknownThread(t *testing.T) {
 // DELETE refuses the in-flight thread (its log file) with 409 while an
 // unrelated thread stays deletable.
 func TestCodemapDeleteBusy(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
@@ -265,7 +265,7 @@ func TestCodemapDeleteBusy(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// Seed two threads directly in the store (folder per thread).
 	thA, _, err := d.Codemaps.ReserveNewThread("abc", "a?", "s", nil)
@@ -403,7 +403,7 @@ func TestThreadHistoryLegacyRounds(t *testing.T) {
 // The settled turn carries the server timestamp so the optimistic turn
 // renders its time without a reload.
 func TestCodemapResponseHasTime(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
@@ -411,7 +411,7 @@ func TestCodemapResponseHasTime(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tid := postCodemapTurn(t, h, cookie, `{"prompt":"where is main?"}`)
 	thread := waitCodemapSettled(t, h, cookie, tid)
 	turns, _ := thread["turns"].([]any)
@@ -434,7 +434,7 @@ func TestCodemapResponseHasTime(t *testing.T) {
 // turn but keeps the thread: new chats still get a threadId and a 1.json
 // failed placeholder (error set, no sections); the error names the cause.
 func TestCodemapNullChoicesKeepsNewThread(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	nullChoices := func(w http.ResponseWriter, _ map[string]any) {
@@ -447,7 +447,7 @@ func TestCodemapNullChoicesKeepsNewThread(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tid := postCodemapTurn(t, h, cookie, `{"prompt":"map this repo"}`)
 	thread := waitCodemapSettled(t, h, cookie, tid)
 	turns, _ := thread["turns"].([]any)
@@ -486,7 +486,7 @@ func TestCodemapNullChoicesKeepsNewThread(t *testing.T) {
 // Same failure on an existing thread: prior turns survive, error carries
 // the same threadId back.
 func TestCodemapNullChoicesKeepsExistingThread(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	nullChoices := func(w http.ResponseWriter, _ map[string]any) {
@@ -507,7 +507,7 @@ func TestCodemapNullChoicesKeepsExistingThread(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	got := postCodemapTurn(t, h, cookie,
 		`{"prompt":"follow up","threadId":"`+seeded+`"}`)
 	if got != seeded {

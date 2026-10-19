@@ -49,14 +49,14 @@ import (
 // testIDPrefix marks hand-seeded test ids (see newTestID).
 const testIDPrefix = "itest/"
 
-func newLiveDeps(t *testing.T) (http.Handler, *docker.Docker, *project.Service, *bytes.Buffer, *events.Log, *state.Store) {
+func newLiveDeps(t *testing.T) (http.Handler, *docker.Docker, *project.Service, *events.Log, *state.Store) {
 	t.Helper()
 	return newLiveDepsOnDir(t, t.TempDir())
 }
 
 // newLiveDepsOnDir is newLiveDeps over an existing data dir (already holding
 // state.json, e.g. a test seed) instead of a fresh TempDir.
-func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docker, *project.Service, *bytes.Buffer, *events.Log, *state.Store) {
+func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docker, *project.Service, *events.Log, *state.Store) {
 	t.Helper()
 	lc := testutil.NewLifecycle(t)
 	lc.EnsureNetwork(t)
@@ -73,8 +73,7 @@ func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docke
 	if err != nil {
 		t.Fatal(err)
 	}
-	var pinOut bytes.Buffer
-	authSvc := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut})
+	authSvc := auth.New("me@example.com", testHashOnce(), 1, []byte(testSecret))
 	sshKeyStore := sshkeys.New(st)
 	svc := project.NewService(project.Open(st), dkr)
 	svc.SetSSHKeys(sshKeyStore)
@@ -85,7 +84,7 @@ func newLiveDepsOnDir(t *testing.T, dataDir string) (http.Handler, *docker.Docke
 	h := New(Deps{Events: ev, Version: "itest", Auth: authSvc, Projects: svc, Obs: ob,
 		Sessions: session.New(dkr), Harnesses: harness.New(st), SSHKeys: sshKeyStore, State: st,
 		Codemaps: threads.New(filepath.Join(dataDir, "codemaps"), false)})
-	return h, dkr, svc, &pinOut, ev, st
+	return h, dkr, svc, ev, st
 }
 
 // newTestID returns a fresh "itest/<8 hex>" identifier. Used by the
@@ -146,22 +145,14 @@ func deleteTestProject(t *testing.T, h http.Handler, cookie *http.Cookie, id str
 	})
 }
 
-func login(t *testing.T, h http.Handler, pinOut *bytes.Buffer) *http.Cookie {
+func login(t *testing.T, h http.Handler) *http.Cookie {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/request-pin",
-		bytes.NewBufferString(`{"email":"me@example.com"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader(`{"email":"me@example.com","password":"`+auth.TestPassword+`"}`))
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("request pin: %d", rec.Code)
-	}
-	pin := pinRe.FindString(pinOut.String())
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/auth/verify",
-		strings.NewReader(fmt.Sprintf(`{"email":"me@example.com","pin":%q}`, pin)))
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("verify: %d", rec.Code)
+		t.Fatalf("login: %d", rec.Code)
 	}
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == auth.CookieName {

@@ -24,7 +24,7 @@ import (
 // running containers get the full install+validate chain, and per-project
 // results come back to the UI.
 func TestInstallHarnessEndpoint(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	if err := project.Open(dataDir).Create("def", project.Project{Repo: "https://github.com/x/world.git"}); err != nil {
 		t.Fatal(err)
@@ -53,7 +53,7 @@ func TestInstallHarnessEndpoint(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli 1.0\n"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/harnesses/fake/install", `{"projectIds":["abc"]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("install: got %d %q, want 200", rec.Code, rec.Body)
@@ -98,9 +98,9 @@ func TestInstallHarnessEndpoint(t *testing.T) {
 // output while the other project still reports success.
 
 func TestHarnessRegistryAPI(t *testing.T) {
-	d, _, pinOut, dataDir := newSessionDeps(t)
+	d, _, dataDir := newSessionDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// seeded plugin is listed with its file-derived id
 	rec := authedGet(t, h, cookie, "/api/harnesses")
@@ -143,9 +143,9 @@ func TestHarnessRegistryAPI(t *testing.T) {
 // named plugin from the state file, leaves every other section byte-for-byte
 // intact, and deleting an unknown id is idempotent success.
 func TestDeleteHarnessEndpoint(t *testing.T) {
-	d, _, pinOut, dataDir := newSessionDeps(t)
+	d, _, dataDir := newSessionDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// add a second plugin so the delete provably spares the neighbors
 	rec := authedPost(t, h, cookie, "/api/harnesses", `{"name":"Temp","command":"tempcli"}`)
@@ -174,7 +174,7 @@ func TestDeleteHarnessEndpoint(t *testing.T) {
 }
 
 func TestProjectHarnessesShowsInstalled(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	// second plugin whose command is missing from the container, plus one
 	// whose command carries arguments (the probe targets the binary only)
@@ -191,7 +191,7 @@ func TestProjectHarnessesShowsInstalled(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli\nvi\n"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedGet(t, h, cookie, "/api/projects/abc/harnesses")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body)
@@ -236,10 +236,10 @@ type probeState struct {
 // as installing while installed is still false, and clears when done — so a
 // reopened dialog shows Installing…, never a second Install button.
 func TestProjectHarnessesShowsInstalling(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	probe := func() map[string]probeState {
 		t.Helper()
 		md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
@@ -292,7 +292,7 @@ func TestProjectHarnessesShowsInstalling(t *testing.T) {
 // two synchronous npm installs against each other. No exec is registered,
 // so any work started would fail the test.
 func TestInstallWhileInstallingConflicts(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Maybe()
 	if err := d.Projects.RecordInstalling("abc", "fake"); err != nil {
@@ -300,7 +300,7 @@ func TestInstallWhileInstallingConflicts(t *testing.T) {
 	}
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/harnesses/fake/install", `{"projectIds":["abc"]}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("busy install: got %d %q, want 409", rec.Code, rec.Body)

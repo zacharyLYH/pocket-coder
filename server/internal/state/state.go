@@ -1,5 +1,5 @@
 // Package state owns state.json — the single source of truth for all
-// desired app state: identity, SMTP credentials, projects, harness
+// desired app state: identity, auth credential, projects, harness
 // plugins, and the server SSH deploy keypair. Live state (Docker
 // containers, tmux sessions) stays in Docker/tmux and is reconciled
 // against this file.
@@ -23,25 +23,19 @@ import (
 // Document is the entire persisted app state.
 type Document struct {
 	User      User               `json:"user"`
-	SMTP      *SMTP              `json:"smtp,omitempty"`
 	AIModels  []AIModel          `json:"ai_models,omitempty"`
 	Projects  map[string]Project `json:"projects,omitempty"`  // keyed by project id
 	Harnesses map[string]Harness `json:"harnesses,omitempty"` // keyed by harness slug id
 	ServerKey *ServerSSHKey      `json:"serverKey,omitempty"`
 }
 
-// User is the single login identity.
+// User is the single login identity: the setup email plus the Argon2id
+// password hash (PHC) and the session generation. Bumping AuthVersion
+// invalidates every issued cookie; only the salted hash is stored.
 type User struct {
-	Email string `json:"email"`
-}
-
-// SMTP holds the mail-server credentials used to deliver login PINs.
-type SMTP struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port,omitempty"`
-	User     string `json:"user"`
-	Password string `json:"password"`
-	From     string `json:"from,omitempty"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"passwordHash,omitempty"`
+	AuthVersion  int64  `json:"authVersion,omitempty"`
 }
 
 // Shortcut is one user-defined terminal shortcut: a named value that is
@@ -141,9 +135,8 @@ type ServerSSHKey struct {
 // Bootstrap seeds a fresh/empty document from environment-derived config.
 // Existing values always win: env is only the initial default.
 type Bootstrap struct {
-	LoginEmail string
-	SMTP       *SMTP
-	AI         *AIModel
+	AuthEmail string
+	AI        *AIModel
 }
 
 // Store is the in-memory handle over state.json. All reads go through
@@ -159,6 +152,11 @@ type Store struct {
 func Open(dataDir string, seed Bootstrap) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", dataDir, err)
+	}
+	// The data dir holds the password hash: owner-only, even when it
+	// already existed with looser bits.
+	if err := os.Chmod(dataDir, 0o700); err != nil {
+		return nil, fmt.Errorf("chmod %s: %w", dataDir, err)
 	}
 	s := &Store{path: filepath.Join(dataDir, "state.json")}
 	raw, err := os.ReadFile(s.path)
@@ -259,12 +257,22 @@ func (s *Store) saveDoc(doc Document) error {
 	return nil
 }
 
+// SetPassword stores hash (PHC Argon2id, caller-hashed) for the single
+// account and bumps the session generation so every issued cookie dies.
+// Email syncs from setup too: the same command owns both, and a rerun
+// must not leave a stale address behind.
+func (s *Store) SetPassword(email, hash string) error {
+	return s.Mutate(func(doc *Document) error {
+		doc.User.Email = email
+		doc.User.PasswordHash = hash
+		doc.User.AuthVersion++
+		return nil
+	})
+}
+
 func (s *Store) seed(b Bootstrap) {
-	if b.LoginEmail != "" && s.doc.User.Email == "" {
-		s.doc.User.Email = b.LoginEmail
-	}
-	if b.SMTP != nil && s.doc.SMTP == nil {
-		s.doc.SMTP = b.SMTP
+	if b.AuthEmail != "" && s.doc.User.Email == "" {
+		s.doc.User.Email = b.AuthEmail
 	}
 	if b.AI != nil && len(s.doc.AIModels) == 0 {
 		s.doc.AIModels = []AIModel{*b.AI}

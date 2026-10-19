@@ -34,7 +34,7 @@ func TestCompareCatchesEveryDrift(t *testing.T) {
 	})
 
 	cases := map[string]string{
-		"extra top-level key":     `{"user":{"email":"me@example.com"},"projects":{"abc":{"name":"x","repo":""}},"smtp":{"host":"h"}}`,
+		"extra top-level key":     `{"user":{"email":"me@example.com"},"projects":{"abc":{"name":"x","repo":""}},"legacySection":{"host":"h"}}`,
 		"missing top-level key":   `{"user":{"email":"me@example.com"}}`,
 		"extra project":           `{"user":{"email":"me@example.com"},"projects":{"abc":{"name":"x","repo":""},"zzz":{"name":"y","repo":""}}}`,
 		"missing project":         `{"user":{"email":"me@example.com"},"projects":{}}`,

@@ -50,7 +50,7 @@ type Deps struct {
 	Butler    *threads.Store
 }
 
-// New returns the HTTP handler for the whole server. Login/PIN routes are
+// New returns the HTTP handler for the whole server. Login/logout are
 // public; everything else under /api requires a valid session cookie.
 func New(d Deps) http.Handler {
 	mux := http.NewServeMux()
@@ -77,8 +77,7 @@ func New(d Deps) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": d.Version})
 	})
 
-	mux.HandleFunc("POST /api/auth/request-pin", handleRequestPIN(d))
-	mux.HandleFunc("POST /api/auth/verify", handleVerify(d))
+	mux.HandleFunc("POST /api/auth/login", handleLogin(d))
 	mux.HandleFunc("POST /api/auth/logout", handleLogout(d))
 	authed("GET", "/api/auth/me", handleMe)
 	authed("GET", "/api/events", func(d Deps) http.HandlerFunc { return handleEvents(d.Events) })
@@ -288,7 +287,7 @@ func handleGetState(d Deps) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		// state.json carries SMTP + AI credentials and the SSH private
+		// state.json carries the password hash, AI credentials, and the SSH private
 		// key: forbid any intermediary or browser cache from storing it.
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Pragma", "no-cache")

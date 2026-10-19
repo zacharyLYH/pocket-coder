@@ -5,8 +5,7 @@ import { API_PORT, AUTH_STATE, COMPOSE_PROJECT, DATA_DIR, RUN_DIR, SEED_KIND, SE
 // One real backend for every test. Each Playwright process boots its own Go
 // server + Vite dev server as webServers (needs the Go toolchain + a running
 // Docker engine) and every spec — behavioral, visual, and full-stack
-// journeys — exercises them with NOTHING mocked. The PIN comes from the
-// console-mailer output redirected into $RUN_DIR/pcoder-stack-server.log.
+// journeys — exercises them with NOTHING mocked.
 //
 // Determinism comes from two resets:
 //   1. Per run: the stack data dir is wiped before the server boots, so

@@ -49,7 +49,7 @@ func seedFailedLastTurn(t *testing.T, d Deps) (string, string) {
 // Retry reruns the LAST failed turn only: same turnId/path, fresh
 // time+sha, context 1..N-1, full rerun. 200 reloads+opens.
 func TestCodemapRetrySuccess(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
@@ -68,7 +68,7 @@ func TestCodemapRetrySuccess(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tid, failedTurn := seedFailedLastTurn(t, d)
 
 	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap/threads/"+tid+"/retry", ``)
@@ -130,13 +130,13 @@ func TestCodemapRetrySuccess(t *testing.T) {
 // Retry guards: 409 on successful last turn, 409 on non-terminal failed
 // turn, 404 on unknown thread.
 func TestCodemapRetryGuards(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockEnsure(md)
 	f := newFakeModel(t)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// Successful last turn: never retried.
 	tid, _, err := d.Codemaps.ReserveNewThread("abc", "first?", "s", nil)
@@ -201,7 +201,7 @@ func TestCodemapRetryGuards(t *testing.T) {
 
 // Retry contends with POST on the same project-wide busy lock.
 func TestCodemapRetryBusy(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
@@ -223,7 +223,7 @@ func TestCodemapRetryBusy(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tid, _ := seedFailedLastTurn(t, d)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
 		mock.MatchedBy(func(argv []string) bool {
@@ -295,7 +295,7 @@ func TestCodemapRetryBusy(t *testing.T) {
 // Rerun failure answers 502/504 WITH threadId so FE adopts the id and
 // opens the failed placeholder.
 func TestCodemapRetryFailureKeepsThread(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	nullChoices := func(w http.ResponseWriter, _ map[string]any) {
@@ -306,7 +306,7 @@ func TestCodemapRetryFailureKeepsThread(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	tid, failedTurn := seedFailedLastTurn(t, d)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap/threads/"+tid+"/retry", ``)
 	if rec.Code != http.StatusAccepted {
@@ -338,13 +338,13 @@ func TestCodemapRetryFailureKeepsThread(t *testing.T) {
 // always succeeds on disk in tests) so this pins the unknown-thread
 // branch returning 404 with no model call.
 func TestCodemapPostUnknownThread(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	mockEnsure(md)
 	f := newFakeModel(t)
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/codemap", `{"prompt":"hi","threadId":"abcdef0123456789"}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown thread: got %d %q, want 404", rec.Code, rec.Body)

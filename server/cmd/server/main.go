@@ -34,15 +34,17 @@ import (
 var version = "dev"
 
 func main() {
-	// smtp-test is the setup script's delivery probe: send one email
-	// through the configured SMTP and exit 0/1 without booting.
+	// set-password is setup.sh's credential setter: read the password from
+	// stdin, hash it (Argon2id), store only the hash in state.json, bump
+	// the session generation, and exit. The server is stopped while this
+	// runs, so no live credential can race the write.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "smtp-test":
-			smtpTestMain()
+		case "set-password":
+			setPasswordMain()
 			return
 		case "-h", "--help", "help":
-			fmt.Fprintln(os.Stderr, "usage: pcoder [smtp-test]  (no args boots the server)")
+			fmt.Fprintln(os.Stderr, "usage: pcoder [set-password]  (no args boots the server)")
 			return
 		default:
 			slog.Error("unknown subcommand", "arg", os.Args[1])
@@ -61,9 +63,8 @@ func main() {
 	// source of truth for desired app state; env config seeds a fresh
 	// document only — existing values win.
 	st, err := state.Open(cfg.DataDir, state.Bootstrap{
-		LoginEmail: cfg.LoginEmail,
-		SMTP:       smtpFromConfig(cfg),
-		AI:         aiFromConfig(cfg),
+		AuthEmail: cfg.AuthEmail,
+		AI:        aiFromConfig(cfg),
 	})
 	if err != nil {
 		slog.Error("open state", "err", err)
@@ -243,11 +244,33 @@ func (h *harnessInstaller) InstallHarness(ctx context.Context, container string,
 	return h.sessions.InstallHarness(ctx, container, har)
 }
 
-func smtpFromConfig(cfg *config.Config) *state.SMTP {
-	if cfg.SMTPUser == "" || cfg.SMTPPass == "" {
-		return nil
+// newAuthService builds the auth service from the stored credential
+// (email + Argon2id hash + session generation). The hash only exists after
+// setup.sh's set-password step; before that every login fails closed.
+func newAuthService(cfg *config.Config, st *state.Store) (*auth.Service, error) {
+	secret := []byte(cfg.JWTSecret)
+	if len(secret) == 0 {
+		var err error
+		secret, err = auth.LoadOrCreateSecret(filepath.Join(cfg.DataDir, "jwt-secret"))
+		if err != nil {
+			return nil, err
+		}
 	}
-	return &state.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, User: cfg.SMTPUser, Password: cfg.SMTPPass, From: cfg.SMTPFrom}
+	var email, hash string
+	var version int64
+	st.View(func(doc *state.Document) {
+		email = doc.User.Email
+		hash = doc.User.PasswordHash
+		version = doc.User.AuthVersion
+	})
+	// A missing password is a fatal misconfiguration: booting anyway serves
+	// an instance nobody can log in to. Fail loudly instead.
+	if hash == "" {
+		panic(fmt.Sprintf("no login password configured for %q — run set-password", email))
+	}
+	svc := auth.New(email, hash, version, secret)
+	slog.Info("auth ready", "auth_email", email, "password_set", hash != "")
+	return svc, nil
 }
 
 // newHTTPServer builds the control-plane listener with transport timeouts.
@@ -283,36 +306,4 @@ func aiFromConfig(cfg *config.Config) *state.AIModel {
 		return nil
 	}
 	return &state.AIModel{ID: "default", Label: "Default", BaseURL: cfg.AIBaseURL, APIKey: cfg.AIAPIKey, Model: cfg.AIModel}
-}
-
-// newAuthService builds the auth service from state (email + SMTP creds,
-// seeded from env on first boot): PIN delivery by SMTP when configured,
-// console (server log) otherwise.
-func newAuthService(cfg *config.Config, st *state.Store) (*auth.Service, error) {
-	secret := []byte(cfg.JWTSecret)
-	if len(secret) == 0 {
-		var err error
-		secret, err = auth.LoadOrCreateSecret(filepath.Join(cfg.DataDir, "jwt-secret"))
-		if err != nil {
-			return nil, err
-		}
-	}
-	var (
-		email    string
-		smtpCfg  *state.SMTP
-		mailer   auth.Mailer = auth.ConsoleMailer{Out: os.Stderr}
-		mailerNm             = "console"
-	)
-	st.View(func(doc *state.Document) {
-		email = doc.User.Email
-		smtpCfg = doc.SMTP
-	})
-	if smtpCfg != nil && smtpCfg.User != "" && smtpCfg.Password != "" {
-		mailer = auth.SmtpMailer{Host: smtpCfg.Host, Port: smtpCfg.Port, User: smtpCfg.User, Password: smtpCfg.Password, From: smtpCfg.From}
-		mailerNm = "smtp"
-	}
-	svc := auth.New(email, secret, mailer)
-	svc.MailerName = mailerNm
-	slog.Info("auth ready", "login_email", email, "mailer", mailerNm)
-	return svc, nil
 }

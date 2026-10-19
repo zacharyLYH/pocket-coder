@@ -20,7 +20,7 @@ import (
 // the next chunk complete it. This test writes "héllo" as two chunks that
 // split the é and expects the browser to see it intact.
 func TestTerminalOutputSurvivesUTF8SplitAcrossFrames(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
@@ -44,7 +44,7 @@ func TestTerminalOutputSurvivesUTF8SplitAcrossFrames(t *testing.T) {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
-	conn := dialWS(t, srv, wsURL(srv, "abc", "main"), loginCookie(t, h, pinOut))
+	conn := dialWS(t, srv, wsURL(srv, "abc", "main"), loginCookie(t, h))
 	defer conn.Close()
 
 	var got []byte
@@ -64,7 +64,6 @@ func TestTerminalOutputSurvivesUTF8SplitAcrossFrames(t *testing.T) {
 			if len(raw) < 5 || int32(binary.BigEndian.Uint32(raw[1:5])) != 0 {
 				t.Fatalf("bad exit frame % x", raw)
 			}
-			break
 		default:
 			t.Fatalf("unknown opcode %d", raw[0])
 		}

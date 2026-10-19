@@ -49,7 +49,7 @@ func TestIsUnmerged(t *testing.T) {
 }
 
 func TestGitStatusEndpointKeepsLeadingSpace(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	// RepoTarget: no clone at /workspace/repo, so the repo dir is /workspace.
@@ -77,7 +77,7 @@ func TestGitStatusEndpointKeepsLeadingSpace(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "0\n"}, nil).Maybe()
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedGet(t, h, cookie, "/api/projects/abc/git/status")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d %q, want 200", rec.Code, rec.Body)

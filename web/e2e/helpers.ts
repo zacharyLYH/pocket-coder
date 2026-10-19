@@ -1,11 +1,10 @@
-import { readFileSync } from 'node:fs'
 import { expect, type Page, type APIRequestContext } from '@playwright/test'
 
-import { ciTimeout, GIT_PORT, LOGIN_EMAIL, RUN_SLUG, SERVER_LOG } from './env'
+import { ciTimeout, GIT_PORT, LOGIN_EMAIL, LOGIN_PASSWORD, RUN_SLUG } from './env'
 
 export { LOGIN_EMAIL } // one source: env.ts (the seeder factory uses it too)
 
-// Shared plumbing for the real-backend e2e suite: real PIN login, and
+// Shared plumbing for the real-backend e2e suite: real password login, and
 // per-test cleanup so order never matters (the stack data dir only resets
 // between runs — see playwright.config.ts).
 
@@ -32,14 +31,11 @@ export function terminalUrl(id: string, session: string): string {
   return `/projects/${projectURL(id)}/terminal/${encodeURIComponent(session)}`
 }
 
-// login drives the real email + console-mailer PIN flow end to end.
+// login drives the real email + password flow end to end.
 export async function login(page: Page) {
   await page.goto('/login')
-  const pinOffset = logSize()
   await page.getByPlaceholder('you@example.com').fill(LOGIN_EMAIL)
-  await page.getByRole('button', { name: 'Send code' }).click()
-  await expect(page.getByPlaceholder('6-digit PIN')).toBeVisible()
-  await page.getByPlaceholder('6-digit PIN').fill(waitForPin(pinOffset))
+  await page.getByPlaceholder('Password').fill(LOGIN_PASSWORD)
   await page.getByRole('button', { name: 'Log in' }).click()
   await expect(page.getByText(`Welcome, ${LOGIN_EMAIL}`)).toBeVisible()
 }
@@ -113,29 +109,6 @@ export async function ensureFakeHarness(request: APIRequestContext): Promise<voi
     },
   })
   if (res.status() !== 201) throw new Error(`ensureFakeHarness failed: ${res.status()}`)
-}
-
-
-function logSize(): number {
-  try {
-    return readFileSync(SERVER_LOG, 'utf8').length
-  } catch {
-    return 0
-  }
-}
-
-function waitForPin(afterOffset: number): string {
-  for (let i = 0; i < 50; i++) {
-    try {
-      const freshLog = readFileSync(SERVER_LOG, 'utf8').slice(afterOffset)
-      const matches = [...freshLog.matchAll(new RegExp(`login PIN for ${LOGIN_EMAIL}: (\\d{6})`, 'g'))]
-      if (matches.length > 0) return matches[matches.length - 1][1]
-    } catch {
-      // log not flushed yet
-    }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
-  }
-  throw new Error(`no PIN found in ${SERVER_LOG} — does the console mailer print it?`)
 }
 
 // ensureCloneForm lands on home with the Clone disclosure open: the form

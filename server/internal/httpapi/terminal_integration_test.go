@@ -21,8 +21,8 @@ import (
 )
 
 func TestTerminalLiveLifecycle(t *testing.T) {
-	h, dkr, _, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
+	h, dkr, _, _, _ := newLiveDeps(t)
+	cookie := login(t, h)
 
 	// fixture project (embedded image ships tmux)
 	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "")

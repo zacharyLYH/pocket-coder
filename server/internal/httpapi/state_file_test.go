@@ -21,7 +21,7 @@ import (
 // an unexpected key (or a lost one) fails loudly instead of hiding behind
 // the typed Document. This is the contract for the source of truth.
 func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	// mirror production wiring (main.go): identity seeded into a fresh
 	// document, key store attached to the project pipeline
 	if err := st.Mutate(func(doc *state.Document) error {
@@ -32,7 +32,7 @@ func TestStateFileIsSingleSourceOfTruth(t *testing.T) {
 	}
 	d.Projects.SetSSHKeys(d.SSHKeys)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// --- 1. server key: generated on boot, shown without the private half ---
 	kp, err := d.SSHKeys.EnsureKeypair()

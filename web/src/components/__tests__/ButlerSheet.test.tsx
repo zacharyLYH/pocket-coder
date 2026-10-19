@@ -62,7 +62,7 @@ describe('ButlerSheet', () => {
   })
 
   it('renders Butler answers as markdown', async () => {
-    const answer = '**Healthy**\n\n- Docker\n- SMTP'
+    const answer = '**Healthy**\n\n- Docker\n- Auth'
     mockAll(turnBody(answer), answer)
     render(<ButlerSheet projectHint={null} onClearHint={vi.fn()} onClose={vi.fn()} />)
     fireEvent.change(screen.getByTestId('butler-prompt'), { target: { value: 'Brief me' } })

@@ -7,9 +7,7 @@
 services:
   server:
     environment:
-      PCODER_LOGIN_EMAIL: me@example.com
-      SMTP_USER: ""
-      SMTP_PASSWORD: ""
+      PCODER_AUTH_EMAIL: me@example.com
       # E2E clones come from the per-run git daemon on the host
       # (web/e2e/global-setup.ts), not from GitHub.
       PCODER_ALLOW_ANY_REPO: "1"

@@ -70,7 +70,7 @@ func healthByName(rep healthBody) map[string]string {
 // Fully converged project: container running, repo cloned, every recorded
 // session live, every recorded harness present — zero drifts.
 func TestProjectHealthInSync(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	// The built-in shell mirrors production's seeded Terminal entry: always
 	// present, deliberately never recorded — it must not appear at all,
@@ -96,7 +96,7 @@ func TestProjectHealthInSync(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli\nbash\n"}, nil).Once()
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rep := getHealth(t, h, cookie)
 	if !rep.InSync {
 		t.Fatalf("inSync = false, want true: %+v", rep.Checks)
@@ -116,7 +116,7 @@ func TestProjectHealthInSync(t *testing.T) {
 // session with no record, recorded harness binary missing, empty repo
 // volume — all drift, container itself ok.
 func TestProjectHealthFindsDriftBothWays(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	_ = d.Projects.RecordSession("abc", "ghost-1", "fake")
 	if err := d.Projects.RecordInstall("abc", "fake"); err != nil {
@@ -135,7 +135,7 @@ func TestProjectHealthFindsDriftBothWays(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "\n"}, nil).Once()
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rep := getHealth(t, h, cookie)
 	if rep.InSync {
 		t.Fatal("inSync = true, want false")
@@ -160,7 +160,7 @@ func TestProjectHealthFindsDriftBothWays(t *testing.T) {
 // binary gets its install record written. The refreshed report must be in
 // sync, with one action per row.
 func TestProjectHealthRepairHealsHarnessDrift(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	if err := d.Projects.RecordInstall("abc", "fake"); err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestProjectHealthRepairHealsHarnessDrift(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "fakecli 1.0\n"}, nil).Once()
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rep := repairHealth(t, h, cookie)
 	if !rep.InSync {
 		t.Fatalf("inSync = false after repair: %+v", rep.Checks)
@@ -216,7 +216,7 @@ func TestProjectHealthRepairHealsHarnessDrift(t *testing.T) {
 // An empty repo volume is healed by the same boot path: re-clone from the
 // recorded repo URL, then the refreshed report is in sync.
 func TestProjectHealthRepairReclonesEmptyRepo(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Times(3)
@@ -239,7 +239,7 @@ func TestProjectHealthRepairReclonesEmptyRepo(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 1}, nil).Times(2)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rep := repairHealth(t, h, cookie)
 	if !rep.InSync {
 		t.Fatalf("inSync = false after re-clone: %+v", rep.Checks)
@@ -253,7 +253,7 @@ func TestProjectHealthRepairReclonesEmptyRepo(t *testing.T) {
 // killing a live one is the user's decision. Repair returns manual actions
 // and leaves the report drifting.
 func TestProjectHealthRepairLeavesSessionsManual(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	if err := d.Projects.RecordSession("abc", "ghost-1", "fake"); err != nil {
 		t.Fatal(err)
@@ -271,7 +271,7 @@ func TestProjectHealthRepairLeavesSessionsManual(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 1}, nil).Times(2)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rep := repairHealth(t, h, cookie)
 	if rep.InSync {
 		t.Fatal("inSync = true, want false (session drifts stay)")
@@ -289,13 +289,13 @@ func TestProjectHealthRepairLeavesSessionsManual(t *testing.T) {
 // Missing container: the container row itself is the drift, everything
 // exec-based degrades to unknown rather than guessing.
 func TestProjectHealthMissingContainer(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{}, docker.ErrNotFound).Once()
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rep := getHealth(t, h, cookie)
 	if rep.InSync {
 		t.Fatal("inSync = true, want false")

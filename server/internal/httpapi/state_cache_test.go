@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-// GET /api/state streams state.json verbatim — SMTP password, AI API keys,
+// GET /api/state streams state.json verbatim — password hash, AI API keys,
 // the SSH private key. No intermediary or browser cache may store it.
 func TestGetStateSetsNoStore(t *testing.T) {
-	d, _, pinOut, _ := newSessionDeps(t)
+	d, _, _ := newSessionDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	for _, path := range []string{"/api/state", "/api/state?download=true"} {
 		rec := authedGet(t, h, cookie, path)

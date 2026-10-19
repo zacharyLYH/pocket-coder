@@ -1,66 +1,58 @@
-// Authentication handlers: PIN request, verify, logout, and the /me
-// identity endpoint. Login routes are public; /me requires a valid session.
+// Authentication handlers: password login, logout, and the /me identity
+// endpoint. Login is public; /me requires a valid session.
 package httpapi
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 
 	"pcoder/internal/auth"
 )
 
-func handleRequestPIN(d Deps) http.HandlerFunc {
+func handleLogin(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Email string `json:"email"`
+			Email    string `json:"email"`
+			Password string `json:"password"`
 		}
 		if !decodeBody(w, r, &body, false) {
 			return
 		}
-		body.Email = strings.TrimSpace(body.Email)
-		err := d.Auth.RequestPIN(r.Context(), body.Email)
+		token, err := d.Auth.Login(body.Email, body.Password, clientIP(r))
 		switch {
-		case errors.Is(err, auth.ErrNotConfiguredEmail):
-			// Deliberately identical to success: don't reveal whether an
-			// address is configured.
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		case errors.Is(err, auth.ErrRateLimited):
-			writeErr(w, http.StatusTooManyRequests, "too many requests, try again later")
+			d.Events.Append("login.failure", map[string]any{"reason": "rate_limited"})
+			writeErr(w, http.StatusTooManyRequests, "too many attempts, try again later")
 		case err != nil:
-			writeInternalErr(w, "request pin", err)
+			d.Events.Append("login.failure", map[string]any{"reason": "invalid_credentials"})
+			// Identical generic failure for unknown email, wrong password,
+			// and missing credential: nothing reveals which half failed.
+			writeErr(w, http.StatusUnauthorized, "invalid email or password")
 		default:
-			d.Events.Append("login.pin.sent", map[string]any{"email": body.Email, "delivery": d.Auth.MailerName})
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			email := auth.NormalizeEmail(body.Email)
+			d.Events.Append("login.success", map[string]any{"email": email})
+			d.Auth.SetCookie(w, r, token)
+			writeJSON(w, http.StatusOK, map[string]any{"email": email})
 		}
 	}
 }
 
-func handleVerify(d Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Email string `json:"email"`
-			Pin   string `json:"pin"`
+// clientIP is the rate-limit key: X-Forwarded-For's leftmost entry behind
+// the nginx proxy, else the direct peer. Not security-critical (limits are
+// defense-in-depth over the generic failures), so no trusted-proxy list.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if ip, _, ok := strings.Cut(xff, ","); ok {
+			return strings.TrimSpace(ip)
 		}
-		if !decodeBody(w, r, &body, false) {
-			return
-		}
-		token, err := d.Auth.Verify(strings.TrimSpace(body.Email), strings.TrimSpace(body.Pin))
-		switch {
-		case errors.Is(err, auth.ErrRateLimited):
-			d.Events.Append("login.failure", map[string]any{"email": body.Email, "reason": "rate_limited"})
-			writeErr(w, http.StatusTooManyRequests, "too many attempts, try again later")
-		case errors.Is(err, auth.ErrInvalidPIN):
-			d.Events.Append("login.failure", map[string]any{"email": body.Email, "reason": "invalid_pin"})
-			writeErr(w, http.StatusUnauthorized, "invalid pin")
-		case err != nil:
-			writeInternalErr(w, "verify pin", err)
-		default:
-			d.Events.Append("login.success", map[string]any{"email": body.Email})
-			d.Auth.SetCookie(w, r, token)
-			writeJSON(w, http.StatusOK, map[string]any{"email": body.Email})
-		}
+		return strings.TrimSpace(xff)
 	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 
 func handleLogout(d Deps) http.HandlerFunc {

@@ -14,8 +14,8 @@ import (
 )
 
 func TestReconcileMissingContainer(t *testing.T) {
-	h, dkr, _, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
+	h, dkr, _, _, _ := newLiveDeps(t)
+	cookie := login(t, h)
 
 	// create a project
 	id, _ := createTestProject(t, h, cookie, fixtureRepo(t).URL, "")

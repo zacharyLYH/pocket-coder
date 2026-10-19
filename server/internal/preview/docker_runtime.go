@@ -240,7 +240,6 @@ func (f *DockerFactory) Start(ctx context.Context, cfg Config) (Worker, error) {
 	return &dockerWorker{docker: f.Docker, id: cid, relayID: relayID, endpoint: ep}, nil
 }
 
-
 // ensureImage is the single build path: serialized, and always re-checking
 // the tag so a concurrent caller finds the finished image instead of
 // rebuilding it.

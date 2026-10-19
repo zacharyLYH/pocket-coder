@@ -12,7 +12,7 @@ import (
 )
 
 // Ops-prompt tests: deterministic templates over mocked exec — no model,
-// no live engine. The shared gitopsSetup seeds project "abc".
+// no live engine. Each test seeds project "abc" via newSessionDeps.
 
 // opsPromptState stubs the full opsState probe sequence for a clean repo
 // on main tracking origin/main, one commit ahead.
@@ -47,7 +47,7 @@ func opsPromptState(md *dockermocks.MockClient, base string) {
 }
 
 func TestGitOpsPromptPR(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
@@ -55,7 +55,7 @@ func TestGitOpsPromptPR(t *testing.T) {
 	opsPromptState(md, "refs/remotes/origin/main")
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/git/ops-prompt",
 		`{"op":"pr","newBranch":"feat/login","base":"main"}`)
 	if rec.Code != http.StatusOK {
@@ -70,13 +70,13 @@ func TestGitOpsPromptPR(t *testing.T) {
 
 func TestGitOpsPromptValidation(t *testing.T) {
 	newSetup := func(t *testing.T) (Deps, *dockermocks.MockClient, *http.Cookie, http.Handler) {
-		d, md, pinOut, dataDir := newSessionDeps(t)
+		d, md, dataDir := newSessionDeps(t)
 		seedProject(t, dataDir, "abc")
 		md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 		md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
 			Return(docker.ExecResult{ExitCode: 1}, nil)
 		h := New(d)
-		return d, md, loginCookie(t, h, pinOut), h
+		return d, md, loginCookie(t, h), h
 	}
 	t.Run("bad op", func(t *testing.T) {
 		_, _, cookie, h := newSetup(t)
@@ -86,14 +86,14 @@ func TestGitOpsPromptValidation(t *testing.T) {
 		}
 	})
 	t.Run("pr needs newBranch", func(t *testing.T) {
-		d, md, pinOut, dataDir := newSessionDeps(t)
+		d, md, dataDir := newSessionDeps(t)
 		seedProject(t, dataDir, "abc")
 		md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 		md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
 			Return(docker.ExecResult{ExitCode: 1}, nil)
 		opsPromptState(md, "refs/remotes/origin/main")
 		h := New(d)
-		cookie := loginCookie(t, h, pinOut)
+		cookie := loginCookie(t, h)
 		rec := authedPost(t, h, cookie, "/api/projects/abc/git/ops-prompt", `{"op":"pr","base":"main"}`)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("pr without branch: got %d %q, want 400", rec.Code, rec.Body)
@@ -103,7 +103,7 @@ func TestGitOpsPromptValidation(t *testing.T) {
 
 func TestGitOpsPromptSyncUndo(t *testing.T) {
 	setup := func(t *testing.T) (*http.Cookie, http.Handler) {
-		d, md, pinOut, dataDir := newSessionDeps(t)
+		d, md, dataDir := newSessionDeps(t)
 		seedProject(t, dataDir, "abc")
 		md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 		md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
@@ -111,7 +111,7 @@ func TestGitOpsPromptSyncUndo(t *testing.T) {
 		// Empty symbolic-ref output exercises the "main" fallback.
 		opsPromptState(md, "")
 		h := New(d)
-		return loginCookie(t, h, pinOut), h
+		return loginCookie(t, h), h
 	}
 	t.Run("sync falls back to main", func(t *testing.T) {
 		cookie, h := setup(t)

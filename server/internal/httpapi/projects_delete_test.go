@@ -17,7 +17,7 @@ import (
 // the detach, the context-canceled remove aborted the pipeline and the
 // project came back on the next refresh.
 func TestDeleteDetachedFromCanceledRequest(t *testing.T) {
-	d, md, pinOut, st := newProjectDeps(t)
+	d, md, st := newProjectDeps(t)
 	if err := st.Mutate(func(doc *state.Document) error {
 		doc.Projects["abc"] = state.Project{Repo: "git@example.com:x.git"}
 		return nil
@@ -39,7 +39,7 @@ func TestDeleteDetachedFromCanceledRequest(t *testing.T) {
 	md.EXPECT().RemoveVolume(mock.Anything, "pcoder-abc-repo").Return(nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

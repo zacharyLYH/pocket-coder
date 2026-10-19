@@ -20,7 +20,7 @@ import (
 // output comes back, and a failing command surfaces its exit code and
 // output while the other project still reports success.
 func TestExecCommandEndpoint(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	if err := project.Open(dataDir).Create("def", project.Project{Repo: "https://github.com/x/world.git"}); err != nil {
 		t.Fatal(err)
@@ -36,7 +36,7 @@ func TestExecCommandEndpoint(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 3, Output: "boom\n"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/exec", `{"projectIds":["abc","def"],"command":"echo hi"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("exec: got %d %q, want 200", rec.Code, rec.Body)

@@ -5,7 +5,6 @@
 package httpapi
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -27,9 +26,9 @@ import (
 // codemapDeleteDeps is newSessionDeps with the data dir exposed (to assert
 // on the store's folders) and the codemap store wired into the project
 // service, mirroring main.go's SetCodemaps cascade.
-func codemapDeleteDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer, *state.Store, string) {
+func codemapDeleteDeps(t *testing.T) (Deps, *dockermocks.MockClient, *state.Store, string) {
 	t.Helper()
-	d, pinOut, dataDir := newTestDepsInDir(t)
+	d, dataDir := newTestDepsInDir(t)
 	md := dockermocks.NewMockClient(t)
 	st, err := state.Open(t.TempDir(), state.Bootstrap{})
 	if err != nil {
@@ -45,11 +44,11 @@ func codemapDeleteDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buff
 	d.Projects = project.NewService(project.Open(st), md)
 	d.Projects.SetCodemaps(d.Codemaps)
 	d.State = st
-	return d, md, pinOut, st, dataDir
+	return d, md, st, dataDir
 }
 
 func TestCodemapDeletedWithProject(t *testing.T) {
-	d, md, pinOut, st, dataDir := codemapDeleteDeps(t)
+	d, md, st, dataDir := codemapDeleteDeps(t)
 	mockRepoDir(md, "abc123")
 	mockOrientation(md, "package.json\nsrc/\nindex.html\n")
 	mockHydrate(md, "func main() {\n")
@@ -57,7 +56,7 @@ func TestCodemapDeletedWithProject(t *testing.T) {
 	seedAI(t, st, f.srv.URL)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// One real turn through the loop: creates the thread folder with
 	// manifest.json + 1.json + 1.lineage.json inside.
@@ -144,10 +143,10 @@ func TestCodemapDeletedWithProject(t *testing.T) {
 }
 
 func TestCodemapDeletedWithMetadataScope(t *testing.T) {
-	d, _, pinOut, st, dataDir := codemapDeleteDeps(t)
+	d, _, st, dataDir := codemapDeleteDeps(t)
 	seedProject(t, st, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// A thread folder without a model call: reserve directly.
 	tid, _, err := d.Codemaps.ReserveNewThread("abc", "hi?", "s", nil)

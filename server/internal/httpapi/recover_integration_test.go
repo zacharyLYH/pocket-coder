@@ -73,9 +73,9 @@ func TestStateMockRecovery(t *testing.T) {
 	wantDoc := statetest.Read(t, statePath)
 
 	// same wiring as newLiveDeps, but over the seeded store
-	h, _, svc, pinOut, _, _ := newLiveDepsOnDir(t, dataDir)
+	h, _, svc, _, _ := newLiveDepsOnDir(t, dataDir)
 
-	cookie := login(t, h, pinOut)
+	cookie := login(t, h)
 
 	// Boot bootstrap (the pass main.go runs before serving): recreate the
 	// container from the seeded state and — fresh engine, no volumes —

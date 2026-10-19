@@ -1,14 +1,14 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	"pcoder/internal/auth"
@@ -26,23 +26,38 @@ import (
 
 const testSecret = "0123456789abcdef0123456789abcdef"
 
+// Tests keep Argon2id fast for the whole package: TestMain lowers the
+// params before any hash is minted or verified, restoring after.
+func TestMain(m *testing.M) {
+	restore := auth.TestParams()
+	code := m.Run()
+	restore()
+	os.Exit(code)
+}
+
+// testHash is computed lazily after TestMain lowers the params —
+// TestHashFor at package init would bake in production params.
+var testHashOnce = sync.OnceValue(func() string { return auth.TestHashFor() })
+
+// testAuthService returns the suite's auth service: the one configured
+// email + the shared test hash, generation 1.
+func testAuthService() *auth.Service {
+	return auth.New("me@example.com", testHashOnce(), 1, []byte(testSecret))
+}
+
 // wantFakeHarnessEntry is the seeded "Fake" harness's state-file shape,
 // shared by every AssertSection that includes the registry seed.
 var wantFakeHarnessEntry = map[string]any{"id": "fake", "name": "Fake", "command": "fakecli", "install": "npm i -g fakecli"}
 
-// pinRe extracts the 6-digit PIN from console-mailer output. Hoisted so the
-// per-login regexp isn't recompiled dozens of times per suite run.
-var pinRe = regexp.MustCompile(`\d{6}`)
-
-func newTestDeps(t *testing.T) (Deps, *bytes.Buffer) {
+func newTestDeps(t *testing.T) Deps {
 	t.Helper()
-	d, pinOut, _ := newTestDepsInDir(t) //nolint:dogsled
-	return d, pinOut
+	d, _ := newTestDepsInDir(t)
+	return d
 }
 
 // newTestDepsInDir is newTestDeps, also returning the data dir so tests
 // can assert on the files the codemap store writes under it.
-func newTestDepsInDir(t *testing.T) (Deps, *bytes.Buffer, string) {
+func newTestDepsInDir(t *testing.T) (Deps, string) {
 	t.Helper()
 	dataDir := t.TempDir()
 	ev, err := events.Open(filepath.Join(dataDir, "events.log"))
@@ -50,12 +65,9 @@ func newTestDepsInDir(t *testing.T) (Deps, *bytes.Buffer, string) {
 		t.Fatalf("open event log: %v", err)
 	}
 	t.Cleanup(func() { ev.Close() })
-	var pinOut bytes.Buffer
-	svc := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut})
-	svc.MailerName = "console"
 	ob := installObs(t, dataDir, ev)
-	return Deps{Events: ev, Version: "dev", Auth: svc, Obs: ob,
-		Codemaps: threads.New(filepath.Join(dataDir, "codemaps"), false)}, &pinOut, dataDir
+	return Deps{Events: ev, Version: "dev", Auth: testAuthService(), Obs: ob,
+		Codemaps: threads.New(filepath.Join(dataDir, "codemaps"), false)}, dataDir
 }
 
 // installObs configures staged logging over dataDir, mirroring production:
@@ -95,28 +107,20 @@ func authedGet(t *testing.T, h http.Handler, cookie *http.Cookie, path string) *
 	return rec
 }
 
-// loginCookie runs the real flow end to end: request a PIN, read it from the
-// console mailer's buffer, verify it, and return the session cookie.
-func loginCookie(t *testing.T, h http.Handler, pinOut *bytes.Buffer) *http.Cookie {
+// loginCookie runs the real flow end to end: POST the email + password
+// to /api/auth/login and return the session cookie.
+func loginCookie(t *testing.T, h http.Handler) *http.Cookie {
 	t.Helper()
-	rec := post(t, h, "/api/auth/request-pin", `{"email":"me@example.com"}`)
+	rec := post(t, h, "/api/auth/login", `{"email":"me@example.com","password":"`+auth.TestPassword+`"}`)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("request pin: %d body=%s", rec.Code, rec.Body)
-	}
-	pin := pinRe.FindString(pinOut.String())
-	if pin == "" {
-		t.Fatalf("no pin in mailer output: %q", pinOut.String())
-	}
-	rec = post(t, h, "/api/auth/verify", `{"email":"me@example.com","pin":"`+pin+`"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("verify: %d body=%s", rec.Code, rec.Body)
+		t.Fatalf("login: %d body=%s", rec.Code, rec.Body)
 	}
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == auth.CookieName {
 			return c
 		}
 	}
-	t.Fatal("no session cookie in verify response")
+	t.Fatal("no session cookie in login response")
 	return nil
 }
 
@@ -134,9 +138,9 @@ func lastEvent(t *testing.T, d Deps) events.Event {
 // newProjectDeps wires the real project.Service over a mocked Docker client
 // into the handler, so the HTTP layer is tested against the actual pipeline.
 // Returns the shared state store so tests can seed it directly.
-func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer, *state.Store) {
+func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *state.Store) {
 	t.Helper()
-	d, pinOut, _ := newTestDepsInDir(t)
+	d, _ := newTestDepsInDir(t)
 	md := dockermocks.NewMockClient(t)
 	st, err := state.Open(t.TempDir(), state.Bootstrap{})
 	if err != nil {
@@ -150,12 +154,12 @@ func newProjectDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer,
 	// project deletion must cascade into the codemap files.
 	d.Projects.SetCodemaps(d.Codemaps)
 	d.State = st
-	return d, md, pinOut, st
+	return d, md, st
 }
 
-func newSessionDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer, *state.Store) {
+func newSessionDeps(t *testing.T) (Deps, *dockermocks.MockClient, *state.Store) {
 	t.Helper()
-	d, md, pinOut, st := newProjectDeps(t)
+	d, md, st := newProjectDeps(t)
 	d.Sessions = session.New(md)
 
 	// a plugin in the registry, as if added by the user
@@ -165,7 +169,7 @@ func newSessionDeps(t *testing.T) (Deps, *dockermocks.MockClient, *bytes.Buffer,
 	}
 	d.Harnesses = hs
 	d.SSHKeys = sshkeys.New(st)
-	return d, md, pinOut, st
+	return d, md, st
 }
 
 func seedProject(t *testing.T, st *state.Store, id string) {
@@ -212,7 +216,7 @@ type previewTestFactory struct {
 }
 
 func (f previewTestFactory) Start(context.Context, preview.Config) (preview.Worker, error) {
-	return previewTestWorker{ep: f.ep}, nil
+	return previewTestWorker(f), nil
 }
 
 // harnessPath mirrors the prelude session puts before every harness exec.
@@ -221,7 +225,7 @@ func (f previewTestFactory) Start(context.Context, preview.Config) (preview.Work
 const harnessPath = `export PATH="$HOME/.local/bin:$HOME/bin:$PATH"; `
 
 func TestHealth(t *testing.T) {
-	d, _ := newTestDeps(t)
+	d := newTestDeps(t)
 	h := New(d)
 	rec := get(t, h, "/health")
 	if rec.Code != http.StatusOK {

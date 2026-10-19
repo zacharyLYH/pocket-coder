@@ -4,7 +4,7 @@
 //
 //	testdata/butler/tier-N/
 //	  state.json — the tier's state.json, realistic and literal: user,
-//	    serverKey, smtp, harness registry, per-tier projects (keyed by
+//	    serverKey, auth credential, harness registry, per-tier projects (keyed by
 //	    the deterministic itest-tier-N/repo id) and ai_models.
 //	  config.json — {"openedTerminalNames": [{"project", "name"}]}: the
 //	    live tmux terminals the harness opens after boot (same call as
@@ -29,7 +29,6 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -40,7 +39,6 @@ import (
 	"strings"
 	"testing"
 
-	"pcoder/internal/auth"
 	"pcoder/internal/events"
 	"pcoder/internal/harness"
 	"pcoder/internal/project"
@@ -126,21 +124,19 @@ func wireDeps(t *testing.T, stateRaw []byte) (Deps, http.Handler, *http.Cookie) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var pinOut bytes.Buffer
-	authSvc := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut})
 	sshKeyStore := sshkeys.New(st)
 	svc := project.NewService(project.Open(st), dkr)
 	svc.SetSSHKeys(sshKeyStore)
 	svc.SetAllowAnyRepo(true)
 	d := Deps{
-		Events: ev, Version: "itest", Auth: authSvc, Projects: svc,
+		Events: ev, Version: "itest", Auth: testAuthService(), Projects: svc,
 		Obs: installObs(t, dataDir, ev), Docker: dkr, Sessions: session.New(dkr),
 		Harnesses: harness.New(st), SSHKeys: sshKeyStore, State: st,
 		Butler:   threads.New(t.TempDir(), true),
 		Codemaps: threads.New(filepath.Join(dataDir, "codemaps"), false),
 	}
 	h := New(d)
-	return d, h, login(t, h, &pinOut)
+	return d, h, login(t, h)
 }
 
 // bringUp runs the same boot pass as main and blocks until the seeded

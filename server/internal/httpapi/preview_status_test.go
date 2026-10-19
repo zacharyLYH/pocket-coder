@@ -34,7 +34,7 @@ func statusOf(t *testing.T, h http.Handler, cookie *http.Cookie, projectID strin
 // The status endpoint must require auth AND never leak the private worker
 // endpoints (CDP/display) that are server-side only.
 func TestPreviewStatusRequiresAuthAndNeverReturnsPrivateEndpoint(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	m := preview.NewManager(previewTestFactory{ep: privatePreviewEndpoint})
 	if _, err := m.Ensure(context.Background(), preview.Config{ProjectID: "p1", ContainerID: "pcoder-p1"}); err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestPreviewStatusRequiresAuthAndNeverReturnsPrivateEndpoint(t *testing.T) {
 	if rec := get(t, h, "/api/projects/p1/preview"); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated status = %d", rec.Code)
 	}
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedGet(t, h, cookie, "/api/projects/p1/preview")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body)
@@ -58,10 +58,10 @@ func TestPreviewStatusRequiresAuthAndNeverReturnsPrivateEndpoint(t *testing.T) {
 }
 
 func TestPreviewStatusStoppedWithoutWorker(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	d.Preview = preview.NewManager(previewTestFactory{ep: privatePreviewEndpoint})
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	if got := statusOf(t, h, cookie, "ghost"); got != "stopped" {
 		t.Fatalf("status = %q, want stopped", got)
 	}
@@ -92,14 +92,14 @@ func TestPreviewStatusDegradedWhenCDPDead(t *testing.T) {
 // without it the next 404 on the stale key looks inexplicable, and the
 // rotation is invisible to the Milestones filter.
 func TestPreviewStatusEmitsRotationEvent(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	m := preview.NewManager(previewTestFactory{ep: privatePreviewEndpoint})
 	if _, err := m.Ensure(context.Background(), preview.Config{ProjectID: "p1", ContainerID: "pcoder-p1"}); err != nil {
 		t.Fatal(err)
 	}
 	d.Preview = m
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// Fresh worker: status hands out the start-minted key, no rotation.
 	if got := statusOf(t, h, cookie, "p1"); got != "degraded" {

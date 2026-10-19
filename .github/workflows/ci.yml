@@ -76,12 +76,7 @@ jobs:
       - name: Create server/.env (server requires it; gitignored locally)
         run: |
           cat > server/.env <<'EOF'
-          PCODER_LOGIN_EMAIL=ci@example.com
-          SMTP_HOST=smtp.gmail.com
-          SMTP_PORT=587
-          SMTP_USER=ci@example.com
-          SMTP_PASSWORD=ci
-          SMTP_FROM=ci@example.com
+          PCODER_AUTH_EMAIL=ci@example.com
           EOF
       - name: Build & boot the dev stack
         run: docker compose -f docker-compose.dev.yml up -d --build
@@ -105,10 +100,12 @@ jobs:
           exit 1
       - name: Assert Vite proxy reaches the server
         run: |
-          curl -sf -X POST http://localhost:5173/api/auth/request-pin \
+          # Wrong password: 401 with the generic body proves the login
+          # route is wired through the Vite proxy end to end.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:5173/api/auth/login \
             -H 'Content-Type: application/json' \
-            -d '{"email":"nobody@example.com"}' \
-            | grep -q '"ok":true'
+            -d '{"email":"nobody@example.com","password":"not-the-password"}')
+          [ "$code" = "401" ] || { echo "login probe: $code, want 401" >&2; exit 1; }
       - name: Tear down
         run: docker compose -f docker-compose.dev.yml down
 

@@ -409,29 +409,28 @@ func butlerReadTools(d Deps) []agent.Tool {
 			Schema:      noProps,
 			Run: func(_ context.Context, argsJSON string) (string, error) {
 				return butlerJSON([]string{
-					"PCODER_LOGIN_EMAIL", "PCODER_DATA_DIR", "PCODER_BIND", "PCODER_DOCKER_SOCK",
-					"SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM",
+					"PCODER_AUTH_EMAIL", "PCODER_DATA_DIR", "PCODER_BIND", "PCODER_DOCKER_SOCK",
 				}), nil
 			},
 		},
 		butlerToolConfigStatus: {
 			Name:        butlerToolConfigStatus,
-			Description: "Setup booleans: ai, server deploy key, smtp. Booleans only.",
+			Description: "Setup booleans: ai, server deploy key, auth. Booleans only.",
 			Schema:      noProps,
 			Run: func(_ context.Context, argsJSON string) (string, error) {
-				var ssh, smtp bool
+				var ssh, hasAuth bool
 				if d.SSHKeys != nil {
 					_, ssh = d.SSHKeys.Get()
 				}
 				if d.State != nil {
 					d.State.View(func(doc *state.Document) {
-						smtp = doc.SMTP != nil
+						hasAuth = doc.User.Email != "" && doc.User.PasswordHash != ""
 					})
 				}
 				return butlerJSON(map[string]any{
 					"aiConfigured": aiConfig(d, aiBody{}).Valid(),
 					"sshKeys":      ssh,
-					"smtp":         smtp,
+					"auth":         hasAuth,
 				}), nil
 			},
 		},
@@ -535,28 +534,27 @@ func butlerReadTools(d Deps) []agent.Tool {
 				return butlerJSON(map[string]any{"ok": true, "user": user}), nil
 			},
 		},
-		butlerToolSMTPStatus: {
-			Name:        butlerToolSMTPStatus,
-			Description: "SMTP wiring for login PINs: configured bool plus host, port, user. Never the password. No args.",
+		butlerToolAuthStatus: {
+			Name:        butlerToolAuthStatus,
+			Description: "Login account status: configured bool plus email. Never the password or hash. No args.",
 			Schema:      noProps,
 			Run: func(_ context.Context, _ string) (string, error) {
 				if d.State == nil {
 					return butlerJSON(map[string]any{"configured": false}), nil
 				}
-				var host, user string
-				var port int
+				var email string
 				var configured bool
 				d.State.View(func(doc *state.Document) {
-					if doc.SMTP != nil {
+					if doc.User.Email != "" && doc.User.PasswordHash != "" {
 						configured = true
-						host, port, user = doc.SMTP.Host, doc.SMTP.Port, doc.SMTP.User
+						email = doc.User.Email
 					}
 				})
 				if !configured {
 					return butlerJSON(map[string]any{"configured": false}), nil
 				}
 				return butlerJSON(map[string]any{
-					"configured": true, "host": host, "port": port, "user": user,
+					"configured": true, "email": email,
 				}), nil
 			},
 		},

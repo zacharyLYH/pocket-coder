@@ -3,8 +3,10 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"pcoder/internal/auth"
 	"pcoder/internal/state/statetest"
 )
 
@@ -21,27 +23,15 @@ func open(t *testing.T, dataDir string, seed Bootstrap) (*Store, Document) {
 
 func TestFreshOpenSeedsAndPersists(t *testing.T) {
 	dataDir := t.TempDir()
-	st, doc := open(t, dataDir, Bootstrap{
-		LoginEmail: "me@example.com",
-		SMTP:       &SMTP{Host: "smtp.gmail.com", Port: 587, User: "me@example.com", Password: "pw"},
-	})
+	st, doc := open(t, dataDir, Bootstrap{AuthEmail: "me@example.com"})
 	if doc.User.Email != "me@example.com" {
 		t.Fatalf("user email = %q", doc.User.Email)
-	}
-	if doc.SMTP == nil || doc.SMTP.Password != "pw" {
-		t.Fatalf("smtp = %+v", doc.SMTP)
 	}
 
 	// the document is on disk immediately, and it is EXACTLY the seed:
 	// no empty sections, no stray keys — nothing more, nothing less.
 	statetest.AssertEqual(t, st.Path(), map[string]any{
 		"user": map[string]any{"email": "me@example.com"},
-		"smtp": map[string]any{
-			"host":     "smtp.gmail.com",
-			"port":     587,
-			"user":     "me@example.com",
-			"password": "pw",
-		},
 	})
 }
 
@@ -56,7 +46,7 @@ func TestFreshOpenNoSeedIsEmptyFile(t *testing.T) {
 // Env-derived config only fills EMPTY fields: an existing state file wins.
 func TestSeedDoesNotOverrideExisting(t *testing.T) {
 	dataDir := t.TempDir()
-	st, _ := open(t, dataDir, Bootstrap{LoginEmail: "env@example.com"})
+	st, _ := open(t, dataDir, Bootstrap{AuthEmail: "env@example.com"})
 	if err := st.Mutate(func(doc *Document) error {
 		doc.User.Email = "state@example.com"
 		return nil
@@ -65,7 +55,7 @@ func TestSeedDoesNotOverrideExisting(t *testing.T) {
 	}
 
 	// reopen as if a second boot with different env
-	st2, doc := open(t, dataDir, Bootstrap{LoginEmail: "other@example.com"})
+	st2, doc := open(t, dataDir, Bootstrap{AuthEmail: "other@example.com"})
 	if doc.User.Email != "state@example.com" {
 		t.Fatalf("seed overrode state: %q", doc.User.Email)
 	}
@@ -74,7 +64,7 @@ func TestSeedDoesNotOverrideExisting(t *testing.T) {
 
 func TestMutatePersistsAndRollsBackOnError(t *testing.T) {
 	dataDir := t.TempDir()
-	st, doc := open(t, dataDir, Bootstrap{LoginEmail: "me@example.com"})
+	st, doc := open(t, dataDir, Bootstrap{AuthEmail: "me@example.com"})
 	if doc.Projects != nil {
 		t.Fatal("fresh document should have no projects")
 	}
@@ -114,5 +104,77 @@ func TestCorruptStateFileFailsLoudly(t *testing.T) {
 	}
 	if _, err := Open(dataDir, Bootstrap{}); err == nil {
 		t.Fatal("corrupt state.json must fail startup, not reset silently")
+	}
+}
+
+// SetPassword stores only the salted Argon2id hash (never plaintext), syncs
+// the setup email, bumps the session generation, and survives reopen — the
+// three spec invariants for the credential: hashed, versioned, durable.
+func TestSetPasswordPersistsHashAndBumpsVersion(t *testing.T) {
+	restore := auth.TestParams()
+	defer restore()
+	dataDir := t.TempDir()
+	st, _ := open(t, dataDir, Bootstrap{})
+
+	hash, err := auth.HashPassword("hunter2-super-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetPassword("owner@example.com", hash); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetPassword("owner@example.com", hash); err != nil {
+		t.Fatal(err)
+	}
+
+	var doc Document
+	st.View(func(d *Document) { doc = *d })
+	if doc.User.AuthVersion != 2 {
+		t.Fatalf("authVersion = %d, want 2 (one bump per apply)", doc.User.AuthVersion)
+	}
+	if doc.User.Email != "owner@example.com" {
+		t.Fatalf("email = %q", doc.User.Email)
+	}
+
+	// plaintext never reaches the file; only the PHC hash does
+	raw, err := os.ReadFile(st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "hunter2-super-secret") {
+		t.Fatal("plaintext password persisted in state.json")
+	}
+	if !strings.Contains(string(raw), "$argon2id$") {
+		t.Fatalf("no argon2id hash in state.json:\n%s", raw)
+	}
+
+	// durable: a reopen (restart) still verifies against the same hash
+	st2, _ := open(t, dataDir, Bootstrap{})
+	var doc2 Document
+	st2.View(func(d *Document) { doc2 = *d })
+	if doc2.User.PasswordHash != hash {
+		t.Fatal("password hash did not survive reopen")
+	}
+}
+
+// The data dir holds the credential: owner-only, even when it already
+// existed with looser bits.
+func TestOpenEnforcesDirPermissions(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(dataDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dataDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(dataDir, Bootstrap{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("data dir perms = %o, want 700", info.Mode().Perm())
 	}
 }

@@ -1,6 +1,8 @@
 {
   "user": {
-    "email": "dev@example.com"
+    "email": "dev@example.com",
+    "passwordHash": "$argon2id$v=19$m=65536,t=3,p=4$oW2P1Q6/D8l9IB7Wie3fjA$DZTz8Gp3Zb+NP1Q6HqhxnEUzj54DZsfypRy+4pdaLl8",
+    "authVersion": 1
   },
   "serverKey": {
     "privateKey": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACAa7v3V96xCjvvdD8aafvirS/o2QvxaqefDa7qQiXJvSwAAAJjSSUWi0klF\nogAAAAtzc2gtZWQyNTUxOQAAACAa7v3V96xCjvvdD8aafvirS/o2QvxaqefDa7qQiXJvSw\nAAAEBOVJXIsoU5WOY8ReKc0p3B1gok1nn5pIRhMUSJZV0IVhru/dX3rEKO+90Pxpp++KtL\n+jZC/Fqp58NrupCJcm9LAAAADnBjb2Rlci1maXh0dXJlAQIDBAUGBw==\n-----END OPENSSH PRIVATE KEY-----\n",

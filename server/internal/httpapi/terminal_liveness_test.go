@@ -35,7 +35,7 @@ func waitForDetach(t *testing.T, d Deps) {
 // bridge that couples ws framing to pipe writes parks its only reader inside
 // the write and never notices the session ending.
 func TestTerminalUnwindsWhenSessionEndsWithInputInFlight(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
@@ -58,7 +58,7 @@ func TestTerminalUnwindsWhenSessionEndsWithInputInFlight(t *testing.T) {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
-	conn := dialWS(t, srv, wsURL(srv, "abc", "main"), loginCookie(t, h, pinOut))
+	conn := dialWS(t, srv, wsURL(srv, "abc", "main"), loginCookie(t, h))
 	sendRaw(t, conn, `{"type":"input","data":"a"}`)
 	time.Sleep(100 * time.Millisecond)              // "a" consumed; the pty now stalls before exiting
 	sendRaw(t, conn, `{"type":"input","data":"b"}`) // in flight when the session ends
@@ -70,7 +70,7 @@ func TestTerminalUnwindsWhenSessionEndsWithInputInFlight(t *testing.T) {
 // and then vanishes (tab close). The bridge must unwind on the client going
 // away instead of waiting for a session that will never end.
 func TestTerminalUnwindsWhenClientVanishesOnStalledPty(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
@@ -93,7 +93,7 @@ func TestTerminalUnwindsWhenClientVanishesOnStalledPty(t *testing.T) {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
-	conn := dialWS(t, srv, wsURL(srv, "abc", "main"), loginCookie(t, h, pinOut))
+	conn := dialWS(t, srv, wsURL(srv, "abc", "main"), loginCookie(t, h))
 	sendRaw(t, conn, `{"type":"input","data":"a"}`) // consumed
 	time.Sleep(100 * time.Millisecond)
 	sendRaw(t, conn, `{"type":"input","data":"b"}`) // nobody reads this one

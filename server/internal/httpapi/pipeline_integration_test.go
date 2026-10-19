@@ -19,7 +19,6 @@ import (
 	"strings"
 	"testing"
 
-	"pcoder/internal/auth"
 	"pcoder/internal/docker"
 	"pcoder/internal/events"
 	"pcoder/internal/project"
@@ -27,8 +26,8 @@ import (
 )
 
 func TestProjectPipelineLifecycle(t *testing.T) {
-	h, dkr, svc, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
+	h, dkr, svc, _, _ := newLiveDeps(t)
+	cookie := login(t, h)
 	url := fixtureRepo(t).URL
 
 	// create → 201 with the exact metadata echo, running, clone present.
@@ -93,8 +92,8 @@ func TestProjectPipelineLifecycle(t *testing.T) {
 }
 
 func TestCreateValidationLive(t *testing.T) {
-	h, dkr, _, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
+	h, dkr, _, _, _ := newLiveDeps(t)
+	cookie := login(t, h)
 
 	// blank URLs are refused before Docker (non-GitHub rejection is
 	// covered by unit tests — the live hatch allows local fixtures)
@@ -136,8 +135,8 @@ func TestCreateValidationLive(t *testing.T) {
 // hasEvent reports whether the event log contains a type with matching id.
 
 func TestProjectBranchPinning(t *testing.T) {
-	h, dkr, _, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
+	h, dkr, _, _, _ := newLiveDeps(t)
+	cookie := login(t, h)
 	url := fixtureRepo(t).URL
 
 	id, _ := createTestProject(t, h, cookie, url, "dev")
@@ -150,8 +149,8 @@ func TestProjectBranchPinning(t *testing.T) {
 }
 
 func TestCloneFailureLiveKeepsProjectAndLogsError(t *testing.T) {
-	h, _, svc, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
+	h, _, svc, _, _ := newLiveDeps(t)
+	cookie := login(t, h)
 
 	// port 1 on the gateway: connection refused, deterministic failure.
 	// The project survives per design, so we have to clean it up ourselves
@@ -200,8 +199,8 @@ func TestCloneFailureLiveKeepsProjectAndLogsError(t *testing.T) {
 }
 
 func TestCreateRejectsBadInputBeforeDocker(t *testing.T) {
-	h, _, svc, pinOut, _, _ := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
+	h, _, svc, _, _ := newLiveDeps(t)
+	cookie := login(t, h)
 
 	for _, bad := range []string{
 		`{"repoUrl":"--upload-pack=evil"}`,
@@ -220,8 +219,8 @@ func TestCreateRejectsBadInputBeforeDocker(t *testing.T) {
 }
 
 func TestProjectIsolationAndRestartSurvival(t *testing.T) {
-	h, _, _, pinOut, _, st := newLiveDeps(t)
-	cookie := login(t, h, pinOut)
+	h, _, _, _, st := newLiveDeps(t)
+	cookie := login(t, h)
 
 	// one repo is one project: two distinct fixture repos, both tracked
 	// by the helper and surviving any single cleanup racing the next create.
@@ -270,8 +269,7 @@ func TestProjectIsolationAndRestartSurvival(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ev2.Close()
-	var pinOut2 bytes.Buffer
-	auth2 := auth.New("me@example.com", []byte(testSecret), auth.ConsoleMailer{Out: &pinOut2})
+	auth2 := testAuthService()
 	lc2 := testutil.NewLifecycle(t)
 	h2 := New(Deps{Events: ev2, Version: "itest", Auth: auth2,
 		Projects: project.NewService(project.Open(st), lc2.Docker())})

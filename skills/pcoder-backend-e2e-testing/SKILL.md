@@ -51,7 +51,7 @@ TOKEN="<JWT from your browser's pcoder_session cookie>"
 curl -b "pcoder_session=$TOKEN" http://127.0.0.1:8977/api/projects
 ```
 
-Getting a token if you don't have one: POST `/api/auth/request-pin` with `{"email":"<state.json user.email>"}`. Without SMTP configured, the PIN prints to the server's **stderr** (ConsoleMailer) — read it from the server log. Then POST `/api/auth/verify` `{"email","pin"}`; the response sets the cookie.
+Getting a token if you don't have one: POST `/api/auth/login` with `{"email":"<state.json user.email>","password":"<plaintext for user.passwordHash>"}`; the response sets the session cookie. Seeded stacks use the hash in `test/state.mock.json` (password `dev-password-12345`).
 
 Other things that 404/401 confusingly:
 - `/` has no route. A bare GET returns Go's `404 page not found` — that does NOT mean the server is dead. Probe `/api/projects`.

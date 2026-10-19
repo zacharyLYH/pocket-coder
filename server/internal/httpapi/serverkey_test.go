@@ -30,7 +30,7 @@ func TestParseProbeResult(t *testing.T) {
 // authed user, a rejected key 502 with the fix, a missing keypair 409.
 // The probe itself is stubbed — no network in unit tests.
 func TestServerKeyTestHandler(t *testing.T) {
-	d, _, pinOut, st := newProjectDeps(t)
+	d, _, st := newProjectDeps(t)
 	d.SSHKeys = sshkeys.New(st)
 	if err := st.Mutate(func(doc *state.Document) error {
 		doc.ServerKey = &state.ServerSSHKey{PublicKey: "ssh-ed25519 AAAA", Fingerprint: "SHA256:test"}
@@ -39,7 +39,7 @@ func TestServerKeyTestHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	orig := probeGitHubSSH
 	t.Cleanup(func() { probeGitHubSSH = orig })
@@ -61,10 +61,10 @@ func TestServerKeyTestHandler(t *testing.T) {
 
 // No keypair generated yet: 409 before any probe runs.
 func TestServerKeyTestWithoutKeypair(t *testing.T) {
-	d, _, pinOut, st := newProjectDeps(t)
+	d, _, st := newProjectDeps(t)
 	d.SSHKeys = sshkeys.New(st)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	rec := authedPost(t, h, cookie, "/api/ssh/test", "")
 	if rec.Code != http.StatusConflict {

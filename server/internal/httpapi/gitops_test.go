@@ -28,19 +28,6 @@ func gitCmd(sub string) any {
 	})
 }
 
-func gitopsSetup(t *testing.T) (Deps, *http.Cookie, http.Handler) {
-	t.Helper()
-	d, md, pinOut, dataDir := newSessionDeps(t)
-	seedProject(t, dataDir, "abc")
-	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
-	// RepoTarget: no clone at /workspace/repo, so the repo dir is /workspace.
-	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
-		Return(docker.ExecResult{ExitCode: 1}, nil).Maybe()
-	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
-	return d, cookie, h
-}
-
 // isGitAuthError unit probe: SSH transport must map to the rot signal.
 // firstLine stays rune-safe on multi-byte probe output.
 func TestIsGitAuthErrorSSH(t *testing.T) {
@@ -69,7 +56,7 @@ func TestFirstLineRuneSafe(t *testing.T) {
 }
 
 func TestGitCommitNothingToCommit(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
@@ -84,7 +71,7 @@ func TestGitCommitNothingToCommit(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 1, Output: "nothing staged to commit"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/git/commit", `{"message":"test"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("commit with nothing staged: got %d %q, want 400", rec.Code, rec.Body)
@@ -92,7 +79,7 @@ func TestGitCommitNothingToCommit(t *testing.T) {
 }
 
 func TestGitCommitIdentityUnset(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
@@ -105,7 +92,7 @@ func TestGitCommitIdentityUnset(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 128, Output: "Author identity unknown\n*** Please tell me who you are."}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/git/commit", `{"message":"test"}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("commit without identity: got %d %q, want 409", rec.Code, rec.Body)
@@ -116,7 +103,7 @@ func TestGitCommitIdentityUnset(t *testing.T) {
 }
 
 func TestGitCommitSuccess(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
@@ -135,7 +122,7 @@ func TestGitCommitSuccess(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "main\n"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/git/commit", `{"message":`+quoteJSON(t, msg)+`}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("commit: got %d %q, want 200", rec.Code, rec.Body)
@@ -146,7 +133,7 @@ func TestGitCommitSuccess(t *testing.T) {
 }
 
 func TestGitIdentityEndpoints(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
@@ -159,7 +146,7 @@ func TestGitIdentityEndpoints(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "z@x.io\n"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedGet(t, h, cookie, "/api/projects/abc/git/identity")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("identity get: got %d", rec.Code)
@@ -180,7 +167,7 @@ func TestGitIdentityEndpoints(t *testing.T) {
 }
 
 func TestGitPushSurfacesErrors(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
@@ -198,7 +185,7 @@ func TestGitPushSurfacesErrors(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 128, Output: "fatal: could not read Username"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/git/push", "")
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("push failure: got %d %q, want 502", rec.Code, rec.Body)
@@ -213,7 +200,7 @@ func TestGitPushSurfacesErrors(t *testing.T) {
 }
 
 func TestGitSwitchDirtyTree(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
@@ -228,7 +215,7 @@ func TestGitSwitchDirtyTree(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "DIRTY-BEGIN\n M notes.txt\n"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/git/switch", `{"branch":"other"}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("dirty switch: got %d %q, want 409", rec.Code, rec.Body)
@@ -239,7 +226,7 @@ func TestGitSwitchDirtyTree(t *testing.T) {
 }
 
 func TestGitSwitchUntrackedOnlySucceeds(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
@@ -258,7 +245,7 @@ func TestGitSwitchUntrackedOnlySucceeds(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "Switched to branch 'other'\n"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/git/switch", `{"branch":"other"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("untracked-only switch: got %d %q, want 200", rec.Code, rec.Body)
@@ -266,7 +253,7 @@ func TestGitSwitchUntrackedOnlySucceeds(t *testing.T) {
 }
 
 func TestGitSwitchInvalidName(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
@@ -276,7 +263,7 @@ func TestGitSwitchInvalidName(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 1, Output: "fatal: not a valid ref"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/git/switch", `{"branch":"-evil"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid branch name: got %d, want 400", rec.Code)
@@ -297,7 +284,7 @@ func quoteJSON(t *testing.T, s string) string {
 // slot reports the running thread, and the detached run completes the
 // turn (persisted via the store) after the HTTP response is long gone.
 func TestGitExplainFireAndForget(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	seedProject(t, st, "abc")
 	// The explainer runs the full codemap loop: one grounded tool round,
 	// a final text answer, then the schema-enforcing format call.
@@ -331,7 +318,7 @@ func TestGitExplainFireAndForget(t *testing.T) {
 	mockOrientation(md, "hello.txt")
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/git/explain", `{"mode":"working-tree"}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("explain: got %d %q, want 202", rec.Code, rec.Body)
@@ -412,14 +399,14 @@ func TestGitExplainFireAndForget(t *testing.T) {
 // and an unknown mode both reject before any thread reservation (zero
 // fake-model steps — any model call fails the test).
 func TestGitExplainValidation(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	fm := newFakeModel(t) // zero steps: any model call fails the test
 	seedAI(t, d.State, fm.srv.URL)
 	mockEnsure(md)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// mode=commit without a sha → 400 before any thread is reserved.
 	rec := authedPost(t, h, cookie, "/api/projects/abc/git/explain", `{"mode":"commit"}`)
@@ -439,7 +426,7 @@ func TestGitExplainValidation(t *testing.T) {
 // the slot, which also proves a failed fire-and-forget turn stays
 // retryable and cannot wedge the busy slot forever.
 func TestGitExplainBusy(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "model down", http.StatusInternalServerError)
@@ -454,7 +441,7 @@ func TestGitExplainBusy(t *testing.T) {
 	mockOrientation(md, "hello.txt")
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/git/explain", `{"mode":"working-tree"}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("first explain: got %d %q, want 202", rec.Code, rec.Body)
@@ -492,7 +479,7 @@ func TestGitExplainBusy(t *testing.T) {
 // TestGitStatusUpstream pins the upstream + unborn fields Push gating
 // reads: upstream present with counts (or null), unborn false here.
 func TestGitStatusUpstream(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"test", "-d", "/workspace/repo/.git"}, false).
@@ -513,7 +500,7 @@ func TestGitStatusUpstream(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "0\n"}, nil).Maybe()
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedGet(t, h, cookie, "/api/projects/abc/git/status")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d %q, want 200", rec.Code, rec.Body)

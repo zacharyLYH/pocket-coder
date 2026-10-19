@@ -1,6 +1,8 @@
 # Dev stack. Boots the Go server and the Vite dev server proxying /api and
-# /ws to it. Dev credentials come from server/.env only (PIN recipient +
-# SMTP_*); the server itself loads the same file via config.Load.
+# /ws to it. Dev credentials come from server/.env only (account email);
+# the server itself loads the same file via config.Load. The data dir is
+# bind-mounted from server/data so `make dev-seed` (host-side) rewrites the
+# same state.json the container boots from.
 #
 #   docker compose -f docker-compose.dev.yml up
 #   curl http://localhost:8080/health
@@ -18,7 +20,7 @@ services:
       PCODER_DOCKER_SOCK: unix:///var/run/docker.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - pcoder-data:/data
+      - ./server/data:/data
     ports:
       - "8080:8080"
     networks:
@@ -40,7 +42,6 @@ services:
       - server
 
 volumes:
-  pcoder-data:
   web-node-modules:
 
 networks:

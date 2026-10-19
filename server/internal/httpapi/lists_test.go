@@ -12,7 +12,7 @@ import (
 )
 
 func TestAIModelsCRUDRedacted(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	d.State = mustOpenState(t)
 	probe := func(w http.ResponseWriter, _ map[string]any) {
 		writeCompletion(w, "stop", `{"ok":true}`, nil)
@@ -22,7 +22,7 @@ func TestAIModelsCRUDRedacted(t *testing.T) {
 	// must not probe, so they cost nothing here.
 	f := newFakeModel(t, probe, probe, probe, probe, probe)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// Empty list.
 	rec := authedGet(t, h, cookie, "/api/ai/models")
@@ -134,14 +134,14 @@ func TestAIModelsCRUDRedacted(t *testing.T) {
 // Duplicates are allowed in v1: each entry stands alone and the list
 // head wins, so creating the same model twice yields two rows.
 func TestAIModelsAllowDuplicates(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	d.State = mustOpenState(t)
 	probe := func(w http.ResponseWriter, _ map[string]any) {
 		writeCompletion(w, "stop", `{"ok":true}`, nil)
 	}
 	f := newFakeModel(t, probe, probe)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	body := `{"label":"m","baseURL":` + strconv.Quote(f.srv.URL) + `,"apiKey":"k","model":"m"}`
 	for i := 0; i < 2; i++ {
 		if rec := authedPost(t, h, cookie, "/api/ai/models", body); rec.Code != http.StatusCreated {
@@ -163,7 +163,7 @@ func TestAIModelsAllowDuplicates(t *testing.T) {
 // A delete that cannot persist must 500 — reporting ok while the entry
 // lies about the outcome.
 func TestDeletePersistsOrFails(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	st := mustOpenState(t)
 	d.State = st
 	if err := st.Mutate(func(doc *state.Document) error {
@@ -181,7 +181,7 @@ func TestDeletePersistsOrFails(t *testing.T) {
 	t.Cleanup(func() { _ = os.Remove(st.Path() + ".tmp") })
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/ai/models/m1")
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("ai delete with failed save: got %d, want 500", rec.Code)
@@ -202,7 +202,7 @@ func TestDeletePersistsOrFails(t *testing.T) {
 }
 
 func TestServerKeyShowAndRegen(t *testing.T) {
-	d, _, pinOut, _ := newSessionDeps(t)
+	d, _, _ := newSessionDeps(t)
 	if d.SSHKeys == nil {
 		t.Fatal("no ssh store in deps")
 	}
@@ -211,7 +211,7 @@ func TestServerKeyShowAndRegen(t *testing.T) {
 		t.Skipf("ssh-keygen unavailable: %v", err)
 	}
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// Show: public half only, never the private half.
 	rec := authedGet(t, h, cookie, "/api/ssh")

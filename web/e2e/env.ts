@@ -4,7 +4,7 @@
 // under test-results/) or as several PARALLEL processes, one per test type
 // (see e2e-parallel.sh). Each process gets its own ports AND its own
 // test-results subdirectory (E2E_RUN_ID) because everything under it —
-// the wiped data dir, the server log the PIN is read from, the saved auth
+// the wiped data dir, the saved auth
 // state — is per-run state that parallel processes must not share.
 
 function intEnv(name: string, def: number): number {
@@ -35,9 +35,12 @@ export const API_PORT = intEnv('E2E_API_PORT', 8081)
 export const WEB_PORT = intEnv('E2E_WEB_PORT', 5174)
 
 // The one login identity every e2e account uses (the compose stack pins
-// PCODER_LOGIN_EMAIL to match). Lives here so the seeder factory and the
-// login helpers can't drift apart.
+// PCODER_AUTH_EMAIL to match). Lives here so the seeder factory and the
+// login helpers can't drift apart. The password pairs with the Argon2id
+// hash in test/state.mock.json (seed carries the hash; this is its
+// plaintext twin for the login form).
 export const LOGIN_EMAIL = 'me@example.com'
+export const LOGIN_PASSWORD = 'dev-password-12345'
 
 // Host port of the per-run git daemon (see global-setup.ts). Each parallel
 // group gets its own daemon + port via E2E_GIT_PORT, so fixture repo URLs

@@ -53,11 +53,11 @@ func cachedSession(t *testing.T, projectID string) *cdpSession {
 }
 
 func TestPreviewCloseEvictsCDPSession(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	m := preview.NewManager(previewTestFactory{ep: privatePreviewEndpoint})
 	d.Preview = m
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	seedCacheSession(t, "p1")
 	if cachedSession(t, "p1") == nil {
@@ -73,11 +73,11 @@ func TestPreviewCloseEvictsCDPSession(t *testing.T) {
 }
 
 func TestProjectStopEvictsCDPSession(t *testing.T) {
-	d, md, pinOut, _ := newProjectDeps(t)
+	d, md, _ := newProjectDeps(t)
 	d.Sessions = session.New(md)
 	d.Preview = preview.NewManager(previewTestFactory{ep: privatePreviewEndpoint})
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	md.EXPECT().EnsureNetwork(mock.Anything, docker.DefaultNetwork).Return(nil)
 	md.EXPECT().InspectImage(mock.Anything, mock.Anything).Return(nil)

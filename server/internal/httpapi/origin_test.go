@@ -75,7 +75,7 @@ func TestOrigin_AllowsSameOrigin(t *testing.T) {
 
 func TestOrigin_AllowsMissingOrigin(t *testing.T) {
 	// curl, health probes, native clients send no Origin.
-	rec := guardedRequest("POST", "https://app.example.com/api/auth/verify",
+	rec := guardedRequest("POST", "https://app.example.com/api/auth/login",
 		"app.example.com", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("missing origin: got %d, want 200", rec.Code)

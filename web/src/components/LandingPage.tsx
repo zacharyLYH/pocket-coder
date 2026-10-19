@@ -10,7 +10,6 @@ import {
   BIO_URL,
   GITHUB_KEYS_URL,
   GITHUB_URL,
-  GMAIL_GUIDE_URL,
   LINKEDIN_URL,
   buildSetupCommand,
 } from '@/lib/site'
@@ -55,7 +54,7 @@ export function LandingPage({ onLogin, loggedIn }: { onLogin: () => void; logged
               <ul className="flex list-disc flex-col gap-1 pl-5">
                 <li>A domain you control</li>
                 <li>A Linux box with at least 4 GB RAM and port 8080 open</li>
-                <li>A Gmail address for the login PIN</li>
+                <li>An email address and password for your login account</li>
               </ul>
             </CardContent>
           </Card>
@@ -76,18 +75,13 @@ export function LandingPage({ onLogin, loggedIn }: { onLogin: () => void; logged
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">2. Get a Gmail app password</CardTitle>
+              <CardTitle className="text-base">2. Choose your account</CardTitle>
               <CardDescription>
-                Pocket Coder emails you a login PIN, so it needs SMTP first.
+                One email + password per instance. The email is just the
+                account name — no email is ever sent. Rerunning setup with a
+                new password rotates it.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <Button variant="outline" asChild>
-                <a href={GMAIL_GUIDE_URL} className='underline text-blue-500' target="_blank" rel="noreferrer">
-                  Open the Gmail app-password guide
-                </a>
-              </Button>
-            </CardContent>
           </Card>
 
           <SetupBuilder />
@@ -99,9 +93,9 @@ export function LandingPage({ onLogin, loggedIn }: { onLogin: () => void; logged
               <CardTitle className="text-base">5. Log in</CardTitle>
               <CardDescription>
                 {host === '' ? (
-                  <>Open http://your-box:8080/login, enter your email, and type the PIN that arrives by inbox.</>
+                  <>Open http://your-box:8080/login and sign in with the email and password you set above.</>
                 ) : (
-                  <>Open <a href={loginUrl} target="_blank" rel="noreferrer" className="underline text-blue-500">{loginUrl}</a>, enter your email, and type the PIN that arrives by inbox.</>
+                  <>Open <a href={loginUrl} target="_blank" rel="noreferrer" className="underline text-blue-500">{loginUrl}</a> and sign in with the email and password you set above.</>
                 )}
               </CardDescription>
             </CardHeader>
@@ -198,12 +192,12 @@ function StarButton() {
   )
 }
 
-// SetupBuilder is pure client state: type your email and app password and
+// SetupBuilder is pure client state: type your email and login password and
 // it fills in the installer command. Nothing leaves the browser.
 function SetupBuilder() {
   const [email, setEmail] = useState('')
-  const [smtpPassword, setSmtpPassword] = useState('')
-  const command = buildSetupCommand(email, smtpPassword)
+  const [password, setPassword] = useState('')
+  const command = buildSetupCommand(email, password)
   // Placeholders render a plausible-but-broken command: keep copy
   // disabled until both fields hold something real.
 
@@ -218,29 +212,29 @@ function SetupBuilder() {
       <CardContent className="flex flex-col gap-3">
         <div className="grid gap-3 md:grid-cols-2">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="landing-email">Gmail address</Label>
+            <Label htmlFor="landing-email">Account email</Label>
             <Input
               id="landing-email"
               type="email"
               autoComplete="email"
-              placeholder="you@gmail.com"
+              placeholder="you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="landing-smtp">App password</Label>
+            <Label htmlFor="landing-password">Login password</Label>
             <Input
-              id="landing-smtp"
+              id="landing-password"
               type="password"
-              autoComplete="off"
-              placeholder="xxxx xxxx xxxx xxxx"
-              value={smtpPassword}
-              onChange={(e) => setSmtpPassword(e.target.value)}
+              autoComplete="new-password"
+              placeholder="at least 8 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
             />
           </div>
         </div>
-        <CopyBlock text={command} disabled={email.trim() === '' || smtpPassword === ''} />
+        <CopyBlock text={command} disabled={email.trim() === '' || password === ''} />
         <p className="text-sm text-muted-foreground">
           Tip: from the box itself, <Code>curl http://localhost:8080/health</Code> should
           answer <Code>{"{\"status\":\"ok\"}"}</Code>.

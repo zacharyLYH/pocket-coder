@@ -28,7 +28,7 @@ import (
 // newSessionDeps and seedProject live in httpapi_test.go (shared fixtures).
 
 func TestSessionsRequireAuth(t *testing.T) {
-	d, _, _, dataDir := newSessionDeps(t)
+	d, _, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	h := New(d)
 	if rec := get(t, h, "/api/projects/abc/sessions"); rec.Code != http.StatusUnauthorized {
@@ -47,7 +47,7 @@ func TestSessionsRequireAuth(t *testing.T) {
 }
 
 func TestCreateSessionLifecycle(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
@@ -55,7 +55,7 @@ func TestCreateSessionLifecycle(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 1, Output: "no server running on /tmp/tmux-0/default"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// an empty list is [] (not null) — the frontend iterates it directly
 	rec := authedGet(t, h, cookie, "/api/projects/abc/sessions")
@@ -105,9 +105,9 @@ func TestCreateSessionLifecycle(t *testing.T) {
 }
 
 func TestCreateSessionGhostProject404(t *testing.T) {
-	d, _, pinOut, _ := newSessionDeps(t)
+	d, _, _ := newSessionDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/ghost/sessions", `{"name":"main"}`)
 	want := "{\"error\":\"no such project\"}\n"
 	if rec.Code != http.StatusNotFound || rec.Body.String() != want {
@@ -117,10 +117,10 @@ func TestCreateSessionGhostProject404(t *testing.T) {
 
 // Terminal pre-flight happens before the upgrade, so failures are plain HTTP.
 func TestTerminalPreflight(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	wsGet := func(path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -159,7 +159,7 @@ func TestTerminalPreflight(t *testing.T) {
 // relaunches a harness session from state.json when it's missing from tmux
 // (e.g. after container rebuild), so the attach proceeds instead of 404.
 func TestTerminalRelaunchesHarnessFromState(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	// Register the harness as installed in this project
@@ -177,7 +177,7 @@ func TestTerminalRelaunchesHarnessFromState(t *testing.T) {
 	expectLaunchNamed(md, "abc", "helper-1")
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// wsGet can't be used here: LaunchNamed does WebSocket attach prep that
 	// needs more mocking, so dial manually and check for a non-404 response.
@@ -197,7 +197,7 @@ func TestTerminalRelaunchesHarnessFromState(t *testing.T) {
 // state.json sessions missing from tmux (e.g. after a container rebuild), so
 // the user can re-enter and trigger the relaunch path.
 func TestListSessionsIncludesStateJSONEntries(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	// Record a harness session in state.json that's NOT in tmux
@@ -210,7 +210,7 @@ func TestListSessionsIncludesStateJSONEntries(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "live-session\n"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedGet(t, h, cookie, "/api/projects/abc/sessions")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: got %d %q, want 200", rec.Code, rec.Body)
@@ -237,7 +237,7 @@ func TestListSessionsIncludesStateJSONEntries(t *testing.T) {
 // (POST /sessions with just a name) detects a dead tmux session and
 // relaunches the harness it was running.
 func TestEnsureRelaunchesDeadHarnessSession(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	// Register the harness as installed in this project
@@ -263,7 +263,7 @@ func TestEnsureRelaunchesDeadHarnessSession(t *testing.T) {
 	expectLaunchNamed(md, "abc", "fake-1")
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"fake-1"}`)
 	if rec.Code != http.StatusOK {
@@ -285,7 +285,7 @@ func TestEnsureRelaunchesDeadHarnessSession(t *testing.T) {
 // back to a plain shell and clears stale metadata when the recorded harness
 // no longer exists — otherwise re-entry keeps trying to relaunch it.
 func TestEnsureFallsBackToShellWhenHarnessGone(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	// Record a session that uses the "fake" harness
@@ -303,7 +303,7 @@ func TestEnsureFallsBackToShellWhenHarnessGone(t *testing.T) {
 	expectShellCreate(md, "abc", "gone-1")
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"gone-1"}`)
 	if rec.Code != http.StatusCreated {
@@ -322,7 +322,7 @@ func TestEnsureFallsBackToShellWhenHarnessGone(t *testing.T) {
 // in state.json; without it, restart would fall back to ParseBase and
 // guess a harness from the name prefix.
 func TestRestartPlainShellDoesNotLaunchHarness(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	// Create a plain shell named "opencode-1" — this must record empty
@@ -334,7 +334,7 @@ func TestRestartPlainShellDoesNotLaunchHarness(t *testing.T) {
 	expectShellCreate(md, "abc", "opencode-1")
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// Create the plain shell
 	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"opencode-1","create":true}`)
@@ -369,7 +369,7 @@ func TestRestartPlainShellDoesNotLaunchHarness(t *testing.T) {
 // echoed back as output frames, resize reaches ResizeTTY, and quitting ends
 // with an exit frame carrying the real code.
 func TestTerminalRoundTrip(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	resized := make(chan [2]int, 8)
@@ -414,7 +414,7 @@ func TestTerminalRoundTrip(t *testing.T) {
 	t.Cleanup(srv.Close)
 	url := wsURL(srv, "abc", "main")
 
-	conn := dialWS(t, srv, url, loginCookie(t, h, pinOut))
+	conn := dialWS(t, srv, url, loginCookie(t, h))
 	defer conn.Close()
 
 	send := func(f wsIn) {
@@ -488,7 +488,7 @@ func TestTerminalRoundTrip(t *testing.T) {
 // browser vanishes mid-session: the attach sees EOF, the handler returns,
 // and the detach event still lands.
 func TestTerminalSurvivesAbruptClientDrop(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	attachEnded := make(chan struct{})
@@ -511,7 +511,7 @@ func TestTerminalSurvivesAbruptClientDrop(t *testing.T) {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(srv, "abc", "main"),
 		http.Header{"Cookie": []string{cookie.Name + "=" + cookie.Value}})
 	if err != nil {
@@ -632,13 +632,13 @@ func expectLaunch(md *dockermocks.MockClient, id, name string) {
 }
 
 func TestCreateHarnessSession(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	expectLaunch(md, "abc", "fake-1")
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"harnessId":"fake"}`)
 	want := "{\"harness\":\"fake\",\"name\":\"fake-1\"}\n"
@@ -668,13 +668,13 @@ func TestCreateHarnessSession(t *testing.T) {
 // test pre-records the install in setup, which is exactly how the gap went
 // unnoticed: nothing asserted the launch→record link itself.
 func TestHarnessLaunchRecordsInstall(t *testing.T) {
-	d, md, pinOut, st := newSessionDeps(t)
+	d, md, st := newSessionDeps(t)
 	seedProject(t, st, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	expectLaunch(md, "abc", "fake-1")
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// No install call and no RecordInstall in setup: the binary is simply
 	// present (the mock's `command -v` succeeds).
@@ -692,11 +692,11 @@ func TestHarnessLaunchRecordsInstall(t *testing.T) {
 }
 
 func TestCreateHarnessSessionUnknownHarness404(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"harnessId":"ghost"}`)
 	want := `{"error":"no such harness \"ghost\""}`
@@ -706,7 +706,7 @@ func TestCreateHarnessSessionUnknownHarness404(t *testing.T) {
 }
 
 func TestCreateHarnessSessionNotACLI422(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	// a command that exists but prints nothing and exits: not a CLI
@@ -728,7 +728,7 @@ func TestCreateHarnessSessionNotACLI422(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: ""}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"harnessId":"broken"}`)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422", rec.Code)
@@ -749,7 +749,7 @@ func TestCreateHarnessSessionNotACLI422(t *testing.T) {
 // after a bare harness id ("fake", no -<n> suffix) restarts as that harness,
 // not as a plain shell.
 func TestRestartBareHarnessNameRelaunchesHarness(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	// A session named after the bare harness id "fake" (no -<n> suffix):
@@ -761,7 +761,7 @@ func TestRestartBareHarnessNameRelaunchesHarness(t *testing.T) {
 	expectLaunchNamed(md, "abc", "fake")
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions/fake/restart", "")
 	if rec.Code != http.StatusOK || rec.Body.String() != "{\"name\":\"fake\"}\n" {
 		t.Fatalf("restart bare harness name: got %d %q, want 200 {\"name\":\"fake\"}", rec.Code, rec.Body)
@@ -769,7 +769,7 @@ func TestRestartBareHarnessNameRelaunchesHarness(t *testing.T) {
 } // TestCreateThenListSessions pins the picker's list after creating a shell
 // session and a harness session: exactly the two expected names.
 func TestCreateThenListSessions(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
 
@@ -785,7 +785,7 @@ func TestCreateThenListSessions(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0, Output: "fake-1\nwork\n"}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	if rec := authedPost(t, h, cookie, "/api/projects/abc/sessions", `{"name":"work","create":true}`); rec.Code != http.StatusCreated {
 		t.Fatalf("shell create: got %d %q, want 201", rec.Code, rec.Body)
@@ -818,7 +818,7 @@ func TestCreateThenListSessions(t *testing.T) {
 // session is killed AND its state.json metadata is removed, unlike plain
 // kill which keeps metadata to enable one-click relaunch.
 func TestDeleteSessionRemovesStateMetadata(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	// Record metadata as a harness session — the strongest case: delete must
@@ -837,7 +837,7 @@ func TestDeleteSessionRemovesStateMetadata(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc/sessions/victim/delete")
 	if rec.Code != http.StatusOK || rec.Body.String() != "{\"ok\":true}\n" {
@@ -866,7 +866,7 @@ func TestDeleteSessionRemovesStateMetadata(t *testing.T) {
 // TestDeleteSessionKeepsOtherSessionsMetadata proves delete is scoped to the
 // named session only.
 func TestDeleteSessionKeepsOtherSessionsMetadata(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	_ = d.Projects.RecordSession("abc", "keep-me", "fake")
@@ -883,7 +883,7 @@ func TestDeleteSessionKeepsOtherSessionsMetadata(t *testing.T) {
 		Return(docker.ExecResult{ExitCode: 0}, nil)
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc/sessions/drop-me/delete")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delete: got %d %q", rec.Code, rec.Body)
@@ -897,7 +897,7 @@ func TestDeleteSessionKeepsOtherSessionsMetadata(t *testing.T) {
 }
 
 func TestKillAndRestartSessions(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	killed := 0
@@ -910,7 +910,7 @@ func TestKillAndRestartSessions(t *testing.T) {
 		})
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	// kill
 	rec := authedRequest(t, h, cookie, http.MethodDelete, "/api/projects/abc/sessions/main")
@@ -931,7 +931,7 @@ func TestKillAndRestartSessions(t *testing.T) {
 }
 
 func TestRestartHarnessSessionSameName(t *testing.T) {
-	d, md, pinOut, dataDir := newSessionDeps(t)
+	d, md, dataDir := newSessionDeps(t)
 	seedProject(t, dataDir, "abc")
 
 	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil)
@@ -941,7 +941,7 @@ func TestRestartHarnessSessionSameName(t *testing.T) {
 	expectLaunchNamed(md, "abc", "fake-1")
 
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 	rec := authedPost(t, h, cookie, "/api/projects/abc/sessions/fake-1/restart", "")
 	want := "{\"name\":\"fake-1\"}\n"
 	if rec.Code != http.StatusOK || rec.Body.String() != want {

@@ -79,7 +79,7 @@ func ensureProject(d Deps, w http.ResponseWriter, r *http.Request) (string, bool
 // the other down.
 func handleTerminal(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, name := r.PathValue("id"), r.PathValue("name")
+		name := r.PathValue("name")
 		var err error
 		defer obsFailAt(r, obs.TerminalAttach, "terminal attach failed", &err, map[string]any{"session": name})()
 		ctx, cancel := context.WithCancel(r.Context())
@@ -91,8 +91,8 @@ func handleTerminal(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		var ok bool
-		if id, ok = ensureProject(d, w, r); !ok {
+		id, ok := ensureProject(d, w, r)
+		if !ok {
 			err = errors.New("project container not running")
 			return
 		}
@@ -338,7 +338,6 @@ func handleListSessions(d Deps) http.HandlerFunc {
 
 func handleCreateSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
 		var err error
 		defer obsFailAt(r, obs.SessionCreate, "create session failed", &err, nil)()
 		// created writes the success response. The obs detail line is
@@ -369,8 +368,8 @@ func handleCreateSession(d Deps) http.HandlerFunc {
 		if !decodeBody(w, r, &body, false) {
 			return
 		}
-		var ok bool
-		if id, ok = ensureProject(d, w, r); !ok {
+		id, ok := ensureProject(d, w, r)
+		if !ok {
 			err = errors.New("project container not running")
 			return
 		}
@@ -589,7 +588,7 @@ func writeLaunchErr(w http.ResponseWriter, d Deps, id, harnessID string, err err
 
 func handleRenameSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, oldName := r.PathValue("id"), r.PathValue("name")
+		oldName := r.PathValue("name")
 		var err error
 		defer obsFailAt(r, obs.SessionRename, "rename session failed", &err, map[string]any{"from": oldName})()
 		var body struct {
@@ -608,8 +607,8 @@ func handleRenameSession(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		var ok bool
-		if id, ok = ensureProject(d, w, r); !ok {
+		id, ok := ensureProject(d, w, r)
+		if !ok {
 			err = errors.New("project container not running")
 			return
 		}
@@ -663,7 +662,7 @@ func handleRenameSession(d Deps) http.HandlerFunc {
 
 func handleInjectSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, name := r.PathValue("id"), r.PathValue("name")
+		name := r.PathValue("name")
 		var err error
 		defer obsFailAt(r, obs.SessionInject, "inject session failed", &err, map[string]any{"session": name})()
 		var body struct {
@@ -677,8 +676,8 @@ func handleInjectSession(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		var ok bool
-		if id, ok = ensureProject(d, w, r); !ok {
+		id, ok := ensureProject(d, w, r)
+		if !ok {
 			err = errors.New("project container not running")
 			return
 		}
@@ -705,11 +704,11 @@ func handleInjectSession(d Deps) http.HandlerFunc {
 // state.json is kept so re-entry can relaunch the right kind of session.
 func handleKillSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, name := r.PathValue("id"), r.PathValue("name")
+		name := r.PathValue("name")
 		var err error
 		defer obsFailAt(r, obs.SessionKill, "kill session failed", &err, map[string]any{"session": name})()
-		var ok bool
-		if id, ok = ensureProject(d, w, r); !ok {
+		id, ok := ensureProject(d, w, r)
+		if !ok {
 			err = errors.New("project container not running")
 			return
 		}
@@ -733,11 +732,11 @@ func handleKillSession(d Deps) http.HandlerFunc {
 // can represent.
 func handleDeleteSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, name := r.PathValue("id"), r.PathValue("name")
+		name := r.PathValue("name")
 		var err error
 		defer obsFailAt(r, obs.SessionDelete, "delete session failed", &err, map[string]any{"session": name})()
-		var ok bool
-		if id, ok = ensureProject(d, w, r); !ok {
+		id, ok := ensureProject(d, w, r)
+		if !ok {
 			err = errors.New("project container not running")
 			return
 		}
@@ -783,12 +782,12 @@ func handleDeleteSession(d Deps) http.HandlerFunc {
 // thing: a harness session by its <id>-<n> prefix, or a plain shell.
 func handleRestartSession(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, name := r.PathValue("id"), r.PathValue("name")
+		name := r.PathValue("name")
 		var err error
 		defer obsFailAt(r, obs.SessionRestart, "restart session failed", &err, map[string]any{"session": name})()
 		ctx := r.Context()
-		var ok bool
-		if id, ok = ensureProject(d, w, r); !ok {
+		id, ok := ensureProject(d, w, r)
+		if !ok {
 			err = errors.New("project container not running")
 			return
 		}

@@ -21,7 +21,7 @@ const (
 	butlerToolArchitecture     = "architecture"
 	butlerToolFleetHealth      = "fleet_health"
 	butlerToolSSHProbe         = "ssh_probe"
-	butlerToolSMTPStatus       = "smtp_status"
+	butlerToolAuthStatus       = "auth_status"
 	butlerToolListShortcuts    = "list_shortcuts"
 	butlerToolHarnessDetail    = "harness_detail"
 	butlerToolProjectHarnesses = "project_harnesses"
@@ -70,7 +70,7 @@ var butlerReadNames = []string{
 	butlerToolArchitecture,
 	butlerToolFleetHealth,
 	butlerToolSSHProbe,
-	butlerToolSMTPStatus,
+	butlerToolAuthStatus,
 	butlerToolListShortcuts,
 	butlerToolHarnessDetail,
 	butlerToolProjectHarnesses,

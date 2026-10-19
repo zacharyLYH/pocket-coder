@@ -1,94 +1,235 @@
-// Package auth implements the system's only login: a one-time PIN emailed to
-// the configured PCODER_LOGIN_EMAIL, exchanged for a signed JWT stored in an
-// HttpOnly cookie. Deliberately not a SaaS identity system — one email, one
-// person.
+// Package auth implements the system's only login: the per-instance email +
+// password account, verified against an Argon2id hash, exchanged for a
+// signed JWT stored in an HttpOnly cookie. Deliberately not a SaaS identity
+// system — one email, one password, one instance.
 package auth
 
 import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/binary"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/argon2"
 )
 
 // TokenTTL is how long an issued JWT stays valid.
 const TokenTTL = 7 * 24 * time.Hour
 
-// PIN lifetime and rate limits.
+// Login rate limits: per-source and per-instance rolling windows.
 const (
-	defaultPinTTL     = 10 * time.Minute
-	maxPinRequests    = 5 // per rolling window
-	rateWindow        = 15 * time.Minute
-	maxVerifyAttempts = 5
-	secretMinLength   = 32
+	maxFailsPerSource   = 10
+	maxFailsPerInstance = 50
+	rateWindow          = 15 * time.Minute
+	secretMinLength     = 32
 )
+
+// Argon2id parameters (OWASP-ish: 64 MiB, 3 passes). Tests lower them via
+// TestParams so the suite doesn't burn seconds per hash.
+var argonParams = params{time: 3, memory: 64 * 1024, threads: 4, keyLen: 32}
+
+// TestParams swaps the Argon2id parameters for fast tests, returning a
+// restore func. Hashes minted under test params verify under test params;
+// production and test hashes never mix because every suite sets this
+// before hashing.
+func TestParams() func() {
+	old := argonParams
+	argonParams = params{time: 1, memory: 1024, threads: 1, keyLen: 32}
+	return func() { argonParams = old }
+}
+
+// TestHashFor returns the Argon2id hash of TestPassword under TestParams
+// with a fixed salt, for state.json seeds and unit-test wiring that must
+// not pay a hash per construction. Never use in production.
+const TestPassword = "test-password-12345"
+
+func testSalt() []byte { return []byte("pcoder-test-salt!")[:16] }
+
+// TestHashFor returns the deterministic test hash. Callers must have set
+// TestParams first so the embedded params match.
+func TestHashFor() string {
+	return encodeHash(TestPassword, testSalt(), argonParams)
+}
+
+type params struct {
+	time    uint32
+	memory  uint32
+	threads uint8
+	keyLen  uint32
+}
 
 // CookieName is the session cookie carrying the JWT.
 const CookieName = "pcoder_session"
 
 // Errors returned by the service. Handlers map these to HTTP statuses.
 var (
-	ErrNotConfiguredEmail = errors.New("email is not the configured login email")
-	ErrInvalidPIN         = errors.New("invalid or expired pin")
+	ErrInvalidCredentials = errors.New("invalid email or password")
 	ErrRateLimited        = errors.New("too many attempts, try again later")
 )
 
-// Mailer delivers the PIN. ConsoleMailer prints to a writer (dev); SmtpMailer
-// sends via Google SMTP. Defined as an interface so it is mockable.
-type Mailer interface {
-	SendPIN(ctx context.Context, email, pin string) error
-}
-
-// Service issues and verifies PINs and JWTs for the one configured email.
+// Service verifies the one configured email + Argon2id password hash and
+// issues versioned JWTs. AuthVersion is baked into every token: applying a
+// new setup password bumps it, so tokens from before stop working.
 type Service struct {
-	email  string
-	secret []byte
-	mailer Mailer
-	// MailerName is the delivery channel in use ("console" or "smtp"), for
-	// events and logs.
-	MailerName string
-
-	now    func() time.Time
-	pinTTL time.Duration
-
-	mu       sync.Mutex
-	pins     map[string]pinRecord   // email -> current pin
-	requests map[string][]time.Time // email -> request times (rate window)
+	// email, passHash, authVersion, and secret are fixed at construction;
+	// only the failure ledger below needs the lock.
+	mu          sync.Mutex
+	email       string
+	passHash    string
+	authVersion int64
+	secret      []byte
+	fails       []failRecord
+	now         func() time.Time
 }
 
-type pinRecord struct {
-	pin      string
-	expires  time.Time
-	attempts int
+type failRecord struct {
+	at     time.Time
+	source string
 }
 
-// New returns a Service that sends PINs to email (normally PCODER_LOGIN_EMAIL)
-// and signs tokens with secret.
-func New(email string, secret []byte, mailer Mailer) *Service {
+// New returns a Service for email (already normalized) + PHC passHash.
+func New(email, passHash string, authVersion int64, secret []byte) *Service {
 	return &Service{
-		email:    email,
-		secret:   secret,
-		mailer:   mailer,
-		now:      time.Now,
-		pinTTL:   defaultPinTTL,
-		pins:     map[string]pinRecord{},
-		requests: map[string][]time.Time{},
+		email: email, passHash: passHash, authVersion: authVersion,
+		secret: secret, now: time.Now,
 	}
+}
+
+// NormalizeEmail is the single email normalization: trim + lowercase.
+// Setup and login must agree, so both go through here.
+func NormalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+// Login verifies email + password and, on success, returns a signed JWT.
+// Unknown email and wrong password return the identical generic failure;
+// password comparison always runs against a hash (a fixed dummy when the
+// email is unknown or no password is set) so failures take the same path.
+func (s *Service) Login(email, password, source string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.limitedLocked(source) {
+		return "", ErrRateLimited
+	}
+	fail := func() (string, error) {
+		s.fails = append(s.fails, failRecord{at: s.now(), source: source})
+		return "", ErrInvalidCredentials
+	}
+	if subtle.ConstantTimeCompare(
+		[]byte(NormalizeEmail(email)), []byte(s.email)) != 1 {
+		_ = verifyHash(dummyHash(), password)
+		return fail()
+	}
+	if s.passHash == "" {
+		_ = verifyHash(dummyHash(), password)
+		return fail()
+	}
+	if err := verifyHash(s.passHash, password); err != nil {
+		return fail()
+	}
+	s.clearSourceLocked(source)
+	return s.issueToken(s.email, s.authVersion)
+}
+
+func (s *Service) limitedLocked(source string) bool {
+	now := s.now()
+	kept := s.fails[:0]
+	var bySource, total int
+	for _, f := range s.fails {
+		if now.Sub(f.at) >= rateWindow {
+			continue
+		}
+		kept = append(kept, f)
+		total++
+		if f.source == source {
+			bySource++
+		}
+	}
+	s.fails = kept
+	return bySource >= maxFailsPerSource || total >= maxFailsPerInstance
+}
+
+func (s *Service) clearSourceLocked(source string) {
+	kept := s.fails[:0]
+	for _, f := range s.fails {
+		if f.source != source {
+			kept = append(kept, f)
+		}
+	}
+	s.fails = kept
+}
+
+// HashPassword hashes password with Argon2id and a fresh random salt,
+// encoded as PHC string. Plaintext never leaves the caller.
+func HashPassword(password string) (string, error) {
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return "", fmt.Errorf("generate salt: %w", err)
+	}
+	return encodeHash(password, salt, argonParams), nil
+}
+
+func encodeHash(password string, salt []byte, p params) string {
+	hash := argon2.IDKey([]byte(password), salt, p.time, p.memory, p.threads, p.keyLen)
+	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		argon2.Version, p.memory, p.time, p.threads,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(hash))
+}
+
+func verifyHash(encoded, password string) error {
+	p, salt, want, ok := decodeHash(encoded)
+	if !ok {
+		return ErrInvalidCredentials
+	}
+	got := argon2.IDKey([]byte(password), salt, p.time, p.memory, p.threads, p.keyLen)
+	if subtle.ConstantTimeCompare(got, want) != 1 {
+		return ErrInvalidCredentials
+	}
+	return nil
+}
+
+func decodeHash(encoded string) (params, []byte, []byte, bool) {
+	var p params
+	var v int
+	parts := strings.Split(encoded, "$")
+	if len(parts) != 6 || parts[1] != "argon2id" {
+		return p, nil, nil, false
+	}
+	if _, err := fmt.Sscanf(parts[2], "v=%d", &v); err != nil || v != argon2.Version {
+		return p, nil, nil, false
+	}
+	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &p.memory, &p.time, &p.threads); err != nil {
+		return p, nil, nil, false
+	}
+	salt, err1 := base64.RawStdEncoding.DecodeString(parts[4])
+	hash, err2 := base64.RawStdEncoding.DecodeString(parts[5])
+	if err1 != nil || err2 != nil || len(salt) == 0 || len(hash) == 0 {
+		return p, nil, nil, false
+	}
+	p.keyLen = uint32(len(hash))
+	return p, salt, hash, true
+}
+
+func dummyHash() string {
+	return encodeHash("pcoder-dummy-password", bytes16(), argonParams)
+}
+
+func bytes16() []byte {
+	return []byte("pcoder-dummy-salt")[:16]
 }
 
 // LoadOrCreateSecret returns the signing secret from path, generating a
 // random one (crypto/rand, 0600) and persisting it if missing or too short.
-// This is the PCODER_JWT_SECRET fallback: a hardcoded default would let anyone
-// forge tokens, so the secret is a file, not a constant.
 func LoadOrCreateSecret(path string) ([]byte, error) {
 	if raw, err := os.ReadFile(path); err == nil && len(raw) >= secretMinLength {
 		return raw, nil
@@ -106,72 +247,15 @@ func LoadOrCreateSecret(path string) ([]byte, error) {
 	return secret, nil
 }
 
-// RequestPIN sends a fresh PIN to email, rate-limited per rolling window.
-// A non-configured email gets ErrNotConfiguredEmail and nothing is sent — the
-// caller must not reveal whether an address is configured.
-func (s *Service) RequestPIN(ctx context.Context, email string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if email != s.email {
-		return ErrNotConfiguredEmail
-	}
-	now := s.now()
-	kept := s.requests[email][:0]
-	for _, t := range s.requests[email] {
-		if now.Sub(t) < rateWindow {
-			kept = append(kept, t)
-		}
-	}
-	if len(kept) >= maxPinRequests {
-		s.requests[email] = kept
-		return ErrRateLimited
-	}
-	s.requests[email] = append(kept, now)
-
-	pin, err := newPIN()
-	if err != nil {
-		return err
-	}
-	s.pins[email] = pinRecord{pin: pin, expires: now.Add(s.pinTTL)}
-	return s.mailer.SendPIN(ctx, email, pin)
-}
-
-// Verify checks a PIN and, on success, returns a signed JWT for email.
-func (s *Service) Verify(email, pin string) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if email != s.email {
-		return "", ErrInvalidPIN
-	}
-	rec, ok := s.pins[email]
-	if !ok {
-		return "", ErrInvalidPIN
-	}
-	if s.now().After(rec.expires) {
-		delete(s.pins, email)
-		return "", ErrInvalidPIN
-	}
-	if rec.attempts >= maxVerifyAttempts {
-		return "", ErrRateLimited
-	}
-	if subtle.ConstantTimeCompare([]byte(rec.pin), []byte(pin)) != 1 {
-		rec.attempts++
-		s.pins[email] = rec
-		return "", ErrInvalidPIN
-	}
-	delete(s.pins, email)
-	return s.issueToken(email)
-}
-
 type claims struct {
-	Email string `json:"sub"`
+	AuthVersion int64 `json:"ver"`
 	jwt.RegisteredClaims
 }
 
-func (s *Service) issueToken(email string) (string, error) {
+func (s *Service) issueToken(email string, version int64) (string, error) {
 	now := s.now()
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims{
-		Email: email,
+		AuthVersion: version,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   email,
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -181,7 +265,12 @@ func (s *Service) issueToken(email string) (string, error) {
 	return tok.SignedString(s.secret)
 }
 
-func (s *Service) verifyToken(token string) (string, error) {
+// IssueToken mints a token for the configured credential (tests).
+func (s *Service) IssueToken() (string, error) {
+	return s.issueToken(s.email, s.authVersion)
+}
+
+func (s *Service) verifyToken(token string) (claims, error) {
 	var c claims
 	_, err := jwt.ParseWithClaims(token, &c, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -190,14 +279,17 @@ func (s *Service) verifyToken(token string) (string, error) {
 		return s.secret, nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("invalid token: %w", err)
+		return c, fmt.Errorf("invalid token: %w", err)
 	}
-	return c.Email, nil
+	return c, nil
 }
 
 type emailKey struct{}
 
 // RequireAuth wraps next, rejecting requests without a valid session cookie.
+// Tokens must carry the current auth version and the configured email:
+// rotating the setup password bumps the version, so cookies from every
+// device stop working immediately.
 func (s *Service) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(CookieName)
@@ -205,12 +297,14 @@ func (s *Service) RequireAuth(next http.Handler) http.Handler {
 			writeUnauthorized(w)
 			return
 		}
-		email, err := s.verifyToken(c.Value)
-		if err != nil {
+		cl, verr := s.verifyToken(c.Value)
+		ok := verr == nil && cl.AuthVersion == s.authVersion &&
+			subtle.ConstantTimeCompare([]byte(cl.Subject), []byte(s.email)) == 1
+		if !ok {
 			writeUnauthorized(w)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), emailKey{}, email)))
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), emailKey{}, s.email)))
 	})
 }
 
@@ -220,7 +314,6 @@ func (s *Service) Email(r *http.Request) string {
 	return v
 }
 
-// sessionCookie builds the session cookie; maxAge < 0 expires it.
 func sessionCookie(token string, maxAge int) *http.Cookie {
 	return &http.Cookie{
 		Name:     CookieName,
@@ -253,19 +346,5 @@ func (s *Service) ClearCookie(w http.ResponseWriter, r *http.Request) {
 func writeUnauthorized(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
-}
-
-// newPIN returns a random 6-digit PIN.
-func newPIN() (string, error) {
-	for {
-		var b [4]byte
-		if _, err := rand.Read(b[:]); err != nil {
-			return "", fmt.Errorf("generate pin: %w", err)
-		}
-		n := binary.BigEndian.Uint32(b[:]) % 1_000_000
-		if n >= 100_000 {
-			return fmt.Sprintf("%06d", n), nil
-		}
-	}
+	_, _ = w.Write([]byte("{\"error\":\"unauthorized\"}"))
 }

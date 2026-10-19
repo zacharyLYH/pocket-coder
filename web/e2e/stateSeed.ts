@@ -18,7 +18,7 @@ import { LOGIN_EMAIL, type SeedKind } from './env.ts'
 type ServerKey = { privateKey: string; publicKey: string; fingerprint: string; createdAt: string }
 type Harness = { id: string; name: string; command: string; install?: string }
 export type CanonicalMock = {
-  user: { email: string }
+  user: { email: string; passwordHash: string; authVersion: number }
   serverKey: ServerKey
   harnesses: Record<string, Harness>
   projects: Record<string, unknown>
@@ -41,7 +41,15 @@ export function seedState(kind: SeedKind): Record<string, unknown> {
   if (!mock.serverKey?.privateKey) {
     throw new Error('test/state.mock.json lost its serverKey — a state seed must own the deploy key')
   }
-  const base = { user: { email: LOGIN_EMAIL }, serverKey: mock.serverKey }
+  if (!mock.user?.passwordHash) {
+    throw new Error('test/state.mock.json lost its user.passwordHash — e2e login needs the seeded credential')
+  }
+  // The email is overridden to LOGIN_EMAIL; the passwordHash is the
+  // Argon2id hash of LOGIN_PASSWORD (env.ts) — the pair must move together.
+  const base = {
+    user: { email: LOGIN_EMAIL, passwordHash: mock.user.passwordHash, authVersion: mock.user.authVersion },
+    serverKey: mock.serverKey,
+  }
   switch (kind) {
     case 'default':
       return base

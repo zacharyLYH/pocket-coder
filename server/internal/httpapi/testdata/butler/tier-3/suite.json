@@ -49,7 +49,7 @@
       "label": "Dup",
       "model": "gpt-4o"
     },
-    "want": "ERROR: model \"gpt-4o\" is already configured as \"Two\" — use update_ai_model to relabel it"
+    "want": "ERROR: model \"gpt-4o\" is already configured as \"Two\" \u2014 use update_ai_model to relabel it"
   },
   {
     "tool": "create_ai_model",
@@ -170,7 +170,7 @@
       "model": "nokey-1"
     },
     "apply": true,
-    "want": "ERROR: value is required — type it into the masked field"
+    "want": "ERROR: value is required \u2014 type it into the masked field"
   },
   {
     "tool": "session_create",
@@ -410,13 +410,11 @@
     }
   },
   {
-    "tool": "smtp_status",
+    "tool": "auth_status",
     "args": {},
     "want": {
       "configured": true,
-      "host": "smtp.gmail.com",
-      "port": 587,
-      "user": "me@example.com"
+      "email": "me@example.com"
     }
   },
   {

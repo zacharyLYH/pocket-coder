@@ -8,15 +8,31 @@ import (
 )
 
 func TestLoadDefaults(t *testing.T) {
-	cfg, err := load([]string{"PCODER_LOGIN_EMAIL=me@example.com"})
+	cfg, err := load([]string{"PCODER_AUTH_EMAIL=me@example.com"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if cfg.DataDir != "./data" || cfg.Bind != ":8080" || cfg.DockerSock != "unix:///var/run/docker.sock" {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
-	if cfg.SMTPHost != "smtp.gmail.com" || cfg.SMTPPort != 587 {
-		t.Fatalf("unexpected SMTP defaults: %+v", cfg)
+	if cfg.AuthEmail != "me@example.com" {
+		t.Fatalf("auth email = %q", cfg.AuthEmail)
+	}
+}
+
+// The account identifier is normalized at load, exactly like setup.sh
+// normalizes it before writing .env — login comparisons depend on it.
+func TestLoadNormalizesEmail(t *testing.T) {
+	_, err := load([]string{"PCODER_AUTH_EMAIL=  Owner@Example.COM ", "PCODER_AUTH_EMAIL_KEY_UNUSED="})
+	if err == nil {
+		t.Fatal("unknown PCODER_AUTH_EMAIL_KEY_UNUSED must be rejected")
+	}
+	cfg, err := load([]string{"PCODER_AUTH_EMAIL=  Owner@Example.COM "})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.AuthEmail != "owner@example.com" {
+		t.Fatalf("AuthEmail = %q, want owner@example.com", cfg.AuthEmail)
 	}
 }
 
@@ -24,36 +40,29 @@ func TestLoadAllFields(t *testing.T) {
 	cfg, err := load([]string{
 		"PCODER_DATA_DIR=/srv/pcoder",
 		"PCODER_BIND=127.0.0.1:9000",
-		"PCODER_LOGIN_EMAIL=me@example.com",
+		"PCODER_AUTH_EMAIL=me@example.com",
 		"PCODER_JWT_SECRET=" + strings.Repeat("x", 32),
-		"SMTP_HOST=smtp.gmail.com",
-		"SMTP_PORT=587",
-		"SMTP_USER=me@gmail.com",
-		"SMTP_PASSWORD=app-password",
-		"SMTP_FROM=me@gmail.com",
 		"PCODER_DOCKER_SOCK=tcp://127.0.0.1:2375",
 	})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	want := Config{DataDir: "/srv/pcoder", Bind: "127.0.0.1:9000", LoginEmail: "me@example.com",
-		JWTSecret: strings.Repeat("x", 32), SMTPHost: "smtp.gmail.com", SMTPPort: 587,
-		SMTPUser: "me@gmail.com", SMTPPass: "app-password", SMTPFrom: "me@gmail.com",
-		DockerSock: "tcp://127.0.0.1:2375"}
-	if *cfg != want {
-		t.Fatalf("got %+v, want %+v", *cfg, want)
+	if cfg.DataDir != "/srv/pcoder" || cfg.Bind != "127.0.0.1:9000" ||
+		cfg.AuthEmail != "me@example.com" || cfg.JWTSecret != strings.Repeat("x", 32) ||
+		cfg.DockerSock != "tcp://127.0.0.1:2375" {
+		t.Fatalf("got %+v", *cfg)
 	}
 }
 
 func TestLoadAllowAnyRepoHatch(t *testing.T) {
-	cfg, err := load([]string{"PCODER_LOGIN_EMAIL=me@example.com"})
+	cfg, err := load([]string{"PCODER_AUTH_EMAIL=me@example.com"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if cfg.AllowAnyRepo {
 		t.Fatalf("AllowAnyRepo defaults to %+v, want false", cfg.AllowAnyRepo)
 	}
-	cfg, err = load([]string{"PCODER_LOGIN_EMAIL=me@example.com", "PCODER_ALLOW_ANY_REPO=1"})
+	cfg, err = load([]string{"PCODER_AUTH_EMAIL=me@example.com", "PCODER_ALLOW_ANY_REPO=1"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -62,15 +71,25 @@ func TestLoadAllowAnyRepoHatch(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsMissingLoginEmail(t *testing.T) {
+func TestLoadRejectsMissingAuthEmail(t *testing.T) {
 	_, err := load(nil)
-	if err == nil || !strings.Contains(err.Error(), "PCODER_LOGIN_EMAIL") {
+	if err == nil || !strings.Contains(err.Error(), "PCODER_AUTH_EMAIL") {
 		t.Fatalf("expected missing-email error, got %v", err)
 	}
 }
 
+// No auth backdoor: old SMTP variables are unknown config, not silently
+// ignored leftovers.
+func TestLoadRejectsSMTPVariables(t *testing.T) {
+	for _, smtp := range []string{"SMTP_HOST=smtp.gmail.com", "SMTP_PASSWORD=x", "SMTP_USER=a@b.c"} {
+		if _, err := load([]string{smtp}); err == nil {
+			t.Fatalf("expected unknown-variable error for %q", smtp)
+		}
+	}
+}
+
 func TestLoadRejectsUnknownVariable(t *testing.T) {
-	for _, unknown := range []string{"PCODER_BOGUS_SETTING=1", "SMTP_BOGUS=1"} {
+	for _, unknown := range []string{"PCODER_BOGUS_SETTING=1"} {
 		if _, err := load([]string{unknown}); err == nil || !strings.Contains(err.Error(), strings.SplitN(unknown, "=", 2)[0]) {
 			t.Fatalf("expected unknown-variable error for %q, got %v", unknown, err)
 		}
@@ -82,16 +101,15 @@ func TestAppendDotEnv(t *testing.T) {
 	dotenv := filepath.Join(dir, ".env")
 	if err := os.WriteFile(dotenv, []byte(`
 # comment line
-PCODER_LOGIN_EMAIL=from-dotenv@example.com
+PCODER_AUTH_EMAIL=from-dotenv@example.com
 PCODER_BIND = "127.0.0.1:9999"
-SMTP_USER=user@example.com
 =no-name
 KEY_NO_EQ
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	env := []string{"PCODER_BIND=:8080", "PCODER_LOGIN_EMAIL=real@example.com"}
+	env := []string{"PCODER_BIND=:8080", "PCODER_AUTH_EMAIL=real@example.com"}
 	if err := appendDotEnv(&env, dotenv); err != nil {
 		t.Fatalf("appendDotEnv: %v", err)
 	}
@@ -102,20 +120,20 @@ KEY_NO_EQ
 		got[k] = v
 	}
 	// Real environment wins.
-	if got["PCODER_LOGIN_EMAIL"] != "real@example.com" {
+	if got["PCODER_AUTH_EMAIL"] != "real@example.com" {
 		t.Fatalf("real env lost: %v", got)
 	}
 	if got["PCODER_BIND"] != ":8080" {
 		t.Fatalf("real env lost for bind: %v", got)
 	}
 	// Dotenv fills gaps and trims quotes/whitespace.
-	if got["SMTP_USER"] != "user@example.com" {
+	if got["PCODER_AUTH_EMAIL"] == "" {
 		t.Fatalf("dotenv value missing: %v", got)
 	}
 }
 
 func TestAppendDotEnvMissingFile(t *testing.T) {
-	env := []string{"PCODER_LOGIN_EMAIL=me@example.com"}
+	env := []string{"PCODER_AUTH_EMAIL=me@example.com"}
 	if err := appendDotEnv(&env, filepath.Join(t.TempDir(), "nope.env")); err != nil {
 		t.Fatalf("missing file should be ignored, got %v", err)
 	}
@@ -125,11 +143,11 @@ func TestAppendDotEnvMissingFile(t *testing.T) {
 }
 
 // skipIfRealEnvConflicts guards Load()-level tests: a developer machine or CI
-// runner with PCODER_*/SMTP_* variables set would shadow every .env value.
+// runner with PCODER_* variables set would shadow every .env value.
 func skipIfRealEnvConflicts(t *testing.T) {
 	t.Helper()
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "PCODER_") || strings.HasPrefix(kv, "SMTP_") {
+		if strings.HasPrefix(kv, "PCODER_") {
 			t.Skipf("real environment shadows .env: %s", kv)
 		}
 	}
@@ -139,7 +157,7 @@ func TestLoadFallsBackToParentDotEnv(t *testing.T) {
 	skipIfRealEnvConflicts(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, ".env"),
-		[]byte("PCODER_LOGIN_EMAIL=root@example.com\nPCODER_DATA_DIR=/from/root\n"), 0o600); err != nil {
+		[]byte("PCODER_AUTH_EMAIL=root@example.com\nPCODER_DATA_DIR=/from/root\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sub := filepath.Join(root, "server")
@@ -152,7 +170,7 @@ func TestLoadFallsBackToParentDotEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.LoginEmail != "root@example.com" || cfg.DataDir != "/from/root" {
+	if cfg.AuthEmail != "root@example.com" || cfg.DataDir != "/from/root" {
 		t.Fatalf("../.env ignored: %+v", cfg)
 	}
 }
@@ -161,8 +179,8 @@ func TestLoadPrefersLocalDotEnvOverParent(t *testing.T) {
 	skipIfRealEnvConflicts(t)
 	root := t.TempDir()
 	for _, f := range []struct{ path, body string }{
-		{filepath.Join(root, ".env"), "PCODER_LOGIN_EMAIL=parent@example.com"},
-		{filepath.Join(root, "server", ".env"), "PCODER_LOGIN_EMAIL=local@example.com"},
+		{filepath.Join(root, ".env"), "PCODER_AUTH_EMAIL=parent@example.com"},
+		{filepath.Join(root, "server", ".env"), "PCODER_AUTH_EMAIL=local@example.com"},
 	} {
 		if err := os.MkdirAll(filepath.Dir(f.path), 0o700); err != nil {
 			t.Fatal(err)
@@ -177,22 +195,20 @@ func TestLoadPrefersLocalDotEnvOverParent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.LoginEmail != "local@example.com" {
-		t.Fatalf("login email = %q, want the local .env to win", cfg.LoginEmail)
+	if cfg.AuthEmail != "local@example.com" {
+		t.Fatalf("auth email = %q, want the local .env to win", cfg.AuthEmail)
 	}
 }
 
 func TestValidateRejectsBadValues(t *testing.T) {
-	email := "PCODER_LOGIN_EMAIL=me@example.com"
+	email := "PCODER_AUTH_EMAIL=me@example.com"
 	cases := []struct {
 		name string
 		env  []string
 	}{
 		{"bad bind", []string{email, "PCODER_BIND=8080"}},
-		{"bad email", []string{"PCODER_LOGIN_EMAIL=not-an-email"}},
+		{"bad email", []string{"PCODER_AUTH_EMAIL=not-an-email"}},
 		{"short jwt secret", []string{email, "PCODER_JWT_SECRET=short"}},
-		{"bad smtp port", []string{email, "SMTP_PORT=abc"}},
-		{"out of range smtp port", []string{email, "SMTP_PORT=70000"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +12,7 @@ import (
 )
 
 func TestUnauthorized(t *testing.T) {
-	d, _ := newTestDeps(t)
+	d := newTestDeps(t)
 	h := New(d)
 	if rec := get(t, h, "/api/events"); rec.Code != 401 {
 		t.Fatalf("/api/events: %d, want 401", rec.Code)
@@ -24,9 +23,9 @@ func TestUnauthorized(t *testing.T) {
 }
 
 func TestEventsAPI(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 	h := New(d)
-	cookie := loginCookie(t, h, pinOut)
+	cookie := loginCookie(t, h)
 
 	for i := 0; i < 5; i++ {
 		if _, err := d.Events.Append("test", map[string]any{"n": i}); err != nil {
@@ -45,17 +44,17 @@ func TestEventsAPI(t *testing.T) {
 		return body.Events
 	}
 
-	// login already wrote login.pin.sent (1) and login.success (2)
+	// login already wrote login.success (1)
 	all := decode(authedGet(t, h, cookie, "/api/events"))
-	if len(all) != 7 {
-		t.Fatalf("got %d events, want 7: %+v", len(all), all)
+	if len(all) != 6 {
+		t.Fatalf("got %d events, want 6: %+v", len(all), all)
 	}
-	if all[0].Type != "login.pin.sent" || all[1].Type != "login.success" {
-		t.Fatalf("unexpected head: %+v", all[:2])
+	if all[0].Type != "login.success" {
+		t.Fatalf("unexpected head: %+v", all[:1])
 	}
 	for i := 0; i < 5; i++ {
-		if all[2+i].Type != "test" {
-			t.Fatalf("unexpected event: %+v", all[2+i])
+		if all[1+i].Type != "test" {
+			t.Fatalf("unexpected event: %+v", all[1+i])
 		}
 	}
 
@@ -88,14 +87,10 @@ func (f *fakeEventLog) Append(typ string, data map[string]any) (events.Event, er
 // TestEventsAPIWithFakeEventLog proves the handler reads events from the
 // injected EventLog, not from disk.
 func TestEventsAPIWithFakeEventLog(t *testing.T) {
-	d, pinOut := newTestDeps(t)
+	d := newTestDeps(t)
 
 	// mint a session cookie through the service directly (no HTTP, no events)
-	if err := d.Auth.RequestPIN(context.Background(), "me@example.com"); err != nil {
-		t.Fatal(err)
-	}
-	pin := pinRe.FindString(pinOut.String())
-	token, err := d.Auth.Verify("me@example.com", pin)
+	token, err := d.Auth.IssueToken()
 	if err != nil {
 		t.Fatal(err)
 	}
