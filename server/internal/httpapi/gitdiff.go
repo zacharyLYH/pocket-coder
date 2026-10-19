@@ -79,7 +79,7 @@ func gitRepoDir(d Deps, w http.ResponseWriter, r *http.Request) (container, dir 
 		writeErr(w, http.StatusNotFound, "no such project")
 		return "", "", false
 	}
-	id, _, ok := ensureRunning(d, w, r)
+	id, ok := ensureRunning(d, w, r)
 	if !ok {
 		return "", "", false
 	}

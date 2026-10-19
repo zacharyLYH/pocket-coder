@@ -8,7 +8,7 @@ import (
 )
 
 // aiConfig reads the first stored model into an agent.Config.
-func aiConfig(d Deps, fallback aiBody) agent.Config {
+func aiConfig(d Deps) agent.Config {
 	var cfg agent.Config
 	if d.State != nil {
 		d.State.View(func(doc *state.Document) {
@@ -16,15 +16,6 @@ func aiConfig(d Deps, fallback aiBody) agent.Config {
 				cfg = agent.Config{BaseURL: m.BaseURL, APIKey: m.APIKey, Model: m.Model}
 			}
 		})
-	}
-	if fallback.BaseURL != "" {
-		cfg.BaseURL = fallback.BaseURL
-	}
-	if fallback.APIKey != "" {
-		cfg.APIKey = fallback.APIKey
-	}
-	if fallback.Model != "" {
-		cfg.Model = fallback.Model
 	}
 	cfg.BaseURL = agent.NormalizeBaseURL(cfg.BaseURL)
 	return cfg

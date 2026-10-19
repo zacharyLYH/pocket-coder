@@ -50,18 +50,18 @@ var upgrader = websocket.Upgrader{
 // persisted volumes if Docker lost track) and be running, writing the error
 // response on failure. Shared core of ensureProject and gitRepoDir so
 // session/harness and git routes behave identically.
-func ensureRunning(d Deps, w http.ResponseWriter, r *http.Request) (string, project.Status, bool) {
+func ensureRunning(d Deps, w http.ResponseWriter, r *http.Request) (string, bool) {
 	id := r.PathValue("id")
 	st, err := d.Projects.EnsureContainer(r.Context(), id)
 	if err != nil {
 		writeServiceErr(w, err)
-		return "", project.Status{}, false
+		return "", false
 	}
 	if st.State != project.StateRunning {
 		writeErr(w, http.StatusConflict, "container not running")
-		return "", project.Status{}, false
+		return "", false
 	}
-	return id, st, true
+	return id, true
 }
 
 // ensureProject requires a project's container to exist (recreating it from
@@ -69,7 +69,7 @@ func ensureRunning(d Deps, w http.ResponseWriter, r *http.Request) (string, proj
 // session/harness routes so they behave identically. Returns the project id
 // and whether to continue.
 func ensureProject(d Deps, w http.ResponseWriter, r *http.Request) (string, bool) {
-	id, _, ok := ensureRunning(d, w, r)
+	id, ok := ensureRunning(d, w, r)
 	return id, ok
 }
 

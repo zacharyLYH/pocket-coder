@@ -643,7 +643,7 @@ func Ask(ctx context.Context, cfg agent.Config, exec Executor, container, repoDi
 	pipe := agent.Pipeline{
 		Scope: &agent.ScopeGate{
 			Prompt: prompt.CodemapScopePrompt(), SchemaName: "codemap_scope", Schema: prompt.CodemapScopeSchema(),
-			Refused: func(verdict string) bool { return !codemapScopeParse(verdict) },
+			Refused: func(verdict string) bool { return !agent.GateVerdict(verdict, "about_code") },
 			Refusal: `This looks like an ops or non-code request — CodeMaps answers questions about this repo's code.`,
 		},
 		Context: func(string) []map[string]any { return history },
@@ -732,24 +732,6 @@ func shapeResult(res Result) Result {
 }
 
 var shQuote = textutil.ShellQuote
-
-// codemapScopeParse reads the gate verdict. False only on a clean parse
-// of about_code=false; anything unparseable fails open into the loop.
-func codemapScopeParse(raw string) bool {
-	s := strings.TrimSpace(raw)
-	if i := strings.Index(s, "{"); i > 0 {
-		if j := strings.LastIndex(s, "}"); j > i {
-			s = s[i : j+1]
-		}
-	}
-	var v struct {
-		AboutCode *bool `json:"about_code"`
-	}
-	if err := json.Unmarshal([]byte(s), &v); err != nil || v.AboutCode == nil {
-		return true
-	}
-	return *v.AboutCode
-}
 
 // capSteps flattens the shared transcript onto codemap's persisted step
 // shape (flat like butler — no per-round thought), applying output/err

@@ -22,7 +22,7 @@ const maxDiffBytes = 50 * 1024
 // config, then repo resolution. On failure it writes the response and
 // returns the cause for the caller's obsFail line.
 func aiGitSetup(d Deps, w http.ResponseWriter, r *http.Request) (agent.Config, string, string, error) {
-	cfg := aiConfig(d, aiBody{})
+	cfg := aiConfig(d)
 	if !cfg.Valid() {
 		writeErr(w, http.StatusConflict, "ai not configured")
 		return cfg, "", "", errors.New("ai not configured")

@@ -26,7 +26,7 @@ export function isPullRefreshOptOut(target: EventTarget | null): boolean {
 // strip sits below the header — drags starting on/below it belong to the
 // terminal pane, fixed views, or tab scrolling, never to refresh. Returns
 // null when not on the terminal page (no gating).
-export function terminalPullGate(): number | null {
+function terminalPullGate(): number | null {
   if (typeof document === 'undefined') return null
   if (!document.querySelector('[data-testid="terminal-root"]')) return null
   const tabs = document.querySelector('[data-testid="terminal-tabs"]')

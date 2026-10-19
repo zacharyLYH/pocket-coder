@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 
 import { render, screen, fireEvent } from '@testing-library/react'
-import { ButlerFab, snapToCorner, FAB_SIZE, SNAP_MARGIN, TOP_CLEARANCE } from '@/components/ButlerFab'
+import { ButlerFab } from '@/components/ButlerFab'
+import { snapToCorner, FAB_SIZE, SNAP_MARGIN, TOP_CLEARANCE } from '@/lib/butlerFab'
 
 // jsdom has no layout: fix a phone-ish viewport so snapping is deterministic.
 function phoneViewport() {

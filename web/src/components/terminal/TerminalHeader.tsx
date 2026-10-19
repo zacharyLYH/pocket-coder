@@ -24,7 +24,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useTheme } from '@/components/ThemeToggle'
+import { useTheme } from '@/lib/useTheme'
 import type { ConnStatus } from '@/components/terminal/TerminalPane'
 
 // The terminal header: back to projects, connection status, the current

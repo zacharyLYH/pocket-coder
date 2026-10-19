@@ -24,7 +24,7 @@ var ErrInvalidName = errors.New("invalid session name")
 
 // ErrNotCLI means the probe hung, crashed, or printed nothing: the
 // "command" is not a terminal program.
-var ErrNotCLI = errors.New("not a CLI — it looks like it wants a display (an IDE/GUI), and the platform only runs terminal programs.")
+var ErrNotCLI = errors.New("not a CLI — it looks like it wants a display (an IDE/GUI), and the platform only runs terminal programs")
 
 // ErrNotInstalled means the harness binary is absent and installs are never
 // implicit: the user installs per project from the home page.

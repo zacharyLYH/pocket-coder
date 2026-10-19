@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { ArrowUp, Bot, Check, ChevronDown, Copy, FileText, History, LoaderCircle, Plus, RotateCcw, Sparkles, Trash2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -68,7 +68,7 @@ export function CodemapTab({ projectId, ai }: { projectId: string; ai: AIConfigS
     }, projectId)
 
   const status = thread?.status ?? 'ready'
-  const turns = thread?.turns ?? []
+  const turns = useMemo(() => thread?.turns ?? [], [thread])
   const blocked = inFlight || status === 'running'
 
   useEffect(() => {

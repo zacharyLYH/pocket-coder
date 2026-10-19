@@ -140,7 +140,7 @@ func butlerThreadJSON(th threads.Thread, status string) any {
 // produce a confirm card, never a mutation.
 func handleButlerRetry(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cfg := aiConfig(d, aiBody{})
+		cfg := aiConfig(d)
 		if !cfg.Valid() {
 			writeErr(w, http.StatusConflict, "ai not configured")
 			return
@@ -190,7 +190,7 @@ func handleButlerRetry(d Deps) http.HandlerFunc {
 // thread to see the user's bubble, the running status, then the answer.
 func handleButlerTurn(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cfg := aiConfig(d, aiBody{})
+		cfg := aiConfig(d)
 		if !cfg.Valid() {
 			obsFail(r, obs.ButlerAsk, "butler ask failed", errors.New("ai not configured"), nil)
 			writeErr(w, http.StatusConflict, "ai not configured")
@@ -262,7 +262,7 @@ func startButlerTurn(w http.ResponseWriter, r *http.Request, d Deps, st *threads
 // the global slot via the deferred done.
 func executeButlerTurn(r *http.Request, d Deps, st *threads.Store, t reservedTurn, prompt, projectHint string) {
 	defer butlerRuns.done(butlerRunKey)
-	cfg := aiConfig(d, aiBody{})
+	cfg := aiConfig(d)
 	answer, steps, lineage, runErr := runButlerTurn(r, d, cfg, st, t.threadID, t.turnID, prompt)
 	turn := butlerTurn(t.turnID, prompt, projectHint, answer, steps)
 	if runErr != nil {
@@ -282,25 +282,6 @@ func executeButlerTurn(r *http.Request, d Deps, st *threads.Store, t reservedTur
 	})
 }
 
-// butlerScopeParse reads the classifier verdict. False only on a clean
-// parse of can_help=false; anything unparseable fails open into the tool
-// loop, whose guide still governs.
-func butlerScopeParse(raw string) bool {
-	s := strings.TrimSpace(raw)
-	if i := strings.Index(s, "{"); i > 0 {
-		if j := strings.LastIndex(s, "}"); j > i {
-			s = s[i : j+1]
-		}
-	}
-	var v struct {
-		CanHelp *bool `json:"can_help"`
-	}
-	if err := json.Unmarshal([]byte(s), &v); err != nil || v.CanHelp == nil {
-		return true
-	}
-	return *v.CanHelp
-}
-
 // runButlerTurn runs the bounded loop (up to 6 tool steps) with the read
 // tools plus propose-only write tools. Cards proposed mid-turn persist
 // straight to the thread's approvals; the turn response carries only the
@@ -310,8 +291,7 @@ func butlerScopeParse(raw string) bool {
 func runButlerTurn(r *http.Request, d Deps, cfg agent.Config, st *threads.Store, threadID, turnID, userPrompt string) (string, []agent.Step, *agent.Lineage, error) {
 	lineage := &agent.Lineage{}
 	scope := &agent.ScopeGate{
-		Prompt: prompt.ButlerScopePrompt(), SchemaName: "butler_scope", Schema: prompt.ButlerScopeSchema(),
-		Refused: func(verdict string) bool { return !butlerScopeParse(verdict) },
+		Prompt: prompt.ButlerScopePrompt(), SchemaName: "butler_scope", Schema: prompt.ButlerScopeSchema(), Refused: func(verdict string) bool { return !agent.GateVerdict(verdict, "can_help") },
 		Refusal: prompt.ButlerRefusal,
 	}
 	tools := append([]agent.Tool{agent.TodoTool(lineage)}, butlerReadTools(d)...)

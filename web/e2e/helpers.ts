@@ -2,7 +2,6 @@ import { expect, type Page, type APIRequestContext } from '@playwright/test'
 
 import { ciTimeout, GIT_PORT, LOGIN_EMAIL, LOGIN_PASSWORD, RUN_SLUG } from './env'
 
-export { LOGIN_EMAIL } // one source: env.ts (the seeder factory uses it too)
 
 // Shared plumbing for the real-backend e2e suite: real password login, and
 // per-test cleanup so order never matters (the stack data dir only resets

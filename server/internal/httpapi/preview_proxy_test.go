@@ -17,11 +17,10 @@ func TestPreviewProxyStripsTokenQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newPreviewProxy(target, "websockify")
 	req := httptest.NewRequest("GET", "/api/projects/p1/preview/websockify?token=x&autoconnect=true", nil)
 	req.AddCookie(&http.Cookie{Name: "pcoder_session", Value: "jwt"})
 	req.AddCookie(&http.Cookie{Name: "pcoder_preview_p1", Value: "tok"})
-	proxy.Director(req)
+	rewritePreviewRequest(req, target, "websockify")
 	if req.URL.String() != "http://10.0.0.8:6080/websockify?autoconnect=true" {
 		t.Fatalf("forwarded URL = %s", req.URL)
 	}

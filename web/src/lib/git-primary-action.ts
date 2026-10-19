@@ -3,16 +3,14 @@
 // user never has to infer between Commit and Push. Pure and dependency-free
 // so the mobile/desktop UI and unit tests share the exact same rules.
 
-export type GitPrimaryActionKind =
-  | 'stage-all'
-  | 'commit'
-  | 'commit-push'
-  | 'push'
-  | 'pull'
-  | 'noop'
-
 export type GitPrimaryAction = {
-  kind: GitPrimaryActionKind
+  kind:
+    | 'stage-all'
+    | 'commit'
+    | 'commit-push'
+    | 'push'
+    | 'pull'
+    | 'noop'
   label: string
   disabled: boolean
   hint?: string

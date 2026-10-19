@@ -62,9 +62,8 @@ func TestEdge_PreviewProxyRejectsTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{"../etc/passwd", "a/../../etc/passwd", ".."} {
-		proxy := newPreviewProxy(target, p)
 		req := httptest.NewRequest("GET", "/api/projects/p1/preview/"+p, nil)
-		proxy.Director(req)
+		rewritePreviewRequest(req, target, p)
 		if containsDotDot(req.URL.Path) {
 			t.Fatalf("traversal segment reaches upstream: %q -> %q", p, req.URL.Path)
 		}

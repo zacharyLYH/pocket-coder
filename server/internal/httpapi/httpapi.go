@@ -152,24 +152,24 @@ func New(d Deps) http.Handler {
 	}
 
 	if d.Preview != nil {
-		authedProject("GET", "/api/projects/{id}/preview", withSource(obs.SourcePreview, handlePreviewStatus))
-		authedProject("POST", "/api/projects/{id}/preview/start", withSource(obs.SourcePreview, handlePreviewStart))
-		authedProject("DELETE", "/api/projects/{id}/preview", withSource(obs.SourcePreview, handlePreviewClose))
-		authedProject("POST", "/api/projects/{id}/preview/heartbeat", withSource(obs.SourcePreview, handlePreviewHeartbeat))
-		authedProject("GET", "/api/projects/{id}/preview/{path...}", withSource(obs.SourcePreview, handlePreviewSurface))
+		authedProject("GET", "/api/projects/{id}/preview", withPreviewSource(handlePreviewStatus))
+		authedProject("POST", "/api/projects/{id}/preview/start", withPreviewSource(handlePreviewStart))
+		authedProject("DELETE", "/api/projects/{id}/preview", withPreviewSource(handlePreviewClose))
+		authedProject("POST", "/api/projects/{id}/preview/heartbeat", withPreviewSource(handlePreviewHeartbeat))
+		authedProject("GET", "/api/projects/{id}/preview/{path...}", withPreviewSource(handlePreviewSurface))
 	}
 	if d.Preview != nil && d.Sessions != nil {
-		authedProject("GET", "/api/projects/{id}/preview/ports", withSource(obs.SourcePreview, handlePreviewPorts))
-		authedProject("GET", "/api/projects/{id}/preview/tools/screenshot", withSource(obs.SourcePreview, handlePreviewScreenshot))
-		authedProject("GET", "/api/projects/{id}/preview/tools/inspect", withSource(obs.SourcePreview, handlePreviewInspect))
-		authedProject("GET", "/api/projects/{id}/preview/tools/console", withSource(obs.SourcePreview, handlePreviewConsole))
-		authedProject("GET", "/api/projects/{id}/preview/tools/network", withSource(obs.SourcePreview, handlePreviewNetwork))
-		authedProject("POST", "/api/projects/{id}/preview/tools/navigate", withSource(obs.SourcePreview, handlePreviewNavigate))
-		authedProject("POST", "/api/projects/{id}/preview/tools/click", withSource(obs.SourcePreview, handlePreviewClick))
-		authedProject("POST", "/api/projects/{id}/preview/tools/type", withSource(obs.SourcePreview, handlePreviewType))
-		authedProject("POST", "/api/projects/{id}/preview/tools/reload", withSource(obs.SourcePreview, handlePreviewReload))
-		authedProject("POST", "/api/projects/{id}/preview/tools/scroll", withSource(obs.SourcePreview, handlePreviewScroll))
-		authedProject("POST", "/api/projects/{id}/preview/tools/viewport", withSource(obs.SourcePreview, handlePreviewViewport))
+		authedProject("GET", "/api/projects/{id}/preview/ports", withPreviewSource(handlePreviewPorts))
+		authedProject("GET", "/api/projects/{id}/preview/tools/screenshot", withPreviewSource(handlePreviewScreenshot))
+		authedProject("GET", "/api/projects/{id}/preview/tools/inspect", withPreviewSource(handlePreviewInspect))
+		authedProject("GET", "/api/projects/{id}/preview/tools/console", withPreviewSource(handlePreviewConsole))
+		authedProject("GET", "/api/projects/{id}/preview/tools/network", withPreviewSource(handlePreviewNetwork))
+		authedProject("POST", "/api/projects/{id}/preview/tools/navigate", withPreviewSource(handlePreviewNavigate))
+		authedProject("POST", "/api/projects/{id}/preview/tools/click", withPreviewSource(handlePreviewClick))
+		authedProject("POST", "/api/projects/{id}/preview/tools/type", withPreviewSource(handlePreviewType))
+		authedProject("POST", "/api/projects/{id}/preview/tools/reload", withPreviewSource(handlePreviewReload))
+		authedProject("POST", "/api/projects/{id}/preview/tools/scroll", withPreviewSource(handlePreviewScroll))
+		authedProject("POST", "/api/projects/{id}/preview/tools/viewport", withPreviewSource(handlePreviewViewport))
 	}
 
 	if d.Harnesses != nil {
@@ -223,15 +223,14 @@ func withProjectID(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// withSource bakes the origin subsystem into ctx (see obs.WithSource) so
-// the tail's source facet is real. Applied to whole route blocks whose area
-// is known statically — the preview block below. Everything else defaults
-// to server.
-func withSource(source string, h func(Deps) http.HandlerFunc) func(Deps) http.HandlerFunc {
+// withPreviewSource bakes the preview origin into ctx (see obs.WithSource)
+// so the tail's source facet is real for every preview route. Everything
+// else defaults to server.
+func withPreviewSource(h func(Deps) http.HandlerFunc) func(Deps) http.HandlerFunc {
 	return func(d Deps) http.HandlerFunc {
 		next := h(d)
 		return func(w http.ResponseWriter, r *http.Request) {
-			next.ServeHTTP(w, r.WithContext(obs.WithSource(r.Context(), source)))
+			next.ServeHTTP(w, r.WithContext(obs.WithSource(r.Context(), obs.SourcePreview)))
 		}
 	}
 }

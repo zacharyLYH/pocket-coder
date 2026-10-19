@@ -32,9 +32,9 @@ export function HarnessesCard({ project, onInstalled, onBusyChange }: { project:
   // can exist without a record — manual installs in the terminal, binaries
   // surviving on a reused home volume — and the probe is the only ground
   // truth for those, so it must be able to mark a row Installed on its own.
-  function isInstalled(harnessId: string) {
+  const isInstalled = useCallback((harnessId: string) => {
     return (project.harnesses ?? []).includes(harnessId) || !!live[harnessId]?.installed
-  }
+  }, [project.harnesses, live])
 
   // Installing beats the Install button but loses to Installed: once the
   // binary lands the probe reports both until the server's flag clears, and
@@ -73,7 +73,7 @@ export function HarnessesCard({ project, onInstalled, onBusyChange }: { project:
   // harness, all in parallel. The map is rebuilt whole each run so cleared
   // conditions drop their badge. Anything unavailable (no npm package,
   // project stopped) stays silent.
-  async function checkUpdates(list: Harness[]) {
+  const checkUpdates = useCallback(async (list: Harness[]) => {
     const settled = await Promise.allSettled(list.map(async (h) => {
       if (!h.install || !isInstalled(h.id)) return null
       const d = await api<{ current?: string; latest?: string; updateAvailable?: boolean }>(
@@ -87,7 +87,7 @@ export function HarnessesCard({ project, onInstalled, onBusyChange }: { project:
       if (r.status === 'fulfilled' && r.value) fresh[r.value.id] = { current: r.value.current, latest: r.value.latest }
     }
     setUpdates(fresh)
-  }
+  }, [isInstalled, project.id])
 
   // One fetch per mount/project — not per render. (The previous version
   // had no dependency array here, so every setState re-render re-ran the
@@ -101,7 +101,7 @@ export function HarnessesCard({ project, onInstalled, onBusyChange }: { project:
     if (checkedKey.current === key) return
     checkedKey.current = key
     void checkUpdates(harnesses)
-  }, [harnesses, project.id, project.harnesses, live])
+  }, [harnesses, project.id, isInstalled, checkUpdates])
 
   // While any install is running elsewhere (started here before a remount,
   // or from another dialog), re-probe until it lands so the row flips

@@ -134,9 +134,8 @@ func (s *Store) threadDir(scope, id string) string {
 	return filepath.Join(s.scopeDir(scope), id)
 }
 
-// check rejects a missing store or blank scope before any thread I/O.
-// Empty scope (butler) is allowed; the caller passes "" explicitly.
-func (s *Store) check(scope string) error {
+// check rejects a missing store before any thread I/O.
+func (s *Store) check() error {
 	if s == nil || s.dir == "" {
 		return fmt.Errorf("thread store not configured")
 	}
@@ -319,7 +318,7 @@ func persistTurn(dir string, n int, turn Turn, lineage []byte) error {
 // returned. Title derives from the prompt. SHA and the opaque payload ride
 // the placeholder when non-nil.
 func (s *Store) ReserveNewThread(scope, prompt, sha string, payload json.RawMessage) (threadID, turnID string, err error) {
-	if err := s.check(scope); err != nil {
+	if err := s.check(); err != nil {
 		return "", "", err
 	}
 	if strings.TrimSpace(prompt) == "" {
@@ -345,7 +344,7 @@ func (s *Store) ReserveNewThread(scope, prompt, sha string, payload json.RawMess
 // ReserveFollowup appends the next N.json placeholder (max N + 1). When the
 // store has approvals enabled, a pending approval blocks reservation.
 func (s *Store) ReserveFollowup(scope, threadID, prompt, sha string, payload json.RawMessage) (int, string, error) {
-	if err := s.check(scope); err != nil {
+	if err := s.check(); err != nil {
 		return 0, "", err
 	}
 	if !validID(threadID) {
@@ -384,7 +383,7 @@ func (s *Store) ReserveFollowup(scope, threadID, prompt, sha string, payload jso
 // N.lineage.json beside it. A turn with Error set persists as a failed
 // placeholder (visible, retryable); the caller fills Error itself.
 func (s *Store) CompleteTurn(scope, threadID string, n int, turn Turn, lineage []byte) error {
-	if err := s.check(scope); err != nil {
+	if err := s.check(); err != nil {
 		return err
 	}
 	if !validID(threadID) || n < 1 || turn.TurnID == "" || strings.TrimSpace(turn.Prompt) == "" {
@@ -414,7 +413,7 @@ func (s *Store) CompleteTurn(scope, threadID string, n int, turn Turn, lineage [
 // dropped) and returns its N, turnId, and prompt. Context for the rerun is
 // turns 1..N-1. Only a failed/errored last turn is retryable.
 func (s *Store) BeginRetry(scope, threadID, newSHA string) (n int, turnID, prompt string, err error) {
-	if err := s.check(scope); err != nil {
+	if err := s.check(); err != nil {
 		return 0, "", "", err
 	}
 	if !validID(threadID) {
@@ -444,7 +443,7 @@ func (s *Store) BeginRetry(scope, threadID, newSHA string) (n int, turnID, promp
 
 // Get returns one thread with all its turns.
 func (s *Store) Get(scope, id string) (Thread, error) {
-	if err := s.check(scope); err != nil {
+	if err := s.check(); err != nil {
 		return Thread{}, err
 	}
 	if !validID(id) {
@@ -484,7 +483,7 @@ func (s *Store) Get(scope, id string) (Thread, error) {
 
 // List returns summaries sorted by createdAt, newest first.
 func (s *Store) List(scope string) ([]Summary, error) {
-	if err := s.check(scope); err != nil {
+	if err := s.check(); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
@@ -533,7 +532,7 @@ func (s *Store) List(scope string) ([]Summary, error) {
 
 // Delete removes one thread folder. Idempotent.
 func (s *Store) Delete(scope, id string) error {
-	if err := s.check(scope); err != nil {
+	if err := s.check(); err != nil {
 		return err
 	}
 	if !validID(id) {
@@ -551,7 +550,7 @@ func (s *Store) Delete(scope, id string) error {
 // the project). Empty scope is refused: never wipe the whole store root. A
 // missing directory is success.
 func (s *Store) DeleteScope(scope string) error {
-	if err := s.check(scope); err != nil {
+	if err := s.check(); err != nil {
 		return err
 	}
 	if strings.TrimSpace(scope) == "" {
@@ -568,7 +567,7 @@ func (s *Store) DeleteScope(scope string) error {
 // ReadTurnLineage loads one N.lineage.json for diagnostics (no HTTP
 // exposure, never read for follow-up context).
 func (s *Store) ReadTurnLineage(scope, threadID string, n int) ([]byte, error) {
-	if err := s.check(scope); err != nil {
+	if err := s.check(); err != nil {
 		return nil, err
 	}
 	if !validID(threadID) || n < 1 {

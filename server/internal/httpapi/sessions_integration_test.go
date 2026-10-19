@@ -220,7 +220,7 @@ func TestHarnessSessionLifecycle(t *testing.T) {
 		`{"harnessId":"sleepy"}`)
 	errMsg, _ := body["error"].(string)
 	if code != http.StatusUnprocessableEntity ||
-		!strings.HasPrefix(errMsg, "not a CLI — it looks like it wants a display (an IDE/GUI), and the platform only runs terminal programs.") {
+		!strings.HasPrefix(errMsg, "not a CLI — it looks like it wants a display (an IDE/GUI), and the platform only runs terminal programs") {
 		t.Fatalf("not-a-CLI: got %d %q, want 422 with the PRD message", code, errMsg)
 	}
 	evs, err := ev.Read(0, 0)

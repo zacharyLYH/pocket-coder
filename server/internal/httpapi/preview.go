@@ -276,35 +276,48 @@ func previewSurfaceCookieName(id string) string {
 }
 
 func newPreviewProxy(target *url.URL, path string) *httputil.ReverseProxy {
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.Director = func(req *http.Request) {
-		req.URL.Scheme = target.Scheme
-		req.URL.Host = target.Host
-		// Clean the spliced path so ".." segments can never escape the
-		// sidecar's web root upstream, even if a caller bypasses the
-		// handler-level rejection (defense in depth: the upstream static
-		// server must only ever see a rooted, normalized path).
-		req.URL.Path = pathpkg.Clean("/" + strings.TrimPrefix(path, "/"))
-		req.URL.RawPath = ""
-		req.Host = target.Host
-		// The preview token is a PCODER capability, never a sidecar
-		// credential: strip it before forwarding upstream. Cookies go too:
-		// the sidecar (static websockify) needs neither the session JWT
-		// nor the capability, and forwarding them widens the sniff/log
-		// surface for both.
-		q := req.URL.Query()
-		q.Del("token")
-		req.URL.RawQuery = q.Encode()
-		req.Header.Del("Cookie")
+	// Zero-value ReverseProxy + Rewrite: NewSingleHostReverseProxy sets the
+	// deprecated Director, and the two must not both be set.
+	proxy := &httputil.ReverseProxy{}
+	proxy.Rewrite = func(pr *httputil.ProxyRequest) {
+		rewritePreviewRequest(pr.Out, target, path)
+		// The deprecated Director path forwarded X-Forwarded-For/Host/Proto
+		// automatically; Rewrite strips client-provided copies, so restore
+		// the same shape explicitly.
+		pr.Out.Header["X-Forwarded-For"] = pr.In.Header["X-Forwarded-For"]
+		pr.SetXForwarded()
 	}
 	return proxy
+}
+
+// rewritePreviewRequest points req at the sidecar for path, neutralizes
+// traversal, and strips the preview token and cookies.
+func rewritePreviewRequest(req *http.Request, target *url.URL, path string) {
+	req.URL.Scheme = target.Scheme
+	req.URL.Host = target.Host
+	// Clean the spliced path so ".." segments can never escape the
+	// sidecar's web root upstream, even if a caller bypasses the
+	// handler-level rejection (defense in depth: the upstream static
+	// server must only ever see a rooted, normalized path).
+	req.URL.Path = pathpkg.Clean("/" + strings.TrimPrefix(path, "/"))
+	req.URL.RawPath = ""
+	req.Host = target.Host
+	// The preview token is a PCODER capability, never a sidecar
+	// credential: strip it before forwarding upstream. Cookies go too:
+	// the sidecar (static websockify) needs neither the session JWT
+	// nor the capability, and forwarding them widens the sniff/log
+	// surface for both.
+	q := req.URL.Query()
+	q.Del("token")
+	req.URL.RawQuery = q.Encode()
+	req.Header.Del("Cookie")
 }
 
 // handlePreviewHeartbeat proves a live surface page for one project.
 func handlePreviewHeartbeat(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Heartbeat fires every few seconds per open surface.
-		if _, terr := previewTokenWorker(d, w, r); terr != nil {
+		if terr := previewTokenWorker(d, w, r); terr != nil {
 			return
 		}
 		// Reached only with a valid token, so each line is proof of tokened
@@ -318,9 +331,8 @@ func handlePreviewHeartbeat(d Deps) http.HandlerFunc {
 // previewTokenWorker gates token-carrying preview endpoints. It validates
 // X-Preview-Token (falling back to ?token=), requires a running worker,
 // and Touches lastSeen on success. On failure it writes 404 and returns
-// the cause (so callers can feed their deferred obs error log); on success
-// it returns the live worker and a nil error.
-func previewTokenWorker(d Deps, w http.ResponseWriter, r *http.Request) (preview.Worker, error) {
+// the cause (so callers can feed their deferred obs error log).
+func previewTokenWorker(d Deps, w http.ResponseWriter, r *http.Request) error {
 	id := r.PathValue("id")
 	sup := r.Header.Get("X-Preview-Token")
 	if sup == "" {
@@ -328,15 +340,14 @@ func previewTokenWorker(d Deps, w http.ResponseWriter, r *http.Request) (preview
 	}
 	if !d.Preview.CheckToken(id, sup) {
 		writeErr(w, http.StatusNotFound, "not found")
-		return nil, errors.New("invalid preview token")
+		return errors.New("invalid preview token")
 	}
-	worker, err := d.Preview.Get(id)
-	if err != nil {
+	if _, err := d.Preview.Get(id); err != nil {
 		writeErr(w, http.StatusNotFound, "not found")
-		return nil, err
+		return err
 	}
 	d.Preview.Touch(id)
-	return worker, nil
+	return nil
 }
 
 // hasDotDotSegment reports whether path contains a ".." segment, encoded

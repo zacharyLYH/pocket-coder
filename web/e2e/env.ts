@@ -20,7 +20,7 @@ function intEnv(name: string, def: number): number {
 // runs keep the tight budget (multiplier 1) so failures surface fast, while CI
 // gets the headroom it needs. Tune the multiplier here to fix CI flakiness in
 // one place instead of per-test.
-export const CI_TIMEOUT_MULTIPLIER = process.env.CI ? 2 : 1
+const CI_TIMEOUT_MULTIPLIER = process.env.CI ? 2 : 1
 
 // ciTimeout scales a timeout for CI. Locally it returns the value unchanged;
 // under CI it returns value * CI_TIMEOUT_MULTIPLIER. Wrap every test-level

@@ -226,7 +226,7 @@ func cdpForRequest(d Deps, r *http.Request) (*cdpSession, error) {
 func withCDP(d Deps, w http.ResponseWriter, r *http.Request, event, failMsg string, body any, fn func(s *cdpSession) error) {
 	var err error
 	defer obsFailAt(r, event, failMsg, &err, nil)()
-	if _, terr := previewTokenWorker(d, w, r); terr != nil {
+	if terr := previewTokenWorker(d, w, r); terr != nil {
 		err = terr
 		return
 	}

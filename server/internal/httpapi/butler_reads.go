@@ -428,7 +428,7 @@ func butlerReadTools(d Deps) []agent.Tool {
 					})
 				}
 				return butlerJSON(map[string]any{
-					"aiConfigured": aiConfig(d, aiBody{}).Valid(),
+					"aiConfigured": aiConfig(d).Valid(),
 					"sshKeys":      ssh,
 					"auth":         hasAuth,
 				}), nil

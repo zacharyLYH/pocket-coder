@@ -1,7 +1,6 @@
-export type ShortcutKind = 'cmd' | 'keys'
-export type Shortcut = { id: string; alias: string; kind: ShortcutKind; command?: string; keys?: string }
+export type Shortcut = { id: string; alias: string; kind: 'cmd' | 'keys'; command?: string; keys?: string }
 
-export const ALIAS_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
+const ALIAS_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
 
 // Human-readable key combo typed on mobile keyboards ("Ctrl-C", "Esc",
 // "Up", "Tab") to the control sequence xterm would have sent. Anything

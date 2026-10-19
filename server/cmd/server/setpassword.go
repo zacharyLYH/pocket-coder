@@ -41,7 +41,6 @@ func setPasswordMain() {
 		os.Exit(1)
 	}
 	hash, err := auth.HashPassword(password)
-	password = ""
 	if err != nil {
 		slog.Error("hash password", "err", err)
 		os.Exit(1)

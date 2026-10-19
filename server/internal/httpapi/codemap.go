@@ -44,7 +44,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 		// store failures below log specifically (codemap.turn key).
 		var err error
 		defer obsFailAt(r, obs.CodemapAsk, "codemap ask failed", &err, nil)()
-		cfg := aiConfig(d, aiBody{})
+		cfg := aiConfig(d)
 		if !cfg.Valid() {
 			err = errors.New("ai not configured")
 			writeErr(w, http.StatusConflict, err.Error())
@@ -143,7 +143,7 @@ func handleCodemap(d Deps) http.HandlerFunc {
 		go func() {
 			defer codemapRuns.done(id)
 			bg := obs.WithProject(detached(r).Context(), id)
-			_, _ = runCodemapTurn(bg, d, st, id, container, dir, cfg, threadID, threadTitle, turnN, turnID, prompt, history)
+			runCodemapTurn(bg, d, st, id, container, dir, cfg, threadID, threadTitle, turnN, turnID, prompt, history)
 		}()
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"threadId": threadID, "threadTitle": threadTitle,
@@ -162,7 +162,7 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 		tid := r.PathValue("tid")
 		var err error
 		defer obsFailAt(r, obs.CodemapRetry, "codemap retry failed", &err, map[string]any{"threadId": tid})()
-		cfg := aiConfig(d, aiBody{})
+		cfg := aiConfig(d)
 		if !cfg.Valid() {
 			err = errors.New("ai not configured")
 			writeErr(w, http.StatusConflict, err.Error())
@@ -230,7 +230,7 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 		go func() {
 			defer codemapRuns.done(id)
 			bg := obs.WithProject(detached(r).Context(), id)
-			_, _ = runCodemapTurn(bg, d, st, id, container, dir, cfg, tid, th.Title, n, turnID, prompt, history)
+			runCodemapTurn(bg, d, st, id, container, dir, cfg, tid, th.Title, n, turnID, prompt, history)
 		}()
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"threadId": tid, "threadTitle": th.Title,
@@ -241,11 +241,10 @@ func handleCodemapRetry(d Deps) http.HandlerFunc {
 
 // runCodemapTurn runs the model for an already-reserved placeholder turn
 // and persists via Complete/Fail. Post-manifest errors keep threadId+title
-// so FE can open the failed placeholder. It returns the HTTP status + body
-// the caller answers with, so the fire-and-forget explain path needs no
-// fake ResponseWriter. Callers hold the codemapBusy slot; ctx is detached
-// from the request.
-func runCodemapTurn(ctx context.Context, d Deps, st *threads.Store, id, container, dir string, cfg agent.Config, threadID, threadTitle string, turnN int, turnID, prompt string, history []map[string]any) (int, map[string]any) {
+// so FE can open the failed placeholder. Callers are fire-and-forget; the
+// turn's outcome is persisted, not returned. Callers hold the codemapBusy
+// slot; ctx is detached from the request.
+func runCodemapTurn(ctx context.Context, d Deps, st *threads.Store, id, container, dir string, cfg agent.Config, threadID, threadTitle string, turnN int, turnID, prompt string, history []map[string]any) {
 	sha := repoSHA(ctx, d, container, dir)
 	runStart := time.Now()
 	toolStarts := map[string]time.Time{}
@@ -320,9 +319,9 @@ func runCodemapTurn(ctx context.Context, d Deps, st *threads.Store, id, containe
 			obs.Info(ctx, obs.CodemapTurn, fmt.Sprintf("[%s] failed turn persisted with error", turnID), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "fail_turn"})
 		}
 		if tctx.Err() != nil {
-			return http.StatusGatewayTimeout, turnErrBody("codemap timed out", threadID, threadTitle)
+			return
 		}
-		return http.StatusBadGateway, turnErrBody(err.Error(), threadID, threadTitle)
+		return
 	}
 	// Steps are already flat (butler shape): one list for the response,
 	// the audit counts, and persistence. Never nil, so the response
@@ -334,12 +333,12 @@ func runCodemapTurn(ctx context.Context, d Deps, st *threads.Store, id, containe
 	sectionsRaw, merr := json.Marshal(res.Sections)
 	if merr != nil {
 		obs.Error(ctx, obs.CodemapTurn, fmt.Sprintf("[%s] sections marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_sections", "error": merr.Error()})
-		return http.StatusInternalServerError, turnErrBody("marshal codemap sections: "+merr.Error(), threadID, threadTitle)
+		return
 	}
 	toolsRaw, merr := json.Marshal(steps)
 	if merr != nil {
 		obs.Error(ctx, obs.CodemapTurn, fmt.Sprintf("[%s] tools marshal failed: %s", turnID, merr), map[string]any{"turnId": turnID, "stage": "marshal_tools", "error": merr.Error()})
-		return http.StatusInternalServerError, turnErrBody("marshal codemap tools: "+merr.Error(), threadID, threadTitle)
+		return
 	}
 	now := time.Now().UTC()
 	if cerr := st.CompleteTurn(id, threadID, turnN, threads.Turn{
@@ -349,9 +348,9 @@ func runCodemapTurn(ctx context.Context, d Deps, st *threads.Store, id, containe
 	}, lineageRaw); cerr != nil {
 		obs.Error(ctx, obs.CodemapTurn, fmt.Sprintf("[%s] turn complete failed: %s", turnID, cerr), map[string]any{"turnId": turnID, "threadId": threadID, "stage": "complete_turn", "error": cerr.Error()})
 		if cerr.Error() == "unknown thread" {
-			return http.StatusNotFound, turnErrBody("unknown thread", threadID, threadTitle)
+			return
 		}
-		return http.StatusInternalServerError, turnErrBody("complete turn: "+cerr.Error(), threadID, threadTitle)
+		return
 	}
 	obs.Info(ctx, obs.CodemapTurnSaved, fmt.Sprintf("[%s] thread turn persisted: title=%q sections=%d steps=%d", turnID, threadTitle, len(res.Sections), len(steps)), map[string]any{"turnId": turnID, "threadId": threadID, "title": threadTitle, "sections": len(res.Sections), "steps": len(steps), "stage": "complete_turn"})
 	if lineageRaw != nil {
@@ -367,11 +366,6 @@ func runCodemapTurn(ctx context.Context, d Deps, st *threads.Store, id, containe
 		"project": id, "threadId": threadID, "turnId": turnID,
 		"prompt": cut(prompt, 500), "sections": len(res.Sections), "steps": len(steps),
 	})
-	return http.StatusOK, map[string]any{
-		"turnId": turnID, "sha": sha, "sections": res.Sections, "steps": steps,
-		"threadId": threadID, "threadTitle": threadTitle,
-		"time": now.Format(time.RFC3339),
-	}
 }
 
 // cut bounds s at max runes (rune-aware: byte slicing could split a

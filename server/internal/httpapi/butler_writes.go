@@ -548,7 +548,7 @@ var butlerWriteTable = []butlerWriteDef{
 		schema: butlerSchema(map[string]any{"harness": strProp(), "projects": map[string]any{"type": "array", "items": strProp()}}),
 		blast: func(_ Deps, _ context.Context, args map[string]any) (string, string, error) {
 			h := butlerStr(args, "harness")
-			ids := butlerStrs(args, "projects")
+			ids := butlerProjectIDs(args)
 			if h == "" || len(ids) == 0 {
 				return "", "", fmt.Errorf("harness and at least one project are required")
 			}
@@ -562,7 +562,7 @@ var butlerWriteTable = []butlerWriteDef{
 			if err != nil {
 				return "", err
 			}
-			ok, skipped, failed := fanoutCounts(ctx, d, butlerStrs(args, "projects"), func(ctx context.Context, pid, container string) error {
+			ok, skipped, failed := fanoutCounts(ctx, d, butlerProjectIDs(args), func(ctx context.Context, pid, container string) error {
 				// Same installing mark as the HTTP install endpoint, so the
 				// probe reports it while this synchronous run is underway.
 				_ = d.Projects.RecordInstalling(pid, h.ID)
@@ -598,7 +598,7 @@ var butlerWriteTable = []butlerWriteDef{
 		name: butlerToolFanoutExec, desc: "Run one command in many projects. Example: update opencode everywhere.",
 		schema: butlerSchema(map[string]any{"projects": map[string]any{"type": "array", "items": strProp()}, "command": strProp()}),
 		blast: func(_ Deps, _ context.Context, args map[string]any) (string, string, error) {
-			ids, cmd := butlerStrs(args, "projects"), butlerStr(args, "command")
+			ids, cmd := butlerProjectIDs(args), butlerStr(args, "command")
 			if len(ids) == 0 || cmd == "" {
 				return "", "", fmt.Errorf("projects and command are required")
 			}
@@ -609,7 +609,7 @@ var butlerWriteTable = []butlerWriteDef{
 				return "", fmt.Errorf("not available")
 			}
 			cmd := butlerStr(args, "command")
-			ok, skipped, failed := fanoutCounts(ctx, d, butlerStrs(args, "projects"), func(ctx context.Context, _ string, container string) error {
+			ok, skipped, failed := fanoutCounts(ctx, d, butlerProjectIDs(args), func(ctx context.Context, _ string, container string) error {
 				_, rerr := d.Sessions.ExecCommand(ctx, container, cmd)
 				return rerr
 			})
@@ -775,10 +775,10 @@ var butlerWriteTable = []butlerWriteDef{
 	},
 }
 
-// butlerStrs decodes a string array arg.
-func butlerStrs(args map[string]any, key string) []string {
+// butlerProjectIDs decodes the "projects" string array arg.
+func butlerProjectIDs(args map[string]any) []string {
 	var out []string
-	switch v := args[key].(type) {
+	switch v := args["projects"].(type) {
 	case []any:
 		for _, e := range v {
 			if s, ok := e.(string); ok && strings.TrimSpace(s) != "" {

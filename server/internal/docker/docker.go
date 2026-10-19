@@ -240,7 +240,7 @@ func isRemovalInProgress(err error) bool {
 
 // Inspect returns the container's current state.
 func (d *Docker) Inspect(ctx context.Context, id string) (Container, error) {
-	c, err := d.c.InspectContainerWithContext(id, ctx)
+	c, err := d.c.InspectContainerWithOptions(dockerclient.InspectContainerOptions{Context: ctx, ID: id})
 	if err != nil {
 		return Container{}, wrapNotFound(id, err)
 	}
