@@ -111,6 +111,13 @@ const (
 
 	// Observe reads.
 	ObserveRead = "observe.read"
+
+	// Web push (global: no project scope).
+	PushSubscribe = "push.subscribe"
+	PushSend      = "push.send"
+	PushPrune     = "push.prune"
+	PushRotate    = "push.rotate"
+	PushStore     = "push.store"
 )
 
 // BuildTypes are the create→ready pipeline plus lifecycle: the Build view.

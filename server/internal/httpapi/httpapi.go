@@ -20,6 +20,7 @@ import (
 	"pcoder/internal/obs"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
+	"pcoder/internal/push"
 	"pcoder/internal/session"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
@@ -48,6 +49,7 @@ type Deps struct {
 	State     *state.Store
 	Codemaps  *threads.Store
 	Butler    *threads.Store
+	Push      *push.Store
 }
 
 // New returns the HTTP handler for the whole server. Login/logout are
@@ -187,6 +189,13 @@ func New(d Deps) http.Handler {
 	if d.State != nil {
 		authed("GET", "/api/state", handleGetState)
 		authed("DELETE", "/api/state", handleDeleteState)
+	}
+
+	if d.Push != nil {
+		mux.HandleFunc("GET /api/push/key", handlePushKey(d))
+		authed("POST", "/api/push/subscribe", handlePushSubscribe)
+		authed("GET", "/api/push/subscriptions", handlePushList)
+		authed("POST", "/api/push", handlePushSend)
 	}
 
 	// Butler: one global history (no project scope). Turns are plain

@@ -16,8 +16,9 @@ const FIXED_KEYS = [
   { label: 'Ctrl-D', seq: '\x04' },
 ]
 
-export function AccessoryKeys({ projectId, onRunShortcut }: {
+export function AccessoryKeys({ projectId, session, onRunShortcut }: {
   projectId: string
+  session: string
   onRunShortcut: (shortcut: Shortcut) => void
 }) {
   const { shortcuts, reload } = useShortcuts(projectId)
@@ -31,7 +32,7 @@ export function AccessoryKeys({ projectId, onRunShortcut }: {
   async function paste() {
     try {
       const clipboard = navigator.clipboard
-      if (clipboard?.readText) pasteTermText(await clipboard.readText())
+      if (clipboard?.readText) pasteTermText(await clipboard.readText(), session)
     } catch {
       // Clipboard reads can be denied; leave the terminal untouched.
     }
@@ -48,7 +49,7 @@ export function AccessoryKeys({ projectId, onRunShortcut }: {
             aria-label={key.aria ?? key.label}
             title="Fixed terminal key"
             className="min-h-9 min-w-9 shrink-0 border-orange-300 bg-orange-100 px-2 font-mono text-xs text-orange-900 hover:bg-orange-200 dark:border-orange-300 dark:bg-orange-100 dark:text-orange-900 dark:hover:bg-orange-200"
-            onClick={() => sendTermInput(key.seq)}
+            onClick={() => sendTermInput(key.seq, session)}
           >
             {key.label}
           </Button>

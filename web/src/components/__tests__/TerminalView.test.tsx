@@ -228,7 +228,7 @@ describe('TerminalView session management', () => {
 
     // Transport into Diff: no Actions menu, fixed title instead of session name.
     await act(async () => { fireEvent.click(screen.getByTestId('tab-diff')) })
-    expect(screen.getByTestId('accessory-keys')).toBeTruthy()
+    expect(screen.queryByTestId('accessory-keys')).toBeNull()
     expect(screen.getByTestId('fixed-view-title').textContent).toContain('Git')
     expect(screen.queryByTestId('terminal-actions-trigger')).toBeNull()
     expect(screen.queryByTestId('current-session')).toBeNull()
@@ -240,6 +240,7 @@ describe('TerminalView session management', () => {
     // …and returning does not redial either.
     await act(async () => { fireEvent.click(screen.getByTestId('tab-session-helper-1')) })
     expect(screen.getByTestId('terminal-actions-trigger')).toBeTruthy()
+    expect(screen.getByTestId('accessory-keys')).toBeTruthy()
     await act(async () => { await new Promise((r) => setTimeout(r, 50)) })
     expect(ensurePosts().length).toBe(ensureCount)
   })

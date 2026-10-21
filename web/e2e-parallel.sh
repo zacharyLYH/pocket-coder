@@ -54,6 +54,7 @@ preview.c|7|e2e/preview.journey.spec.ts e2e/preview.auth.spec.ts e2e/preview.vie
 preview.d|8|e2e/preview.htmx.spec.ts e2e/preview.vue.spec.ts e2e/preview.reconnect.spec.ts e2e/preview.port.spec.ts e2e/shortcuts.spec.ts
 preview.e|10|e2e/preview.fit.spec.ts e2e/preview.vanilla.spec.ts e2e/preview.backbutton.spec.ts e2e/preview.framebuffer.spec.ts
 bootstrap|9|e2e/bootstrap.spec.ts
+push|11|e2e/push.spec.ts
 '
 
 WANTED="${*:-}"
@@ -62,7 +63,7 @@ NL="$(printf '\nx')"; NL="${NL%x}"
 for w in $WANTED; do
   case "$NL$ALL_GROUPS" in
     *"$NL$w|"*) ;;
-    *) echo "e2e-parallel.sh: unknown group '$w' — valid: app stack sessions visual preview.a preview.b preview.c preview.d preview.e bootstrap" >&2; exit 2 ;;
+    *) echo "e2e-parallel.sh: unknown group '$w' — valid: app stack sessions visual preview.a preview.b preview.c preview.d preview.e bootstrap push" >&2; exit 2 ;;
   esac
 done
 

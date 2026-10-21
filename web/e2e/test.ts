@@ -13,6 +13,12 @@ export const test = base.extend<{ sshProbe: void }>({
     async ({ page }, use) => {
       await page.route('**/api/ssh/test', (route) =>
         route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, user: 'e2e' }) }))
+      // Pin the notification permission so the push card renders its prime
+      // state in every spec. push.spec.ts overrides this with its own getter.
+      await page.addInitScript(() => {
+        if (!('Notification' in window)) return
+        Object.defineProperty(Notification, 'permission', { configurable: true, get: () => 'default' })
+      })
       await use()
     },
     { auto: true },

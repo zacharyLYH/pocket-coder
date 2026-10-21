@@ -1,19 +1,12 @@
 # pocket-coder
 
-Vibe code on the move with your favourite coding CLIs, without sacrificing control and modern ergonomics. Like Devin and GH Codespaces, but free.
+Vibe code on the move with your favourite coding CLIs, without sacrificing control and modern ergonomics. Like Devin, T3 Code, and GH Codespaces, but free.
 
-## Run it on a server (EC2)
+Pocket Coder runs on your own box and gives you a browser terminal, project sessions, git tools, previews, and push notifications on desktop and mobile.
 
-One command in the EC2 "User data" field (or over SSH as root) and you get
-a running Pocket Coder on port 8080. Open that port in the security group.
-Re-run the same command anytime to update to the latest version — your data
-(volume + `server/.env`) is never touched. Re-run it to rotate the login
-password too.
+## Run it
 
-**1. Pick the account email + password** for this instance. One account per
-instance; the email is just the login name and never receives mail.
-
-**2. Paste** (replace the email + password):
+On a fresh Linux box, or a Mac with Docker Desktop running. Run this over SSH, or paste it into the EC2 user data field:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/zacharyLYH/pocket-coder/main/deploy/setup.sh | bash -s -- \
@@ -21,60 +14,45 @@ curl -fsSL https://raw.githubusercontent.com/zacharyLYH/pocket-coder/main/deploy
   --password "your-login-password"
 ```
 
-**3. Log in** — open `http://<instance-ip>:8080` and sign in with that email
-and password. The password is hashed (Argon2id) on the box; only the hash is
-stored. Rerunning the command with a new password signs out every device.
+On Linux, the script installs Docker. It then clones the repo, writes `server/.env`, hashes the password, and starts the stack on port 8080. On Mac, Docker Desktop must be running first.
 
-**4. Connect GitHub (Desktop Recommended)**:
-Upon logging in, you'll be prompted to copy the generated SSH key to your [GitHub SSH keys](https://github.com/settings/keys). 
-> **Note:** It is highly recommended to perform this initial setup on a desktop device. Copying long SSH keys and navigating GitHub's settings page is significantly easier with a desktop clipboard and screen size. 
+1. Open `http://<host>:8080`. On EC2, allow port 8080 in the security group first.
+2. Sign in with the email and password you passed to setup. The password needs at least 8 characters. The email is only a login name and never receives mail.
+3. Add the SSH key shown in the app to [GitHub SSH keys](https://github.com/settings/keys). Do this on desktop first. Long keys are painful to copy on a phone.
+4. On mobile, open the same URL and choose Add to Home Screen. The app installs as a PWA.
 
-Once your key is authenticated, switch to your mobile device and install the app as a PWA (Add to Home Screen) for maximum on-the-go convenience!
+Re-run the same command to update. The `pcoder-data` volume survives updates and password changes. Re-run with a new password to sign out every device.
 
 ## Developer
 
 ### Setup
-Local dev uses the `docker-compose.dev.yml` stack (Vite HMR), with the
-account email in `server/.env`:
 
 ```sh
-make setup                      # checks tools, creates server/.env, installs deps, seeds demo data
-# first run creates server/.env — edit PCODER_AUTH_EMAIL, then re-run make setup
-make start-docker               # full dev stack (:8080 + :5173)
-make dev-seed                   # re-seed server/data from test/state.mock.json
-make nuke                       # teardown containers, volumes, network and server/data
+make setup                      # tools, deps, demo data
+make start-docker               # :8080 + :5173; clears push setup first
+make dev-seed                   # reset demo data
+make reset-push                 # clear VAPID keys + subscriptions
+make nuke                       # remove containers, volumes, local data
 ```
 
-The demo login is the seeded email with password `dev-password-12345`
-(the hash lives in `test/state.mock.json`). `make start-docker` applies it
-automatically on first run when `server/data/state.json` has no password yet,
-so you can log in without running `make dev-seed` first.
+`make setup` seeds `dev@example.com` / `dev-password-12345`. Use another account with `make setup PCODER_AUTH_EMAIL=you@example.com`. `start-docker` sets the demo password when state has none, so the first login works without seeding.
 
-**Persistent storage**: local dev keeps state in `server/data/` (bind-mounted
-at `/data` in the dev container, so `make dev-seed` hits the live file). On
-your box it's the `pcoder-data` volume (mounted at `/data` in the container).
-The password hash lives in `state.json` there — backups of that volume are
-as sensitive as the box itself.
+Dev data lives in `server/data/` (bind-mounted to `/data`). Production uses the `pcoder-data` volume. Treat the volume like the box itself.
 
-**Env vars** :
+Web push keys (`vapid.json`, `push.json`) live in the same directory. `start-docker` clears them every run; `reset-push` does it without starting the stack. An empty store shows Enable again instead of silently resubscribing. See `docs/web-push-spec.md` for details.
 
-| Variable | Description |
-|---|---|
-| `PCODER_AUTH_EMAIL` | The one login account (email). Required. |
-| `PCODER_JWT_SECRET` | Session signing key; auto-generated into the data dir when unset. |
-| `PCODER_DATA_DIR` | State dir (default `./data`) |
-| `PCODER_BIND` | Listen addr (default `:8080`) |
-| `PCODER_DOCKER_SOCK` | Docker endpoint (default `unix:///var/run/docker.sock`) |
+### Env
 
-Passwords are never env vars: setup pipes the password to the backend's
-`set-password` command over stdin, which stores only a salted Argon2id hash.
-On a plain host the same command is:
+`PCODER_AUTH_EMAIL` is the only value you must set. Production setup writes it to `server/.env` (mode 600). Dev defaults it to `dev@example.com` and needs no file.
 
-```sh
-printf '%s' "$PASSWORD" | go -C server run ./cmd/server set-password
-```
+Passwords are not env vars. Setup passes the password on stdin and stores only an Argon2id hash.
+
+All other settings are optional and have defaults: `PCODER_DATA_DIR=./data`, `PCODER_BIND=:8080`, the Docker socket, and an auto-generated JWT secret in the data dir. For host runs, put overrides in `server/.env`.
 
 ### Tests
+
 ```sh
-make test                       # everything: setup.sh self-test + Go + web
+make test                       # setup.sh self-test + Go + web
 ```
+
+For a faster loop, run `go -C server test ./...`, `cd web && npm run test:unit`, or `cd web && npm run test:e2e:parallel`.

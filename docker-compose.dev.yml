@@ -1,6 +1,6 @@
 # Dev stack. Boots the Go server and the Vite dev server proxying /api and
-# /ws to it. Dev credentials come from server/.env only (account email);
-# the server itself loads the same file via config.Load. The data dir is
+# /ws to it. `make` supplies the account email (default dev@example.com);
+# server/.env is optional and adds the other PCODER_* keys. The data dir is
 # bind-mounted from server/data so `make dev-seed` (host-side) rewrites the
 # same state.json the container boots from.
 #
@@ -15,6 +15,7 @@ services:
       - path: server/.env
         required: false
     environment:
+      PCODER_AUTH_EMAIL: ${PCODER_AUTH_EMAIL:-dev@example.com}
       PCODER_DATA_DIR: /data
       PCODER_BIND: :8080
       PCODER_DOCKER_SOCK: unix:///var/run/docker.sock

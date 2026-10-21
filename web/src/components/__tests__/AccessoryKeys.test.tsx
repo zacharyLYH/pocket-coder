@@ -24,15 +24,15 @@ describe('AccessoryKeys', () => {
   it('sends fixed and user-defined key buttons through the terminal input event', async () => {
     const received: string[] = []
     const runShortcut = vi.fn()
-    const onInput = (event: Event) => received.push((event as CustomEvent<string>).detail)
+    const onInput = (event: Event) => received.push(JSON.stringify((event as CustomEvent).detail))
     window.addEventListener(TERM_INPUT_EVENT, onInput)
-    render(<AccessoryKeys projectId="p1" onRunShortcut={runShortcut} />)
+    render(<AccessoryKeys projectId="p1" session="main" onRunShortcut={runShortcut} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Esc' }))
     await screen.findByRole('button', { name: 'Undo' })
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
 
-    expect(received).toEqual(['\x1b'])
+    expect(received).toEqual([JSON.stringify({ seq: '\x1b', session: 'main' })])
     expect(runShortcut).toHaveBeenCalledWith({ id: 'custom-1', alias: 'Undo', kind: 'keys', keys: 'Ctrl-Z' })
     expect(screen.getByRole('button', { name: 'Build' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Paste' })).toBeNull()
@@ -40,7 +40,7 @@ describe('AccessoryKeys', () => {
   })
 
   it('keeps fixed and user-defined keys visible without a hide control', async () => {
-    render(<AccessoryKeys projectId="p1" onRunShortcut={vi.fn()} />)
+    render(<AccessoryKeys projectId="p1" session="main" onRunShortcut={vi.fn()} />)
     await screen.findByRole('button', { name: 'Undo' })
 
     expect(screen.getByRole('button', { name: 'Esc' })).toBeTruthy()
@@ -53,18 +53,18 @@ describe('AccessoryKeys', () => {
     const readText = vi.fn().mockResolvedValue('pasted text')
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText } })
     const paste = vi.fn()
-    const onPaste = (event: Event) => paste((event as CustomEvent<string>).detail)
+    const onPaste = (event: Event) => paste((event as CustomEvent).detail)
     window.addEventListener(TERM_PASTE_EVENT, onPaste)
-    render(<AccessoryKeys projectId="p1" onRunShortcut={vi.fn()} />)
+    render(<AccessoryKeys projectId="p1" session="main" onRunShortcut={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: 'Paste' }))
 
-    await waitFor(() => expect(paste).toHaveBeenCalledWith('pasted text'))
+    await waitFor(() => expect(paste).toHaveBeenCalledWith({ text: 'pasted text', session: 'main' }))
     expect(readText).toHaveBeenCalledOnce()
     window.removeEventListener(TERM_PASTE_EVENT, onPaste)
   })
 
   it('does not show Paste without clipboard read support', () => {
-    render(<AccessoryKeys projectId="p1" onRunShortcut={vi.fn()} />)
+    render(<AccessoryKeys projectId="p1" session="main" onRunShortcut={vi.fn()} />)
     expect(screen.queryByRole('button', { name: 'Paste' })).toBeNull()
   })
 })

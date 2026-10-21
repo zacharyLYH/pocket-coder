@@ -24,6 +24,7 @@ import (
 	"pcoder/internal/obs"
 	"pcoder/internal/preview"
 	"pcoder/internal/project"
+	"pcoder/internal/push"
 	"pcoder/internal/session"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
@@ -68,6 +69,12 @@ func main() {
 	})
 	if err != nil {
 		slog.Error("open state", "err", err)
+		os.Exit(1)
+	}
+
+	pushStore, err := push.Open(cfg.DataDir)
+	if err != nil {
+		slog.Error("open push store", "err", err)
 		os.Exit(1)
 	}
 
@@ -176,6 +183,7 @@ func main() {
 		SSHKeys: sshKeyStore, State: st, Preview: previewManager,
 		Obs: observe, Docker: dkr, Codemaps: codemapStore,
 		Butler: threads.New(filepath.Join(cfg.DataDir, "butler"), true),
+		Push:   pushStore,
 	}))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

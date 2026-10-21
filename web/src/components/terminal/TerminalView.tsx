@@ -225,7 +225,7 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
       if (s.kind === 'cmd') {
         await api(projectPath(projectId, `/sessions/${current}/inject`), { method: 'POST', body: JSON.stringify({ command: s.command ?? '' }) })
       } else {
-        sendTermInput(parseKeyCombo(s.keys ?? ''))
+        sendTermInput(parseKeyCombo(s.keys ?? ''), current)
       }
       setShortcutsOpen(false)
     } catch (err) {
@@ -300,7 +300,9 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           {tab === 'nerdy' && <NerdyStuffTab projectId={projectId} />}
         </div>
       )}
-      <AccessoryKeys projectId={projectId} onRunShortcut={(shortcut) => void runShortcut(shortcut)} />
+      {tab === 'terminal' && (
+        <AccessoryKeys projectId={projectId} session={current} onRunShortcut={(shortcut) => void runShortcut(shortcut)} />
+      )}
 
       <NewSessionDialog
         open={newDialogOpen}

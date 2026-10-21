@@ -13,6 +13,7 @@ async function openGitTab(page: import('@playwright/test').Page, opts?: Paramete
   await page.goto(terminalUrl(PROJECT, 'main'))
   await page.getByTestId('tab-diff').click()
   await expect(page.getByTestId('diff-tab')).toBeVisible({ timeout: ciTimeout(10_000) })
+  await expect(page.getByTestId('accessory-keys')).toHaveCount(0)
 }
 
 test.describe('git tab (mobile)', () => {
@@ -232,6 +233,49 @@ test.describe('git branches (mobile)', () => {
 
 test.describe('terminal accessory keys (mobile)', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+
+  test('renders only on the terminal view', async ({ page }) => {
+    resetGitState()
+    await mockGit(page)
+    await page.goto(terminalUrl(PROJECT, 'main'))
+    await expect(page.getByTestId('accessory-keys')).toBeVisible()
+
+    await page.getByTestId('tab-diff').click()
+    await expect(page.getByTestId('diff-tab')).toBeVisible({ timeout: ciTimeout(10_000) })
+    await expect(page.getByTestId('accessory-keys')).toHaveCount(0)
+
+    await page.getByTestId('tab-preview').click()
+    await expect(page.getByTestId('preview-tab')).toBeVisible()
+    await expect(page.getByTestId('accessory-keys')).toHaveCount(0)
+
+    await page.getByTestId('tab-session-main').click()
+    await expect(page.getByTestId('accessory-keys')).toBeVisible()
+  })
+
+  test('input reaches only the active session', async ({ page }) => {
+    resetGitState()
+    await mockGit(page)
+    await page.route('**/api/projects/*/sessions*', (r) =>
+      r.fulfill({ json: r.request().method() === 'GET' ? { sessions: [{ name: 'main' }, { name: 'dev' }] } : { name: 'main' } }))
+    const frames = new Map<string, string[]>()
+    await page.routeWebSocket(/\/ws\/projects\//, (ws) => {
+      const session = new URL(ws.url()).pathname.split('/').pop()!
+      const list = frames.get(session) ?? []
+      frames.set(session, list)
+      ws.onMessage((message) => list.push(message.toString()))
+    })
+    await page.goto(terminalUrl(PROJECT, 'main'))
+    await expect(page.getByTestId('tab-session-dev')).toBeVisible()
+
+    await page.getByTestId('tab-session-dev').click()
+    await expect(page.getByTestId('tab-session-dev')).toHaveAttribute('aria-selected', 'true')
+    await expect.poll(() => (frames.get('dev') ?? []).length).toBeGreaterThan(0)
+    const mainBefore = [...(frames.get('main') ?? [])]
+
+    await page.getByRole('button', { name: 'Esc' }).click()
+    await expect.poll(() => (frames.get('dev') ?? []).filter((f) => f.includes('\\u001b')).length).toBe(1)
+    expect(frames.get('main') ?? []).toEqual(mainBefore)
+  })
 
   test('fixed keys and user-defined keys are available from the accessory row', async ({ page }) => {
     resetGitState()

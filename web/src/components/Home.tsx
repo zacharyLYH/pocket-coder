@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Info } from 'lucide-react'
 import { BusyOverlay } from '@/components/BusyOverlay'
 import { ProjectsCard } from '@/components/ProjectsCard'
+import { PushCard } from '@/components/PushCard'
 import { SetupRows } from '@/components/SetupRows'
 import { SettingsCard } from '@/components/SettingsCard'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -105,6 +106,7 @@ export function Home({ email, onLogout, navigate }: {
               </CardContent>
             </Card>
             <RunEverywhereCard projects={projects} busy={busy} onBusy={setBusy} />
+            <PushCard onBusy={setBusy} />
             <SettingsCard onReset={() => { void refresh(); checkSsh() }} onBusy={setBusy} />
           </>
         )}
