@@ -26,11 +26,13 @@ import (
 	"pcoder/internal/state"
 )
 
-// EventLog is what handlers need from the event log: read history and append
-// new lines. *events.Log satisfies it; tests use a real temp log.
+// EventLog is what handlers need from the event log: read history, append
+// new lines, and clear it for the settings wipe. *events.Log satisfies it;
+// tests use a real temp log.
 type EventLog interface {
 	events.Reader
 	Append(typ string, data map[string]any) (events.Event, error)
+	Reset() error
 }
 
 // Deps carries everything New needs. Grows over time instead of
@@ -307,15 +309,17 @@ func handleGetState(d Deps) http.HandlerFunc {
 	}
 }
 
-// handleDeleteState wipes every project, harness, and thread, resetting
-// state.json to a bare document (user + server key only). The caller
-// must have just downloaded state.json (handleGetState?download=true) —
-// this is the destructive half of the settings reset flow.
+// handleDeleteState wipes every project, harness, thread, AI model, push
+// subscription, and the global event log, resetting state.json to a bare
+// document (user + server key only). The caller must have just downloaded
+// state.json (handleGetState?download=true) — this is the destructive half
+// of the settings reset flow.
 //
 // Each project is deleted via the existing project.Delete with ScopeAll,
 // so containers, volumes, codemaps, and observe logs are all cleaned up
 // using the same per-project pipeline. Non-builtin harnesses are stripped
-// (builtins re-seed on the next boot via EnsureBuiltins).
+// (builtins re-seed on the next boot via EnsureBuiltins). Web-push keys
+// rotate too, so every device must enable notifications again.
 func handleDeleteState(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
@@ -365,11 +369,44 @@ func handleDeleteState(d Deps) http.HandlerFunc {
 				slog.Warn("wipe: reseed builtins failed", "err", serr)
 			}
 		}
-		// 3. Reset state.json: clear projects, keep user + server key.
-		// (Harnesses were already stripped above and re-seeded; the explicit
-		// clear is a safety net for any custom harnesses that raced in.)
+		// 3. Clear global history left outside project scopes: butler chats,
+		// any stale codemap threads, and the audit log.
+		if d.Butler != nil {
+			if perr := d.Butler.Purge(); perr != nil {
+				err = perr
+				writeInternalErr(w, "purge butler threads", err)
+				return
+			}
+		}
+		if d.Codemaps != nil {
+			if perr := d.Codemaps.Purge(); perr != nil {
+				err = perr
+				writeInternalErr(w, "purge codemap threads", err)
+				return
+			}
+		}
+		if d.Events != nil {
+			if rerr := d.Events.Reset(); rerr != nil {
+				err = rerr
+				writeInternalErr(w, "reset event log", err)
+				return
+			}
+		}
+		// 4. Rotate web-push credentials. Subscriptions are dropped with the
+		// old VAPID key, so no device keeps receiving pushes after a wipe.
+		if d.Push != nil {
+			if perr := d.Push.Wipe(r.Context()); perr != nil {
+				err = perr
+				writeInternalErr(w, "wipe push store", err)
+				return
+			}
+		}
+		// 5. Reset state.json: clear projects and AI models, keep the login
+		// user + server key. (Harnesses were already stripped above and
+		// re-seeded.)
 		err = d.State.Mutate(func(doc *state.Document) error {
 			doc.Projects = map[string]state.Project{}
+			doc.AIModels = nil
 			return nil
 		})
 		if err != nil {

@@ -62,7 +62,7 @@ export function Home({ email, onLogout, navigate }: {
       <main className="mx-auto flex w-full max-w-md flex-col gap-3 px-4 pb-16 pt-4">
         <span className="sr-only">Welcome, {email}</span>
         <p className="text-sm text-muted-foreground" aria-label={`Signed in as ${email}`}>
-          {ssh === 'ok' && (projects.length === 0 && !loading ? `Hey ${email}, clone your first repo.` : `${projects.length} project${projects.length === 1 ? '' : 's'}`)}
+          {ssh === 'ok' && (projects.length === 0 && !loading ? `Hey ${email}, clone your first repo.` : `Hey ${email}.`)}
         </p>
         {ssh === 'checking' && (
           <p className="text-sm text-muted-foreground" data-testid="ssh-checking">Checking the git connection…</p>
@@ -103,10 +103,11 @@ export function Home({ email, onLogout, navigate }: {
               </CardHeader>
               <CardContent className="px-2">
                 <SetupRows ai={aiStatus} onGit={checkSsh} onAi={() => void refreshAi()} />
+                <div className="my-1 border-t border-border/60" />
+                <PushCard />
               </CardContent>
             </Card>
             <RunEverywhereCard projects={projects} busy={busy} onBusy={setBusy} />
-            <PushCard onBusy={setBusy} />
             <SettingsCard onReset={() => { void refresh(); checkSsh() }} onBusy={setBusy} />
           </>
         )}

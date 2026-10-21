@@ -85,6 +85,38 @@ func TestDeletionSemantics(t *testing.T) {
 	}
 }
 
+func TestWipeRotatesKeyAndClearsSubscriptions(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey := s.PublicKey()
+	if err := s.Subscribe(context.Background(), Subscription{Endpoint: "https://fcm.googleapis.com/x", Keys: Keys{P256dh: "x", Auth: "y"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Wipe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s.PublicKey() == oldKey {
+		t.Fatal("VAPID key did not rotate")
+	}
+	if len(s.List()) != 0 {
+		t.Fatal("subscriptions survived wipe")
+	}
+	// The rotation is persisted: reopening sees the new key and empty store.
+	s, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.PublicKey() == oldKey {
+		t.Fatal("rotated VAPID key was not persisted")
+	}
+	if len(s.List()) != 0 {
+		t.Fatal("wiped subscriptions were not persisted")
+	}
+}
+
 func TestCorruptFiles(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, vapidFile), []byte("{"), 0o600); err != nil {

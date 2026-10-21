@@ -63,7 +63,8 @@ export function SettingsCard({ onReset, onBusy }: {
     <div data-testid="settings-card" className="flex flex-col gap-2">
       <p className="text-xs text-muted-foreground">
         Export your state.json or wipe all data. Wiping downloads your state
-        first, then deletes every project, harness, and session.
+        first, then deletes every project, session, thread, AI model, push
+        subscription, and activity log.
       </p>
       {error && <p className="text-destructive max-h-24 overflow-auto break-all text-xs" data-testid="settings-error">{error}</p>}
       <div className="flex gap-2">
@@ -79,9 +80,11 @@ export function SettingsCard({ onReset, onBusy }: {
           <AlertDialogHeader>
             <AlertDialogTitle>Wipe all data?</AlertDialogTitle>
             <AlertDialogDescription>
-              This deletes every project, harness, session, and thread. Your
-              state.json will download automatically before the wipe. This
-              cannot be undone.
+              This deletes every project, harness, session, butler and codemap
+              thread, AI model, push subscription, and activity log. Push
+              notifications stay off until each device enables them again. Your
+              login and server SSH key are kept. state.json downloads
+              automatically before the wipe. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

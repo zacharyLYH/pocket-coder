@@ -1,5 +1,6 @@
 import {
   Activity,
+  Bell,
   Bot,
   Command,
   GitBranch,
@@ -63,6 +64,11 @@ const ROW_TWO = [
     icon: Zap,
     name: 'Shortcuts',
     desc: 'One-tap commands + keys',
+  },
+  {
+    icon: Bell,
+    name: 'Push notifications',
+    desc: 'Agent pings your phone',
   },
 ]
 

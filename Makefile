@@ -1,13 +1,14 @@
-# Dev-only login email. Input to state seeding (`make dev-seed` and the
-# first `make start-docker`); the server itself reads the email from
-# state.json, never from the environment. Override per run:
-#   make dev-seed DEV_EMAIL=you@example.com
+# Dev-only login email. start-docker writes it into state.json every run;
+# the server reads the email from state.json, never from the environment.
+# Override per run:
+#   make start-docker DEV_EMAIL=you@example.com
 DEV_EMAIL ?= dev@example.com
 
-# Dev-only login password. start-docker applies it once when state.json has
-# no credential yet, so a fresh checkout can log in immediately. The
+# Dev-only login password. start-docker applies it every run — bumping
+# AuthVersion to invalidate stale sessions — so you always log in with the
+# credential shown in the banner after set-password completes. The
 # production stack never reads this.
-DEV_PASSWORD := dev-password-12345
+DEV_PASSWORD ?= dev-password-12345
 
 COMPOSE := docker compose -f docker-compose.dev.yml
 PUSH_FILES := server/data/vapid.json server/data/push.json
@@ -30,15 +31,16 @@ setup: ## First-time local setup: check tools, install deps, seed demo data
 
 start-docker: ## Start full stack locally (clears push setup so Enable starts fresh)
 	@command -v docker >/dev/null 2>&1 || { echo "missing: docker (https://docs.docker.com/get-docker/)"; exit 1; }
+	@command -v go >/dev/null 2>&1 || { echo "missing: go (https://go.dev/dl/)"; exit 1; }
 	@test -n "$(DEV_EMAIL)" || { echo 'DEV_EMAIL is empty — set it or unset it for the dev default'; exit 1; }
 	@$(COMPOSE) down >/dev/null 2>&1 || true
 	@$(PUSH_CLEAR)
-	@if ! grep -Eq '"passwordHash"[[:space:]]*:[[:space:]]*"[^"]+"' server/data/state.json 2>/dev/null; then \
-		command -v go >/dev/null 2>&1 || { echo "missing: go (https://go.dev/dl/)"; exit 1; }; \
-		echo "no dev password set — configuring $(DEV_EMAIL) / $(DEV_PASSWORD)"; \
-		printf '%s' '$(DEV_PASSWORD)' | env PCODER_DATA_DIR=./data go -C server run ./cmd/server set-password --email '$(DEV_EMAIL)'; \
-	fi
+	@printf '%s' '$(DEV_PASSWORD)' | env PCODER_DATA_DIR=./data go -C server run ./cmd/server set-password --email '$(DEV_EMAIL)'
 	@docker build -t pcoder-browser:v14 server/internal/preview/image
+	@printf '\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+	@printf '  Dev login:  %s  /  %s\n' '$(DEV_EMAIL)' '$(DEV_PASSWORD)'
+	@printf '  (applied fresh — AuthVersion bumped, old sessions cleared)\n'
+	@printf '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n'
 	@trap '$(COMPOSE) down' EXIT; \
 	$(COMPOSE) up --build
 

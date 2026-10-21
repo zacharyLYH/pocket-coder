@@ -72,6 +72,37 @@ func TestOpenContinuesIDs(t *testing.T) {
 	}
 }
 
+func TestResetTruncatesAndRestartsIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.log")
+	l, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer l.Close()
+	for i := 0; i < 3; i++ {
+		if _, err := l.Append("old", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := l.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := l.Read(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 0 {
+		t.Fatalf("events survived Reset: %+v", evs)
+	}
+	ev, err := l.Append("after", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.ID != 1 {
+		t.Fatalf("id after Reset = %d, want 1", ev.ID)
+	}
+}
+
 // A torn write (partial line, no trailing newline) or any other corrupt line
 // must never fail a read — the good lines before it still come back, and the
 // id counter continues past the damage.

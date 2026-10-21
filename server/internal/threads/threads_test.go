@@ -77,6 +77,20 @@ func TestReserveGetListDeleteWithScope(t *testing.T) {
 	if err := s.DeleteScope(""); err == nil {
 		t.Fatal("DeleteScope(\"\") must be refused")
 	}
+	// Purge is the explicit escape hatch: it removes the global scope too.
+	if _, _, err := s.ReserveNewThread("", "global chat", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Purge(); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := s.List("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 0 {
+		t.Fatalf("threads survived Purge: %+v", summaries)
+	}
 }
 
 func TestCompleteTurnWritesSeparateLineage(t *testing.T) {

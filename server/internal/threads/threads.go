@@ -564,6 +564,21 @@ func (s *Store) DeleteScope(scope string) error {
 	return nil
 }
 
+// Purge removes every thread in the store, including the store root itself.
+// Unlike DeleteScope it accepts the empty (global) scope: the settings wipe
+// needs to clear butler history. A missing store root is success.
+func (s *Store) Purge() error {
+	if err := s.check(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.RemoveAll(s.dir); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // ReadTurnLineage loads one N.lineage.json for diagnostics (no HTTP
 // exposure, never read for follow-up context).
 func (s *Store) ReadTurnLineage(scope, threadID string, n int) ([]byte, error) {

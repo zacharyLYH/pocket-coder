@@ -84,6 +84,8 @@ func (f *fakeEventLog) Append(typ string, data map[string]any) (events.Event, er
 	return events.Event{}, nil
 }
 
+func (f *fakeEventLog) Reset() error { return nil }
+
 // TestEventsAPIWithFakeEventLog proves the handler reads events from the
 // injected EventLog, not from disk.
 func TestEventsAPIWithFakeEventLog(t *testing.T) {

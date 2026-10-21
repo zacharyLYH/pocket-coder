@@ -53,7 +53,7 @@ export function LandingPage({ onLogin, loggedIn }: { onLogin: () => void; logged
             <CardContent className="text-sm text-muted-foreground">
               <ul className="flex list-disc flex-col gap-1 pl-5">
                 <li>A domain you control</li>
-                <li>A Linux box with at least 4 GB RAM and port 8080 open</li>
+                <li>A Linux box with port 8080 open (4 GB RAM only if you run real dev builds)</li>
                 <li>An email address and password for your login account</li>
               </ul>
             </CardContent>
@@ -67,19 +67,8 @@ export function LandingPage({ onLogin, loggedIn }: { onLogin: () => void; logged
             <CardHeader>
               <CardTitle className="text-base">1. Provision a domain and a box</CardTitle>
               <CardDescription>
-                A domain plus any Linux box with at least 4 GB RAM and port
-                8080 open.
-              </CardDescription>
-            </CardHeader>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">2. Choose your account</CardTitle>
-              <CardDescription>
-                One email + password per instance. The email is just the
-                account name — no email is ever sent. Rerunning setup with a
-                new password rotates it.
+                A domain plus any Linux box with port 8080 open. 4 GB RAM is
+                recommended for real dev builds, but not required to run.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -90,7 +79,7 @@ export function LandingPage({ onLogin, loggedIn }: { onLogin: () => void; logged
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">5. Log in</CardTitle>
+              <CardTitle className="text-base">4. Log in</CardTitle>
               <CardDescription>
                 {host === '' ? (
                   <>Open http://your-box:8080/login and sign in with the email and password you set above.</>
@@ -103,7 +92,7 @@ export function LandingPage({ onLogin, loggedIn }: { onLogin: () => void; logged
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">6. Connect GitHub</CardTitle>
+              <CardTitle className="text-base">5. Connect GitHub</CardTitle>
               <CardDescription>
                 Copy the server key, add it on GitHub, then test the
                 connection. This is what the app shows you.
@@ -130,7 +119,7 @@ export function LandingPage({ onLogin, loggedIn }: { onLogin: () => void; logged
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">7. Clone a repo</CardTitle>
+              <CardTitle className="text-base">6. Clone a repo</CardTitle>
               <CardDescription>
                 Paste any clone URL, HTTPS or SSH, and press Clone project.
               </CardDescription>
@@ -147,7 +136,7 @@ export function LandingPage({ onLogin, loggedIn }: { onLogin: () => void; logged
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">8. Use a desktop for setup</CardTitle>
+              <CardTitle className="text-base">7. Use a desktop for setup</CardTitle>
               <CardDescription>
                 Copying keys and navigating GitHub settings is easier with a
                 desktop clipboard and screen. Once set up, use the app freely
@@ -204,7 +193,7 @@ function SetupBuilder() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">3. Generate the command, then copy it</CardTitle>
+        <CardTitle className="text-base">2. Generate the command, then copy it</CardTitle>
         <CardDescription>
           Type below and the installer command fills itself in.
         </CardDescription>
@@ -255,7 +244,7 @@ function StepDomain({ domain, host, onDomain }: { domain: string; host: string; 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">4. Paste it on your box and link your domain</CardTitle>
+        <CardTitle className="text-base">3. Paste it on your box and link your domain</CardTitle>
         <CardDescription>
           Paste the command on the box as root and wait for the live
           banner. Then point your domain at the box so it reaches the

@@ -35,7 +35,7 @@ make reset-push                 # clear VAPID keys + subscriptions
 make nuke                       # remove containers, volumes, local data
 ```
 
-`make setup` seeds `dev@example.com` / `dev-password-12345`. Use another account with `make setup DEV_EMAIL=you@example.com` (or `make dev-seed DEV_EMAIL=...`). `start-docker` sets the demo password when state has none, so the first login works without seeding.
+`make setup` seeds `dev@example.com` / `dev-password-12345`. Use another account with `make setup DEV_EMAIL=you@example.com` (or `make dev-seed DEV_EMAIL=...`). `start-docker` re-applies the dev password every run (bumping `authVersion` and clearing stale sessions) — a banner after the run shows the credentials to log in with. Override with `make start-docker DEV_EMAIL=you@example.com DEV_PASSWORD=your-password`.
 
 Dev data lives in `server/data/` (bind-mounted to `/data`). Production uses the `pcoder-data` volume. Treat the volume like the box itself.
 

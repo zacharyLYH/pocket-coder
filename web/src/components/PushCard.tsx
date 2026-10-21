@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Bell, BellOff } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { errMsg } from '@/lib/api'
 import {
@@ -12,20 +10,12 @@ import {
 
 type State = PushState | 'checking'
 
-function hostOf(endpoint: string): string {
-  try {
-    return new URL(endpoint).host
-  } catch {
-    return endpoint
-  }
-}
-
-export function PushCard({ onBusy }: { onBusy?: (b: boolean) => void }) {
+export function PushCard() {
   const [state, setState] = useState<State>('checking')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [devices, setDevices] = useState<StoredSubscription[]>([])
   const [sent, setSent] = useState<'enabled' | 'test' | null>(null)
+  const [devices, setDevices] = useState<StoredSubscription[]>([])
 
   const refreshDevices = useCallback(async () => {
     try {
@@ -48,96 +38,86 @@ export function PushCard({ onBusy }: { onBusy?: (b: boolean) => void }) {
     return () => { alive = false }
   }, [refreshDevices])
 
-  async function turnOn() {
+  async function run(task: () => Promise<void>) {
     setBusy(true)
     setError(null)
-    onBusy?.(true)
     try {
+      await task()
+    } catch (err) {
+      setError(errMsg(err))
+      setState(Notification.permission === 'denied' ? 'denied' : 'default')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function turnOn() {
+    void run(async () => {
       await enable()
       setState('enabled')
       setSent('enabled')
       await refreshDevices()
-    } catch (err) {
-      setState(Notification.permission === 'denied' ? 'denied' : 'default')
-      setError(errMsg(err))
-    } finally {
-      setBusy(false)
-      onBusy?.(false)
-    }
+    })
   }
 
-  async function test() {
-    setBusy(true)
-    setError(null)
-    try {
+  function test() {
+    void run(async () => {
       await sendTest()
       setSent('test')
-    } catch (err) {
-      setError(errMsg(err))
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
+  const status = {
+    checking: 'checking…',
+    unsupported: 'not supported in this browser',
+    denied: 'blocked in browser settings',
+    default: 'off on this device',
+    enabled: 'on for this device',
+  }[state]
+  const dot = state === 'enabled' ? 'bg-emerald-500'
+    : state === 'denied' ? 'bg-red-500'
+      : state === 'default' ? 'bg-amber-500' : 'bg-muted-foreground/50'
+
   return (
-    <Card className="gap-3 py-4" data-testid="push-card">
-      <CardHeader className="px-4">
-        <CardTitle className="flex items-center gap-2 text-[17px] tracking-tight">
-          {state === 'denied' ? <BellOff className="size-4" /> : <Bell className="size-4" />}
-          Notifications
-        </CardTitle>
-        <CardDescription>
-          {state === 'enabled' && 'This device gets a push when your agent needs you.'}
-          {state === 'denied' && 'Notifications are blocked for this device.'}
-          {state === 'unsupported' && 'This browser cannot receive web push.'}
-          {(state === 'default' || state === 'checking') && 'Install to your Home Screen, then enable notifications on this device.'}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3 px-4">
-        {state === 'checking' && (
-          <p className="text-sm text-muted-foreground" data-testid="push-checking">Checking notification status…</p>
-        )}
-        {state === 'unsupported' && (
-          <p className="text-sm text-muted-foreground" data-testid="push-unsupported">
-            This browser does not support web push. On iPhone and Android, add Pocket Coder to your Home Screen first.
-          </p>
-        )}
-        {state === 'denied' && (
-          <p className="text-sm text-muted-foreground" data-testid="push-denied">
-            Notifications are blocked. Allow them for Pocket Coder in your device settings, then reload this page.
-            On iPhone, remove and re-add the Home Screen app if the setting does not appear.
-          </p>
-        )}
+    <div className="flex flex-col gap-0.5" data-testid="push-card">
+      <div className="flex min-h-[44px] items-center gap-2 px-2 py-1 text-[15px]">
+        <span className={`size-2 shrink-0 rounded-full ${dot}`} aria-hidden />
+        <span className="font-medium">Push notifications</span>
+        <span className="truncate text-sm text-muted-foreground" data-testid="push-status">{status}</span>
+        <span className="flex-1" />
         {state === 'default' && (
-          <Button onClick={() => void turnOn()} disabled={busy} className="min-h-[44px]" data-testid="push-enable">
-            <Bell className="size-4" />{busy ? 'Enabling…' : 'Enable notifications'}
+          <Button size="sm" onClick={turnOn} disabled={busy} data-testid="push-enable">
+            {busy ? 'Enabling…' : 'Enable'}
           </Button>
         )}
         {state === 'enabled' && (
-          <Button variant="outline" onClick={() => void test()} disabled={busy} className="min-h-[44px]" data-testid="push-test">
-            <Bell className="size-4" />{busy ? 'Sending…' : 'Send test notification'}
+          <Button size="sm" variant="outline" onClick={test} disabled={busy} data-testid="push-test">
+            {busy ? 'Sending…' : 'Send test'}
           </Button>
         )}
-        {error && (
-          <p className="max-h-24 overflow-auto break-all text-xs text-destructive" data-testid="push-error">{error}</p>
-        )}
-        {devices.length > 0 && state === 'enabled' && (
-          <div className="flex flex-col gap-1" data-testid="push-devices">
-            <p className="text-xs font-medium text-muted-foreground">
-              {devices.length} subscribed device{devices.length === 1 ? '' : 's'}
-            </p>
-            {devices.map((device) => (
-              <p key={device.endpoint} className="truncate text-xs text-muted-foreground" title={device.endpoint}>
-                {hostOf(device.endpoint)}
-              </p>
-            ))}
-          </div>
-        )}
-      </CardContent>
+      </div>
+      {state === 'enabled' && devices.length > 0 && (
+        <p className="pl-6 text-xs text-muted-foreground" data-testid="push-devices">
+          {devices.length} device{devices.length === 1 ? '' : 's'} registered
+        </p>
+      )}
+      {state === 'denied' && (
+        <p className="pl-6 text-xs text-muted-foreground" data-testid="push-denied">
+          Allow notifications for Pocket Coder in your device settings, then reload. On iPhone, remove and re-add the Home Screen app if the setting does not appear.
+        </p>
+      )}
+      {state === 'unsupported' && (
+        <p className="pl-6 text-xs text-muted-foreground" data-testid="push-unsupported">
+          This browser cannot receive push. On iPhone and Android, add Pocket Coder to your Home Screen first.
+        </p>
+      )}
+      {error && (
+        <p className="max-h-24 overflow-auto break-all pl-6 text-xs text-destructive" data-testid="push-error">{error}</p>
+      )}
       <Dialog open={sent !== null} onOpenChange={(open) => { if (!open) setSent(null) }}>
         <DialogContent data-testid="push-success">
           <DialogHeader>
-            <DialogTitle>{sent === 'test' ? 'Test notification sent' : 'Notifications on'}</DialogTitle>
+            <DialogTitle>{sent === 'test' ? 'Test notification sent' : 'Push notifications on'}</DialogTitle>
             <DialogDescription>
               This means we've successfully enabled push notifications for this device!
             </DialogDescription>
@@ -147,6 +127,6 @@ export function PushCard({ onBusy }: { onBusy?: (b: boolean) => void }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </div>
   )
 }

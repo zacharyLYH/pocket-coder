@@ -57,6 +57,21 @@ func (l *Log) Close() error {
 	return l.file.Close()
 }
 
+// Reset truncates the log and restarts ids at 1. The next Append becomes
+// the new first event.
+func (l *Log) Reset() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.file.Truncate(0); err != nil {
+		return fmt.Errorf("truncate event log: %w", err)
+	}
+	if err := l.file.Sync(); err != nil {
+		return fmt.Errorf("sync event log: %w", err)
+	}
+	l.id = 0
+	return nil
+}
+
 // Append writes one event line and returns it with its assigned id.
 func (l *Log) Append(typ string, data map[string]any) (Event, error) {
 	l.mu.Lock()

@@ -125,6 +125,21 @@ func Open(dir string) (*Store, error) {
 // PublicKey returns the VAPID application server key clients subscribe with.
 func (s *Store) PublicKey() string { return s.key.PublicKey }
 
+// Wipe rotates the VAPID keypair and drops every stored subscription. Every
+// device must enable notifications again with the new application server key.
+func (s *Store) Wipe(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dropped := len(s.subs)
+	if err := s.regenerateLocked(); err != nil {
+		return err
+	}
+	obs.Info(ctx, obs.PushRotate, "rotated VAPID keypair and cleared subscriptions", map[string]any{
+		"dir": s.dir, "dropped_subscriptions": dropped,
+	})
+	return nil
+}
+
 // Subscribe upserts by endpoint.
 func (s *Store) Subscribe(ctx context.Context, sub Subscription) error {
 	s.mu.Lock()
