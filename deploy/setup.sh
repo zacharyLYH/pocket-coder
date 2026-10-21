@@ -157,19 +157,9 @@ validate() {
   fi
 }
 
-validate_mac() {
-  resolve_install_dir
-  probe="$INSTALL_DIR"
-  while [ ! -e "$probe" ]; do probe="$(dirname "$probe")"; done
-  [ -w "$probe" ] || die "cannot write to $INSTALL_DIR (running as $(id -un)) — re-run with sudo or set PCODER_INSTALL_DIR to a writable path"
-  log "macOS detected — Docker Desktop must already be installed and running"
-  arch="$(uname -m)"
-  case "$arch" in
-    x86_64|aarch64|arm64) ;;
-    *) log "untested arch ($arch) — docker itself will fail loudly if truly unsupported" ;;
-  esac
-  # No package-manager gate: a Mac with Docker Desktop and git/curl
-  # already present sails straight through.
+# check_existing_install sets RERUN and guards the port. Same rule on both
+# platforms: a repo checkout means this is an update, not a fresh install.
+check_existing_install() {
   if [ -d "$INSTALL_DIR/.git" ]; then
     log "existing install at $INSTALL_DIR — re-run: flags updated, dependencies skipped"
     RERUN=1
@@ -183,6 +173,22 @@ validate_mac() {
       die "port 8080 is taken — free it before installing"
     fi
   fi
+}
+
+validate_mac() {
+  resolve_install_dir
+  probe="$INSTALL_DIR"
+  while [ ! -e "$probe" ]; do probe="$(dirname "$probe")"; done
+  [ -w "$probe" ] || die "cannot write to $INSTALL_DIR (running as $(id -un)) — re-run with sudo or set PCODER_INSTALL_DIR to a writable path"
+  log "macOS detected — Docker Desktop must already be installed and running"
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|aarch64|arm64) ;;
+    *) log "untested arch ($arch) — docker itself will fail loudly if truly unsupported" ;;
+  esac
+  # No package-manager gate: a Mac with Docker Desktop and git/curl
+  # already present sails straight through.
+  check_existing_install
   disk_kb="$(disk_avail_kb_mac "$INSTALL_DIR" || true)"
   if [ -n "$disk_kb" ] && [ "$disk_kb" -lt 10485760 ]; then
     die "need at least 10 GB free under $probe (have $((disk_kb / 1024 / 1024)) GB)"
@@ -215,19 +221,7 @@ validate_linux() {
     x86_64|aarch64) ;;
     *) log "untested arch ($arch) — docker itself will fail loudly if truly unsupported" ;;
   esac
-  if [ -d "$INSTALL_DIR/.git" ]; then
-    log "existing install at $INSTALL_DIR — re-run: flags updated, dependencies skipped"
-    RERUN=1
-  else
-    RERUN=0
-  fi
-  if port_taken 8080; then
-    if [ "$RERUN" = "1" ]; then
-      log "port 8080 taken — assuming our own stack from the previous run"
-    else
-      die "port 8080 is taken — free it before installing"
-    fi
-  fi
+  check_existing_install
   disk_kb="$(disk_avail_kb_linux "$INSTALL_DIR" || true)"
   if [ -n "$disk_kb" ] && [ "$disk_kb" -lt 10485760 ]; then
     die "need at least 10 GB free under $probe (have $((disk_kb / 1024 / 1024)) GB)"

@@ -73,13 +73,11 @@ type Result struct {
 }
 
 type vapid struct {
-	Version    int    `json:"version"`
 	PublicKey  string `json:"publicKey"`
 	PrivateKey string `json:"privateKey"`
 }
 
 type file struct {
-	Version       int                     `json:"version"`
 	Subscriptions map[string]Subscription `json:"subscriptions"`
 }
 
@@ -146,47 +144,37 @@ func (s *Store) Subscribe(ctx context.Context, sub Subscription) error {
 
 // List returns subscriptions in stable endpoint order.
 func (s *Store) List() []Subscription {
+	out, _ := s.snapshot()
+	sort.Slice(out, func(i, j int) bool { return out[i].Endpoint < out[j].Endpoint })
+	return out
+}
+
+// snapshot copies the current subscriptions and key under the lock, so
+// network sends never hold it.
+func (s *Store) snapshot() ([]Subscription, vapid) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]Subscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		out = append(out, sub)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Endpoint < out[j].Endpoint })
-	return out
-}
-
-type notification struct {
-	Title    string `json:"title"`
-	Body     string `json:"body"`
-	Navigate string `json:"navigate"`
-	Tag      string `json:"tag,omitempty"`
+	return out, s.key
 }
 
 type payload struct {
-	WebPush      int          `json:"web_push"`
-	Notification notification `json:"notification"`
+	WebPush      int     `json:"web_push"`
+	Notification Message `json:"notification"`
 }
 
 // Send fans out to every subscription, best-effort. A relay auth failure is
 // returned after the loop; one device's failure never stops the rest.
 func (s *Store) Send(ctx context.Context, m Message) (Result, error) {
-	body, err := json.Marshal(payload{
-		WebPush:      8030,
-		Notification: notification{Title: m.Title, Body: m.Body, Navigate: m.Navigate, Tag: m.Tag},
-	})
+	body, err := json.Marshal(payload{WebPush: 8030, Notification: m})
 	if err != nil {
 		return Result{}, err
 	}
 
-	s.mu.Lock()
-	subs := make([]Subscription, 0, len(s.subs))
-	for _, sub := range s.subs {
-		subs = append(subs, sub)
-	}
-	key := s.key
-	s.mu.Unlock()
-
+	subs, key := s.snapshot()
 	obs.Info(ctx, obs.PushSend, "sending push", map[string]any{
 		"subscriptions": len(subs), "tag": m.Tag, "navigate": m.Navigate,
 	})
@@ -199,6 +187,10 @@ func (s *Store) Send(ctx context.Context, m Message) (Result, error) {
 	for _, sub := range subs {
 		host := endpointHost(sub.Endpoint)
 		status, err := s.send(ctx, body, sub, key, false)
+		if err == nil && status == http.StatusTooManyRequests {
+			obs.Warn(ctx, obs.PushSend, "push relay rate limited", map[string]any{"host": host})
+			status, err = s.send(ctx, body, sub, key, true)
+		}
 		switch {
 		case err != nil:
 			res.Failed++
@@ -209,19 +201,6 @@ func (s *Store) Send(ctx context.Context, m Message) (Result, error) {
 			res.Pruned++
 			dead = append(dead, sub.Endpoint)
 			obs.Info(ctx, obs.PushSend, "push endpoint is gone", map[string]any{"host": host, "status": status})
-		case status == http.StatusTooManyRequests:
-			obs.Warn(ctx, obs.PushSend, "push relay rate limited", map[string]any{"host": host})
-			retryStatus, retryErr := s.send(ctx, body, sub, key, true)
-			if retryErr == nil && retryStatus >= 200 && retryStatus < 300 {
-				res.Sent++
-			} else {
-				res.Failed++
-				data := map[string]any{"host": host, "status": retryStatus}
-				if retryErr != nil {
-					data["error"] = retryErr
-				}
-				obs.Warn(ctx, obs.PushSend, "push retry failed", data)
-			}
 		case status == http.StatusUnauthorized || status == http.StatusForbidden:
 			res.Failed++
 			authErr = fmt.Errorf("%w: relay returned %d", ErrVAPID, status)
@@ -302,7 +281,7 @@ func (s *Store) regenerateLocked() error {
 	if err != nil {
 		return fmt.Errorf("generate VAPID keys: %w", err)
 	}
-	s.key = vapid{Version: 1, PublicKey: publicKey, PrivateKey: privateKey}
+	s.key = vapid{PublicKey: publicKey, PrivateKey: privateKey}
 	if err := s.write(vapidFile, s.key); err != nil {
 		return err
 	}
@@ -334,31 +313,20 @@ func (s *Store) loadSubscriptionsLocked() error {
 }
 
 func (s *Store) saveSubscriptionsLocked() error {
-	return s.write(pushFile, file{Version: 1, Subscriptions: s.subs})
+	return s.write(pushFile, file{Subscriptions: s.subs})
 }
 
+// write persists v atomically: temp file + rename, 0600 like state.json.
 func (s *Store) write(name string, v any) error {
 	raw, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(s.dir, ".tmp-"+name+"-*")
-	if err != nil {
+	tmp := s.path(name) + ".tmp"
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(raw); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), s.path(name))
+	return os.Rename(tmp, s.path(name))
 }
 
 func (s *Store) path(name string) string { return filepath.Join(s.dir, name) }
@@ -380,10 +348,8 @@ func ValidateSubscription(sub Subscription) error {
 		return errors.New("unknown push service")
 	}
 	p256dh, err := decodeBase64(sub.Keys.P256dh)
-	if err != nil || len(p256dh) != 65 || p256dh[0] != 4 {
-		return errors.New("invalid p256dh key")
-	}
-	if x, _ := elliptic.Unmarshal(elliptic.P256(), p256dh); x == nil {
+	x, _ := elliptic.Unmarshal(elliptic.P256(), p256dh)
+	if err != nil || len(p256dh) != 65 || p256dh[0] != 4 || x == nil {
 		return errors.New("invalid p256dh key")
 	}
 	auth, err := decodeBase64(sub.Keys.Auth)

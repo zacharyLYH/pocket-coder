@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strings"
 )
 
@@ -45,16 +46,6 @@ var envKeys = []string{
 	EnvPreviewSweepInterval, EnvPreviewTokenSilence,
 }
 
-// knownKeys backs the unknown-variable check so a typo fails startup
-// instead of being silently ignored.
-var knownKeys = func() map[string]bool {
-	m := make(map[string]bool, len(envKeys))
-	for _, k := range envKeys {
-		m[k] = true
-	}
-	return m
-}()
-
 // Config holds everything the server needs to boot. Fields map 1:1 to
 // environment variables; empty fields mean "not set".
 type Config struct {
@@ -80,7 +71,7 @@ func load(env []string) (*Config, error) {
 	for _, kv := range env {
 		key, value, _ := strings.Cut(kv, "=")
 		if strings.HasPrefix(key, "PCODER_") {
-			if !knownKeys[key] {
+			if !slices.Contains(envKeys, key) {
 				return nil, fmt.Errorf("unknown config variable %q (supported: %s)", key, known())
 			}
 			values[key] = value

@@ -167,7 +167,8 @@ func TestSendEncryptsAndDecrypts(t *testing.T) {
 	if err := json.Unmarshal(plain, &p); err != nil {
 		t.Fatal(err)
 	}
-	if p.WebPush != 8030 || p.Notification.Title != "hi" || p.Notification.Body != "there" {
+	if p.WebPush != 8030 || p.Notification.Title != "hi" || p.Notification.Body != "there" ||
+		p.Notification.Navigate != "https://x/app" || p.Notification.Tag != "t" {
 		t.Fatalf("payload = %+v", p)
 	}
 }
