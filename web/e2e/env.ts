@@ -34,8 +34,8 @@ export function ciTimeout(ms: number): number {
 export const API_PORT = intEnv('E2E_API_PORT', 8081)
 export const WEB_PORT = intEnv('E2E_WEB_PORT', 5174)
 
-// The one login identity every e2e account uses (the compose stack pins
-// PCODER_AUTH_EMAIL to match). Lives here so the seeder factory and the
+// The one login identity every e2e account uses (the state seeder writes
+// this email into state.json). Lives here so the seeder factory and the
 // login helpers can't drift apart. The password pairs with the Argon2id
 // hash in test/state.mock.json (seed carries the hash; this is its
 // plaintext twin for the login form).

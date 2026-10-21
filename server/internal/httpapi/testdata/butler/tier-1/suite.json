@@ -71,7 +71,6 @@
     "tool": "env_names",
     "args": {},
     "want": [
-      "PCODER_AUTH_EMAIL",
       "PCODER_DATA_DIR",
       "PCODER_BIND",
       "PCODER_DOCKER_SOCK"

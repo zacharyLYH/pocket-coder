@@ -2,23 +2,24 @@
 // environment. Server-specific variables carry the PCODER_ prefix so that
 // "unknown config" is detectable: any PCODER_* variable we do not
 // know about is a startup error rather than a silently ignored typo.
+//
+// There is no .env loading. Config comes from the process environment
+// only, and the login email is not config at all: it lives in state.json
+// with the password hash, so the app has one identity source.
 package config
 
 import (
 	"fmt"
 	"net"
 	"os"
-	"regexp"
 	"strings"
 )
 
 // Environment variable names, exported so any package can reference config
-// keys by name. Required: PCODER_AUTH_EMAIL, the account identifier
-// (documented in the README). Everything else has a sensible default.
+// keys by name. Everything has a sensible default.
 const (
 	EnvDataDir    = "PCODER_DATA_DIR"    // where all state lives; default ./data
 	EnvBind       = "PCODER_BIND"        // listen address; default :8080
-	EnvAuthEmail  = "PCODER_AUTH_EMAIL"  // the one login account (required)
 	EnvJWTSecret  = "PCODER_JWT_SECRET"  // signing key; auto-generated + persisted when unset
 	EnvDockerSock = "PCODER_DOCKER_SOCK" // docker engine endpoint; default unix:///var/run/docker.sock
 	EnvAIBaseURL  = "PCODER_AI_BASE_URL" // OpenAI-compatible base URL for the codemap agent
@@ -39,7 +40,7 @@ const (
 
 // envKeys is the recognized set, derived from the constants above.
 var envKeys = []string{
-	EnvDataDir, EnvBind, EnvAuthEmail, EnvJWTSecret, EnvDockerSock,
+	EnvDataDir, EnvBind, EnvJWTSecret, EnvDockerSock,
 	EnvAllowAnyRepo, EnvAIBaseURL, EnvAPIKey, EnvAIModel,
 	EnvPreviewSweepInterval, EnvPreviewTokenSilence,
 }
@@ -59,7 +60,6 @@ var knownKeys = func() map[string]bool {
 type Config struct {
 	DataDir    string
 	Bind       string
-	AuthEmail  string
 	JWTSecret  string
 	DockerSock string
 	AIBaseURL  string
@@ -70,57 +70,9 @@ type Config struct {
 	AllowAnyRepo bool
 }
 
-// Load reads configuration from the process environment, layering a `.env`
-// file underneath (working directory, then its parent — the repo root when
-// running inside server/) so host runs work without exporting anything.
-// Real environment variables always win, so compose and CI behavior is
-// unchanged.
+// Load reads configuration from the process environment.
 func Load() (*Config, error) {
-	env := os.Environ()
-	if err := appendDotEnv(&env, ".env"); err != nil {
-		return nil, err
-	}
-	if err := appendDotEnv(&env, "../.env"); err != nil {
-		return nil, err
-	}
-	return load(env)
-}
-
-// appendDotEnv parses a dotenv-style file (KEY=VALUE lines, `#` comments,
-// optional surrounding quotes) and appends its keys to env, except for keys
-// the real environment already provides.
-func appendDotEnv(env *[]string, path string) error {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	present := map[string]bool{}
-	for _, kv := range *env {
-		if k, _, ok := strings.Cut(kv, "="); ok {
-			present[k] = true
-		}
-	}
-	var added []string
-	for _, line := range strings.Split(string(b), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		k = strings.TrimSpace(k)
-		v = strings.Trim(strings.TrimSpace(v), `"'`)
-		if k != "" && !present[k] {
-			added = append(added, k+"="+v)
-		}
-	}
-	*env = append(*env, added...)
-	return nil
+	return load(os.Environ())
 }
 
 func load(env []string) (*Config, error) {
@@ -135,11 +87,9 @@ func load(env []string) (*Config, error) {
 		}
 	}
 
-	email := values["PCODER_AUTH_EMAIL"]
 	cfg := &Config{
 		DataDir:    strEnv(values, "PCODER_DATA_DIR", "./data"),
 		Bind:       strEnv(values, "PCODER_BIND", ":8080"),
-		AuthEmail:  normalizeEmail(email),
 		JWTSecret:  values["PCODER_JWT_SECRET"],
 		DockerSock: strEnv(values, "PCODER_DOCKER_SOCK", "unix:///var/run/docker.sock"),
 		AIBaseURL:  values["PCODER_AI_BASE_URL"],
@@ -163,26 +113,11 @@ func (c *Config) Validate() error {
 	if _, port, err := net.SplitHostPort(c.Bind); err != nil || port == "" {
 		return fmt.Errorf("PCODER_BIND %q is not a host:port address: %v", c.Bind, err)
 	}
-	c.AuthEmail = normalizeEmail(c.AuthEmail)
-	if c.AuthEmail == "" {
-		return fmt.Errorf("PCODER_AUTH_EMAIL must be set in .env (see README for the required variables)")
-	}
-	if !emailRe.MatchString(c.AuthEmail) {
-		return fmt.Errorf("PCODER_AUTH_EMAIL %q is not a valid email address", c.AuthEmail)
-	}
 	if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
 		return fmt.Errorf("PCODER_JWT_SECRET must be at least 32 characters when set")
 	}
 	return nil
 }
-
-// normalizeEmail is the single email normalization (trim + lowercase),
-// shared with the auth package's NormalizeEmail: setup and login must agree.
-func normalizeEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
-var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
 func strEnv(values map[string]string, key, def string) string {
 	if v, ok := values[key]; ok && v != "" {

@@ -409,7 +409,7 @@ func butlerReadTools(d Deps) []agent.Tool {
 			Schema:      noProps,
 			Run: func(_ context.Context, argsJSON string) (string, error) {
 				return butlerJSON([]string{
-					"PCODER_AUTH_EMAIL", "PCODER_DATA_DIR", "PCODER_BIND", "PCODER_DOCKER_SOCK",
+					"PCODER_DATA_DIR", "PCODER_BIND", "PCODER_DOCKER_SOCK",
 				}), nil
 			},
 		},

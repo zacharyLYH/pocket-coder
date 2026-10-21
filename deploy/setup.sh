@@ -6,11 +6,11 @@
 #     --email you@example.com \
 #     --password "your-login-password"
 #
-# Five sections, linear and flat: parse_args → validate → install_deps →
-# write_env → boot. Unknown flags are a hard error. Only the account EMAIL
-# goes in server/.env (the same file local dev uses, and the one both
-# compose files read via env_file); the password is piped on stdin to the
-# backend's set-password command, hashed there, and never written down.
+# Four sections, linear and flat: parse_args → validate → install_deps →
+# boot. Unknown flags are a hard error. Credentials go straight to the
+# backend's set-password command (email as a flag, password on stdin): the
+# email and the Argon2id hash land in state.json — the app's only identity
+# source — and no .env is written.
 #
 # Test hook: --test (or PCODER_SETUP_TEST=1 in the environment, as used
 # through `curl ... | VAR=1 bash -s -- ...`) runs a pure-local self-test
@@ -43,8 +43,8 @@ usage() {
 Usage: setup.sh --email you@example.com --password "your-login-password"
 
 Bootstraps Pocket Coder on a fresh Linux box or a Mac (Docker Desktop):
-installs git + docker, clones the repo, writes server/.env, sets the
-instance login password, and boots the production stack on port 8080.
+installs git + docker, clones the repo, stores the login account in
+state.json, and boots the production stack on port 8080.
 
 Re-run the same command anytime to update — and to rotate the password.
 
@@ -170,7 +170,7 @@ validate_mac() {
   esac
   # No package-manager gate: a Mac with Docker Desktop and git/curl
   # already present sails straight through.
-  if [ -f "$INSTALL_DIR/server/.env" ]; then
+  if [ -d "$INSTALL_DIR/.git" ]; then
     log "existing install at $INSTALL_DIR — re-run: flags updated, dependencies skipped"
     RERUN=1
   else
@@ -215,7 +215,7 @@ validate_linux() {
     x86_64|aarch64) ;;
     *) log "untested arch ($arch) — docker itself will fail loudly if truly unsupported" ;;
   esac
-  if [ -f "$INSTALL_DIR/server/.env" ]; then
+  if [ -d "$INSTALL_DIR/.git" ]; then
     log "existing install at $INSTALL_DIR — re-run: flags updated, dependencies skipped"
     RERUN=1
   else
@@ -406,40 +406,14 @@ install_compose_plugin_linux() {
   chmod +x "$dest"
 }
 
-# 4. write_env — fresh file, locked down, exactly the account contract.
-# The email is an identifier, not a secret; the password is deliberately
-# NOT here: it travels on stdin to the backend's set-password command, so
-# it never lands in .env, compose args, or logs.
-write_env() {
-  mkdir -p "$INSTALL_DIR/server"
-  tmp="$(mktemp)"
-  printf 'PCODER_AUTH_EMAIL=%s\n' "$EMAIL" > "$tmp"
-  chmod 600 "$tmp"
-  # mv preserves the mode, so no second chmod needed.
-  mv "$tmp" "$INSTALL_DIR/server/.env"
-  log "wrote $INSTALL_DIR/server/.env (mode 600)"
-}
-
 # test_main — the --test self-test: pure-local, zero side effects, ~1s.
-# Runs parse-adjacent checks plus the real write_env into a temp dir
-# (exercises the exact account .env contract), asserts the file, then
-# deletes everything. Mocks: root, distro, disk/RAM/port, apt/dnf,
-# docker, clone, password setter, boot. Live boot stays manual per-release.
+# Runs parse-adjacent checks in a temp dir, then boot end to end against
+# stubbed tools. Mocks: root, distro, disk/RAM/port, apt/dnf, docker,
+# clone, password setter, boot. Live boot stays manual per-release.
 test_main() {
   INSTALL_DIR="$(mktemp -d)"
   # shellcheck disable=SC2064
   trap "rm -rf '$INSTALL_DIR'" EXIT
-  write_env
-  grep -qx "PCODER_AUTH_EMAIL=$EMAIL" "$INSTALL_DIR/server/.env" \
-    || die "test: PCODER_AUTH_EMAIL missing from .env"
-  # The password must not be anywhere in .env — it goes to the backend on
-  # stdin and is stored only as a hash in the data volume.
-  if grep -q "$PASSWORD" "$INSTALL_DIR/server/.env"; then
-    die "test: password leaked into .env"
-  fi
-  if grep -qi 'smtp' "$INSTALL_DIR/server/.env"; then
-    die "test: SMTP leftovers in .env"
-  fi
   # Negative probes run parse_args in a subshell (no recursion into
   # test_main, no root/docker needed): bad invocations must fail LOUDLY
   # with usage on stderr — under curl|bash, silence is all the operator sees.
@@ -572,7 +546,9 @@ EOF
   out="$( (INSTALL_DIR="$INSTALL_DIR/bootroot" boot) )" \
     || die "test: boot happy path failed"
   case "$out" in *"is live"*) ;; *) die "test: boot printed no live banner" ;; esac
-  [ -f "$INSTALL_DIR/bootroot/server/.env" ] || die "test: boot wrote no .env"
+  [ ! -e "$INSTALL_DIR/bootroot/server/.env" ] || die "test: boot still writes a .env"
+  grep -q "set-password --email $EMAIL" "$PCODER_TEST_LOG" \
+    || die "test: boot did not pass the email to set-password"
   [ "$(grep -c "localhost:8080/health" "$PCODER_TEST_LOG")" = "3" ] \
     || die "test: health retry loop polled wrong number of times"
   order_ok "git clone" "compose build" "pcoder-project" "pcoder-browser" "set-password" "compose up" \
@@ -657,16 +633,14 @@ get_ip_mac() {
   printf '%s' "$ip"
 }
 
-# 5. boot — fetch/pull → build → set-password → up → wait healthy → banner.
-# Update-safe: the same curl command re-runs on an existing install.
-# `server/.env` is gitignored so fetch+reset never deletes it (write_env
-# refreshes it above), and the pcoder-data volume is never removed here:
-# projects and the stored password hash survive an update.
+# 4. boot — fetch/pull → build → set-password → up → wait healthy → banner.
+# Update-safe: the same curl command re-runs on an existing install. The
+# pcoder-data volume is never removed here: projects, the login email, and
+# the stored password hash survive an update.
 boot() {
   if [ -d "$INSTALL_DIR/.git" ]; then
     log "repo exists — fetching $REPO_BRANCH"
     git -C "$INSTALL_DIR" fetch --depth 1 origin "$REPO_BRANCH"
-    # server/.env is gitignored so reset never deletes it.
     git -C "$INSTALL_DIR" reset --hard "origin/$REPO_BRANCH"
   else
     log "cloning $REPO_URL ($REPO_BRANCH)"
@@ -675,10 +649,6 @@ boot() {
     fi
   fi
   cd "$INSTALL_DIR"
-  # The account email lands in server/.env after the repo exists (fresh
-  # clone or fetch+reset), so the file is always there for the compose
-  # env_file below.
-  write_env
   # The stack network is external (declared, not managed): ensure it
   # before the stack uses it.
   docker network create pcoder-net >/dev/null 2>&1 || true
@@ -698,8 +668,9 @@ boot() {
   # The image ENTRYPOINT is already ["pcoder"], so the subcommand is
   # appended bare (not `pcoder set-password`, which would repeat the
   # binary). --rm: one-shot. -T: no TTY, so stdin is the pipe. The
-  # password travels on stdin — never an argument, never in .env.
-  if ! printf '%s' "$PASSWORD" | docker compose run --rm -T server set-password; then
+  # password travels on stdin — never an argument, never persisted (only
+  # the hash is, in state.json).
+  if ! printf '%s' "$PASSWORD" | docker compose run --rm -T server set-password --email "$EMAIL"; then
     die "setting the login password failed — re-run this script"
   fi
   log "booting the stack"

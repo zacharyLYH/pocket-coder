@@ -17,14 +17,14 @@ func TestNewAuthServicePanicsWithoutPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.Config{DataDir: dataDir, AuthEmail: "owner@example.com"}
+	cfg := &config.Config{DataDir: dataDir}
 
 	defer func() {
 		r := recover()
 		if r == nil {
 			t.Fatal("newAuthService did not panic without a configured password")
 		}
-		if msg := fmt.Sprint(r); !strings.Contains(msg, "no login password configured") {
+		if msg := fmt.Sprint(r); !strings.Contains(msg, "no login account in state.json") {
 			t.Fatalf("panic = %q", msg)
 		}
 	}()

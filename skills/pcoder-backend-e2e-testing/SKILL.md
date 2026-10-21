@@ -31,7 +31,7 @@ go build -o /tmp/pcoder-test ./cmd/server
 PCODER_BIND=127.0.0.1:8977 /tmp/pcoder-test > /tmp/pcoder-test.log 2>&1 &
 ```
 
-Config is env-only (`internal/config`), `PCODER_`-prefixed; a repo-root `.env` is also loaded. Defaults are fine for local testing. `PCODER_DATA_DIR` defaults to `./data` — **it is relative to cwd**, so always `cd server` first or you get a fresh empty state in the wrong directory.
+Config is env-only (`internal/config`), `PCODER_`-prefixed; no `.env` is loaded. The login email is not config — it lives in state.json. `PCODER_DATA_DIR` defaults to `./data` — **it is relative to cwd**, so always `cd server` first or you get a fresh empty state in the wrong directory.
 
 Wait for readiness by probing a real route, not a sleep loop against `/`:
 

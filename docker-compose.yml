@@ -6,9 +6,8 @@
 # let it spoof CF-Connecting-IP). Local `curl localhost:8080/health`
 # (setup.sh) and the host cloudflared keep working; dev is untouched
 # (docker-compose.dev.yml still publishes 8080 + 5173 for Vite).
-# Credentials live in server/.env (written by deploy/setup.sh); every key
-# is optional to compose (required: false) so a missing file surfaces as
-# the server's own "PCODER_AUTH_EMAIL must be set" error.
+# Credentials live in state.json on the pcoder-data volume (written by
+# deploy/setup.sh through `pcoder set-password`); there is no .env.
 #
 #   docker compose up -d --build
 #   curl http://localhost:8080/health
@@ -17,9 +16,6 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    env_file:
-      - path: server/.env
-        required: false
     environment:
       PCODER_DATA_DIR: /data
       PCODER_BIND: :8080

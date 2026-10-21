@@ -61,11 +61,10 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	// state.Open creates the data dir if missing. state.json is the single
-	// source of truth for desired app state; env config seeds a fresh
-	// document only — existing values win.
+	// source of truth for desired app state, the login email included; env
+	// config seeds a fresh document's AI model only — existing values win.
 	st, err := state.Open(cfg.DataDir, state.Bootstrap{
-		AuthEmail: cfg.AuthEmail,
-		AI:        aiFromConfig(cfg),
+		AI: aiFromConfig(cfg),
 	})
 	if err != nil {
 		slog.Error("open state", "err", err)
@@ -253,8 +252,9 @@ func (h *harnessInstaller) InstallHarness(ctx context.Context, container string,
 }
 
 // newAuthService builds the auth service from the stored credential
-// (email + Argon2id hash + session generation). The hash only exists after
-// setup.sh's set-password step; before that every login fails closed.
+// (email + Argon2id hash + session generation) — state.json is the only
+// identity source. The credential only exists after setup.sh's
+// set-password step; before that boot fails loudly.
 func newAuthService(cfg *config.Config, st *state.Store) (*auth.Service, error) {
 	secret := []byte(cfg.JWTSecret)
 	if len(secret) == 0 {
@@ -274,7 +274,7 @@ func newAuthService(cfg *config.Config, st *state.Store) (*auth.Service, error) 
 	// A missing password is a fatal misconfiguration: booting anyway serves
 	// an instance nobody can log in to. Fail loudly instead.
 	if hash == "" {
-		panic(fmt.Sprintf("no login password configured for %q — run set-password", email))
+		panic(fmt.Sprintf("no login account in state.json (email %q) — run: pcoder set-password --email you@example.com", email))
 	}
 	svc := auth.New(email, hash, version, secret)
 	slog.Info("auth ready", "auth_email", email, "password_set", hash != "")

@@ -14,9 +14,11 @@ import (
 // every run (so rerunning setup with a new password kills old cookies).
 func TestSetPasswordMainStoresHashAndBumpsVersion(t *testing.T) {
 	dataDir := t.TempDir()
-	t.Setenv("PCODER_AUTH_EMAIL", "owner@example.com")
 	t.Setenv("PCODER_DATA_DIR", dataDir)
-	t.Chdir(t.TempDir()) // keep config.Load from picking up any repo .env
+	t.Chdir(t.TempDir())
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"pcoder", "set-password", "--email", "owner@example.com"}
 
 	feed := func(password string) {
 		t.Helper()
@@ -64,9 +66,11 @@ func TestSetPasswordMainStoresHashAndBumpsVersion(t *testing.T) {
 		t.Fatal("plaintext password persisted")
 	}
 
-	// rerun with a new password: hash replaced, generation bumped — the
-	// spec's "every setup run applies its password" invariant.
+	// rerun with a new password and no --email: state.json already holds
+	// the account, so the stored email is kept and only the hash changes —
+	// the spec's "every setup run applies its password" invariant.
 	oldHash := u.PasswordHash
+	os.Args = []string{"pcoder", "set-password"}
 	feed("second-password-456")
 	u = read()
 	if u.AuthVersion != 2 {
@@ -74,5 +78,33 @@ func TestSetPasswordMainStoresHashAndBumpsVersion(t *testing.T) {
 	}
 	if u.PasswordHash == oldHash {
 		t.Fatal("password hash unchanged after rerun")
+	}
+	if u.Email != "owner@example.com" {
+		t.Fatalf("email = %q after rerun, want the stored email kept", u.Email)
+	}
+}
+
+func TestEmailFlag(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{nil, ""},
+		{[]string{"--email", " Owner@Example.COM "}, "owner@example.com"},
+		{[]string{"--email=me@example.com"}, "me@example.com"},
+	} {
+		got, err := emailFlag(tc.args)
+		if err != nil || got != tc.want {
+			t.Fatalf("emailFlag(%v) = %q, %v; want %q", tc.args, got, err, tc.want)
+		}
+	}
+	if _, err := emailFlag([]string{"--email", "not-an-email"}); err == nil {
+		t.Fatal("expected invalid-email error")
+	}
+	if _, err := emailFlag([]string{"--bogus"}); err == nil {
+		t.Fatal("expected unknown-argument error")
+	}
+	if _, err := emailFlag([]string{"--email"}); err == nil {
+		t.Fatal("expected missing-value error")
 	}
 }

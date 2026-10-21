@@ -1,10 +1,8 @@
-# PCODER_AUTH_EMAIL is optional in dev: the default below makes
-# `make setup && make start-docker` work without a .env file. An existing
-# server/.env (prod setup writes one) still wins. Host runs also load it
-# via config.Load.
--include server/.env
-PCODER_AUTH_EMAIL ?= dev@example.com
-export PCODER_AUTH_EMAIL
+# Dev-only login email. Input to state seeding (`make dev-seed` and the
+# first `make start-docker`); the server itself reads the email from
+# state.json, never from the environment. Override per run:
+#   make dev-seed DEV_EMAIL=you@example.com
+DEV_EMAIL ?= dev@example.com
 
 # Dev-only login password. start-docker applies it once when state.json has
 # no credential yet, so a fresh checkout can log in immediately. The
@@ -32,26 +30,26 @@ setup: ## First-time local setup: check tools, install deps, seed demo data
 
 start-docker: ## Start full stack locally (clears push setup so Enable starts fresh)
 	@command -v docker >/dev/null 2>&1 || { echo "missing: docker (https://docs.docker.com/get-docker/)"; exit 1; }
-	@test -n "$(PCODER_AUTH_EMAIL)" || { echo 'PCODER_AUTH_EMAIL is empty — set it or unset it for the dev default'; exit 1; }
+	@test -n "$(DEV_EMAIL)" || { echo 'DEV_EMAIL is empty — set it or unset it for the dev default'; exit 1; }
 	@$(COMPOSE) down >/dev/null 2>&1 || true
 	@$(PUSH_CLEAR)
 	@if ! grep -Eq '"passwordHash"[[:space:]]*:[[:space:]]*"[^"]+"' server/data/state.json 2>/dev/null; then \
 		command -v go >/dev/null 2>&1 || { echo "missing: go (https://go.dev/dl/)"; exit 1; }; \
-		echo "no dev password set — configuring $(PCODER_AUTH_EMAIL) / $(DEV_PASSWORD)"; \
-		printf '%s' '$(DEV_PASSWORD)' | env PCODER_DATA_DIR=./data go -C server run ./cmd/server set-password; \
+		echo "no dev password set — configuring $(DEV_EMAIL) / $(DEV_PASSWORD)"; \
+		printf '%s' '$(DEV_PASSWORD)' | env PCODER_DATA_DIR=./data go -C server run ./cmd/server set-password --email '$(DEV_EMAIL)'; \
 	fi
 	@docker build -t pcoder-browser:v14 server/internal/preview/image
 	@trap '$(COMPOSE) down' EXIT; \
 	$(COMPOSE) up --build
 
-dev-seed: _push-clear ## Reset server/data from test/state.mock.json using PCODER_AUTH_EMAIL (keeps jwt-secret, wipes state + butler + codemaps + observe + events + push)
-	@test -n "$(PCODER_AUTH_EMAIL)" || { echo 'PCODER_AUTH_EMAIL is empty — set it or unset it for the dev default'; exit 1; }
+dev-seed: _push-clear ## Reset server/data from test/state.mock.json using DEV_EMAIL (keeps jwt-secret, wipes state + butler + codemaps + observe + events + push)
+	@test -n "$(DEV_EMAIL)" || { echo 'DEV_EMAIL is empty — set it or unset it for the dev default'; exit 1; }
 	@mkdir -p server/data
 	@rm -f server/data/state.json
 	@rm -rf server/data/butler server/data/codemaps server/data/observe server/data/events.log
-	@sed "s/dev@example.com/$(PCODER_AUTH_EMAIL)/" test/state.mock.json > server/data/state.json
+	@sed "s/dev@example.com/$(DEV_EMAIL)/" test/state.mock.json > server/data/state.json
 	@chmod 600 server/data/state.json
-	@echo "seeded server/data/state.json — login as $(PCODER_AUTH_EMAIL) / $(DEV_PASSWORD)"
+	@echo "seeded server/data/state.json — login as $(DEV_EMAIL) / $(DEV_PASSWORD)"
 
 reset-push: _push-clear ## Delete VAPID keys + push subscriptions (restart the server, then clear browser site data)
 	@echo "push state cleared — restart the stack and clear site data in each browser to resubscribe"
@@ -68,6 +66,8 @@ test: ## Full stack tests: setup.sh self-test + Go (unit+integration) + web (uni
 	cd web && npm run test:e2e:parallel
 
 nuke: ## Teardown containers, volumes, network and local state
+	-@docker compose -f docker-compose.yml down -v --remove-orphans 2>/dev/null || true
+	-@$(COMPOSE) down -v --remove-orphans 2>/dev/null || true
 	-docker rm -f $$(docker ps -aq --filter name=pcoder-) 2>/dev/null || true
 	-docker volume rm $$(docker volume ls -q --filter name=pcoder-) 2>/dev/null || true
 	-docker network rm pcoder-net 2>/dev/null || true
