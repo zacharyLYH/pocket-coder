@@ -8,6 +8,7 @@ import { Home } from '@/components/Home'
 import { PreviewSurface } from '@/components/PreviewSurface'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { isPwaStandalone } from '@/hooks/usePwaInstall'
+import { Toaster } from '@/components/ui/toaster'
 import { parsePreviewPath, parseTerminalPath } from '@/lib/paths'
 
 type AuthState = 'loading' | 'out' | 'in'
@@ -121,6 +122,7 @@ export default function App() {
     <>
       {pulling && <PullToRefreshIndicator />}
       {content}
+      <Toaster />
     </>
   )
 }
