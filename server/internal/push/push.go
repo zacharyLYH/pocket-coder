@@ -29,8 +29,11 @@ const (
 	vapidFile = "vapid.json"
 	pushFile  = "push.json"
 
-	// Subscriber is the VAPID `sub` claim, a required contact URI.
-	Subscriber = "mailto:leeyihong03@gmail.com"
+	// Subscriber is the VAPID `sub` claim, a required contact URI. webpush-go
+	// prepends "mailto:" unless the value starts with "https:", so pass a bare
+	// address: "mailto:..." would become "mailto:mailto:...", which Apple
+	// rejects with 403 BadJwtToken (FCM and Mozilla tolerate it).
+	Subscriber = "leeyihong03@gmail.com"
 
 	sendTimeout = 10 * time.Second
 	ttlSeconds  = 60
