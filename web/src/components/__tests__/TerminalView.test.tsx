@@ -15,6 +15,8 @@ vi.mock('@xterm/xterm', () => ({
       focus: vi.fn(),
       write: vi.fn(),
       onData: vi.fn(),
+      onSelectionChange: vi.fn(() => ({ dispose: vi.fn() })),
+      getSelection: vi.fn(() => ''),
       loadAddon: vi.fn(),
       options: {},
     }

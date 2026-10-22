@@ -31,14 +31,15 @@ const (
 	HealthRepair      = "health.repair"
 
 	// Sessions + terminal transport.
-	SessionList    = "session.list"
-	SessionCreate  = "session.create"
-	SessionKill    = "session.kill"
-	SessionDelete  = "session.delete"
-	SessionRestart = "session.restart"
-	SessionRename  = "session.rename"
-	SessionInject  = "session.inject"
-	TerminalAttach = "terminal.attach"
+	SessionList      = "session.list"
+	SessionCreate    = "session.create"
+	SessionKill      = "session.kill"
+	SessionDelete    = "session.delete"
+	SessionRestart   = "session.restart"
+	SessionRename    = "session.rename"
+	SessionInject    = "session.inject"
+	SessionSelection = "session.selection"
+	TerminalAttach   = "terminal.attach"
 
 	// Multi-project fan-out.
 	ProjectsExec   = "projects.exec"

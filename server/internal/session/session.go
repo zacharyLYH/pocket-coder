@@ -165,6 +165,69 @@ func (s *Service) IsAlive(ctx context.Context, container, name string) (bool, er
 	return chk.ExitCode == 0, nil
 }
 
+// Selection is the newest tmux paste buffer for a session. tmux owns mouse
+// drags while `mouse on` is set (ThemeArgs), so xterm's own selection stays
+// empty on desktop; the drag lands in this buffer instead. Fresh says the
+// buffer was created moments ago, which lets the browser ignore a stale
+// buffer left by an earlier copy (or a drag the pane's app consumed).
+type Selection struct {
+	Text  string `json:"text"`
+	Fresh bool   `json:"fresh"`
+}
+
+// selectionFreshWindow is generous enough for the browser's release → HTTP
+// hop, but tight enough that yesterday's buffer cannot masquerade as today's
+// highlight.
+const selectionFreshWindow = 2 * time.Second
+
+// Selection returns the newest tmux paste buffer for the session's tmux
+// server. No buffers is an empty selection, not an error.
+func (s *Service) Selection(ctx context.Context, container, name string) (Selection, error) {
+	if !ValidName(name) {
+		return Selection{}, fmt.Errorf("%w: %q", ErrInvalidName, name)
+	}
+	exists, err := s.Exists(ctx, container, name)
+	if err != nil {
+		return Selection{}, err
+	}
+	if !exists {
+		return Selection{}, fmt.Errorf("no such session %q", name)
+	}
+	// The newest buffer is first: tmux inserts new buffers at the head.
+	list, err := s.dkr.Exec(ctx, container, []string{
+		"tmux", "list-buffers", "-F", "#{buffer_name} #{buffer_created}",
+	}, false)
+	if err != nil {
+		return Selection{}, err
+	}
+	if list.ExitCode != 0 {
+		if strings.Contains(strings.ToLower(list.Output), "no buffers") {
+			return Selection{}, nil
+		}
+		return Selection{}, fmt.Errorf("list tmux buffers: %s", strings.TrimSpace(list.Output))
+	}
+	fields := strings.Fields(strings.SplitN(list.Output, "\n", 2)[0])
+	if len(fields) == 0 {
+		return Selection{}, nil
+	}
+	buffer := fields[0]
+	fresh := false
+	if len(fields) > 1 {
+		if created, perr := strconv.ParseInt(fields[1], 10, 64); perr == nil {
+			age := time.Since(time.Unix(created, 0))
+			fresh = age >= -2*time.Second && age <= selectionFreshWindow
+		}
+	}
+	show, err := s.dkr.Exec(ctx, container, []string{"tmux", "show-buffer", "-b", buffer}, false)
+	if err != nil {
+		return Selection{}, err
+	}
+	if show.ExitCode != 0 {
+		return Selection{}, fmt.Errorf("show tmux buffer: %s", strings.TrimSpace(show.Output))
+	}
+	return Selection{Text: show.Output, Fresh: fresh}, nil
+}
+
 // Exists reports whether the named session exists (`tmux has-session`,
 // exit 1 = no).
 func (s *Service) Exists(ctx context.Context, container, name string) (bool, error) {

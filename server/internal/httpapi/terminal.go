@@ -700,6 +700,38 @@ func handleInjectSession(d Deps) http.HandlerFunc {
 	}
 }
 
+// handleSessionSelection exposes tmux's newest paste buffer so a desktop
+// drag (which tmux owns while `mouse on`) can still reach the browser
+// clipboard. The client checks Fresh before treating it as a new highlight.
+func handleSessionSelection(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		var err error
+		defer obsFailAt(r, obs.SessionSelection, "read tmux selection failed", &err, map[string]any{"session": name})()
+		if !session.ValidName(name) {
+			err = session.ErrInvalidName
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		id, ok := ensureProject(d, w, r)
+		if !ok {
+			err = errors.New("project container not running")
+			return
+		}
+		sel, serr := d.Sessions.Selection(r.Context(), project.ContainerName(id), name)
+		if serr != nil {
+			err = serr
+			if strings.Contains(serr.Error(), "no such session") {
+				writeErr(w, http.StatusNotFound, "no such session")
+				return
+			}
+			writeInternalErr(w, "read tmux selection", serr)
+			return
+		}
+		writeJSON(w, http.StatusOK, sel)
+	}
+}
+
 // handleKillSession removes a tmux session, idempotently. Metadata in
 // state.json is kept so re-entry can relaunch the right kind of session.
 func handleKillSession(d Deps) http.HandlerFunc {

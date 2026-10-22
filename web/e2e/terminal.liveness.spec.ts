@@ -189,7 +189,9 @@ for (const [name, viewport] of [
       // never a content change.
       const text = await rows.innerText()
       const seen = [...text.matchAll(/BURST-(\d\d)/g)].map((m) => Number(m[1]))
-      expect(seen.length).toBeGreaterThanOrEqual(24) // a full viewport of burst lines
+      // The viewport fits a full buffer of burst lines. The accessory-keys
+      // bar (d31f241) trims ~62px, so desktop shows 23 rows, not 24.
+      expect(seen.length).toBeGreaterThanOrEqual(23) // a full viewport of burst lines
       expect(seen).toEqual([...seen].sort((a, b) => a - b))
       expect(seen.at(-1)).toBe(29)
 

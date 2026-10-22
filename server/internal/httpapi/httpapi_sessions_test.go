@@ -104,6 +104,37 @@ func TestCreateSessionLifecycle(t *testing.T) {
 	}
 }
 
+func TestSessionSelection(t *testing.T) {
+	d, md, dataDir := newSessionDeps(t)
+	seedProject(t, dataDir, "abc")
+	md.EXPECT().Inspect(mock.Anything, "pcoder-abc").Return(docker.Container{Running: true}, nil).Once()
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "has-session", "-t", "main"}, false).
+		Return(docker.ExecResult{ExitCode: 0}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc",
+		[]string{"tmux", "list-buffers", "-F", "#{buffer_name} #{buffer_created}"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: fmt.Sprintf("buffer2 %d\n", time.Now().Unix())}, nil)
+	md.EXPECT().Exec(mock.Anything, "pcoder-abc", []string{"tmux", "show-buffer", "-b", "buffer2"}, false).
+		Return(docker.ExecResult{ExitCode: 0, Output: "copied text"}, nil)
+
+	h := New(d)
+	cookie := loginCookie(t, h)
+	rec := authedGet(t, h, cookie, "/api/projects/abc/sessions/main/selection")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d %q, want 200", rec.Code, rec.Body)
+	}
+	var got session.Selection
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Text != "copied text" || !got.Fresh {
+		t.Fatalf("got %+v, want fresh copied text", got)
+	}
+
+	if rec := authedGet(t, h, cookie, "/api/projects/abc/sessions/-evil/selection"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid name: %d, want 400", rec.Code)
+	}
+}
+
 func TestCreateSessionGhostProject404(t *testing.T) {
 	d, _, _ := newSessionDeps(t)
 	h := New(d)

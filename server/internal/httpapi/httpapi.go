@@ -109,6 +109,7 @@ func New(d Deps) http.Handler {
 		authedProject("POST", "/api/projects/{id}/sessions/{name}/restart", handleRestartSession)
 		authedProject("POST", "/api/projects/{id}/sessions/{name}/rename", handleRenameSession)
 		authedProject("POST", "/api/projects/{id}/sessions/{name}/inject", handleInjectSession)
+		authedProject("GET", "/api/projects/{id}/sessions/{name}/selection", handleSessionSelection)
 		authedProject("GET", "/ws/projects/{id}/sessions/{name}", handleTerminal)
 	}
 

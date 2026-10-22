@@ -3,9 +3,11 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 
@@ -107,6 +109,57 @@ func TestExists(t *testing.T) {
 		d.EXPECT().Exec(mock.Anything, "c1", hasCmd, false).Return(docker.ExecResult{ExitCode: 2, Output: "boom"}, nil)
 		if _, err := New(d).Exists(context.Background(), "c1", "main"); err == nil {
 			t.Fatal("expected error for exit 2")
+		}
+	})
+}
+
+func TestSelection(t *testing.T) {
+	hasCmd := []string{"tmux", "has-session", "-t", "main"}
+	listCmd := []string{"tmux", "list-buffers", "-F", "#{buffer_name} #{buffer_created}"}
+	showCmd := []string{"tmux", "show-buffer", "-b", "buffer4"}
+
+	t.Run("returns the newest buffer and marks a recent copy fresh", func(t *testing.T) {
+		d := dockermocks.NewMockClient(t)
+		d.EXPECT().Exec(mock.Anything, "c1", hasCmd, false).Return(docker.ExecResult{ExitCode: 0}, nil)
+		d.EXPECT().Exec(mock.Anything, "c1", listCmd, false).Return(docker.ExecResult{
+			ExitCode: 0,
+			Output:   fmt.Sprintf("buffer4 %d\nbuffer3 %d\n", time.Now().Unix(), time.Now().Add(-time.Minute).Unix()),
+		}, nil)
+		d.EXPECT().Exec(mock.Anything, "c1", showCmd, false).Return(docker.ExecResult{ExitCode: 0, Output: "hello\n"}, nil)
+		got, err := New(d).Selection(context.Background(), "c1", "main")
+		if err != nil || got.Text != "hello\n" || !got.Fresh {
+			t.Fatalf("got %+v err=%v, want fresh hello", got, err)
+		}
+	})
+
+	t.Run("an old buffer is returned but not fresh", func(t *testing.T) {
+		d := dockermocks.NewMockClient(t)
+		d.EXPECT().Exec(mock.Anything, "c1", hasCmd, false).Return(docker.ExecResult{ExitCode: 0}, nil)
+		d.EXPECT().Exec(mock.Anything, "c1", listCmd, false).Return(docker.ExecResult{
+			ExitCode: 0,
+			Output:   fmt.Sprintf("buffer4 %d\n", time.Now().Add(-time.Minute).Unix()),
+		}, nil)
+		d.EXPECT().Exec(mock.Anything, "c1", showCmd, false).Return(docker.ExecResult{ExitCode: 0, Output: "old"}, nil)
+		got, err := New(d).Selection(context.Background(), "c1", "main")
+		if err != nil || got.Text != "old" || got.Fresh {
+			t.Fatalf("got %+v err=%v, want stale old", got, err)
+		}
+	})
+
+	t.Run("no buffers is an empty selection", func(t *testing.T) {
+		d := dockermocks.NewMockClient(t)
+		d.EXPECT().Exec(mock.Anything, "c1", hasCmd, false).Return(docker.ExecResult{ExitCode: 0}, nil)
+		d.EXPECT().Exec(mock.Anything, "c1", listCmd, false).Return(docker.ExecResult{ExitCode: 0}, nil)
+		got, err := New(d).Selection(context.Background(), "c1", "main")
+		if err != nil || got.Text != "" || got.Fresh {
+			t.Fatalf("got %+v err=%v, want empty", got, err)
+		}
+	})
+
+	t.Run("invalid name never reaches docker", func(t *testing.T) {
+		d := dockermocks.NewMockClient(t)
+		if _, err := New(d).Selection(context.Background(), "c1", "-x"); !errors.Is(err, ErrInvalidName) {
+			t.Fatalf("err = %v, want ErrInvalidName", err)
 		}
 	})
 }

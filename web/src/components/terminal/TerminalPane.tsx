@@ -4,8 +4,14 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
 import { projectPath } from '@/lib/api'
+import { copyToClipboard } from '@/lib/clipboard'
 import { parseTerminalFrame } from '@/lib/terminalFrame'
-import { TERM_INPUT_EVENT, TERM_PASTE_EVENT, type TermInputDetail, type TermPasteDetail } from '@/components/terminal/QuickKeys'
+import {
+  TERM_INPUT_EVENT,
+  TERM_PASTE_EVENT,
+  type TermInputDetail,
+  type TermPasteDetail,
+} from '@/components/terminal/QuickKeys'
 import { TERM_THEME } from '@/components/terminal/termTheme'
 
 export type ConnStatus = 'connecting' | 'live' | 'ended'
@@ -21,7 +27,7 @@ export type ConnStatus = 'connecting' | 'live' | 'ended'
 // scrolls copy-mode instead of emitting Up/Down arrows. A DOM-level wheel
 // handler would run after xterm's own handler and double-handle the gesture
 // (arrow-key leak = shell history recall, the scroll-up bug).
-export function TerminalPane({ projectId, session, redial, fontSize, hostRef, onStatus, onError }: {
+export function TerminalPane({ projectId, session, redial, fontSize, hostRef, onStatus, onError, onCopied }: {
   projectId: string
   session: string
   redial: number
@@ -29,11 +35,16 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
   hostRef: RefObject<HTMLDivElement | null>
   onStatus: (status: ConnStatus) => void
   onError: (message: string) => void
+  onCopied?: () => void
 }) {
   // Live socket for synthetic input (shortcuts modal's key buttons).
   const wsRef = useRef<WebSocket | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  // Set by the mount effect below; touch handlers call it while the gesture
+  // is still active (Safari only grants clipboard writes during a user
+  // gesture).
+  const copyTerminalRef = useRef<() => void>(() => {})
 
   // Mobile scroll: xterm.js has no touch handling of its own — the pane is
   // a custom scroll element driven by wheel events only, so a one-finger
@@ -52,23 +63,122 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
     if (!hostRef.current) return
     const host: HTMLDivElement = hostRef.current
     const PX_PER_NOTCH = 26
+    const LONG_PRESS_MS = 500
+    const MOVE_TOLERANCE = 10
+    const WORD_CHAR = /[A-Za-z0-9_./:@~+-]/
     let active = false
+    let selecting = false
     let startX = 0
     let startY = 0
     let lastY = 0
     let accum = 0
-    function onTouchStart(e: TouchEvent) {
-      if (e.touches.length !== 1) { active = false; return }
-      active = true
-      startX = e.touches[0].clientX
-      startY = lastY = e.touches[0].clientY
-      accum = 0
+    let longPress = 0
+    let anchor: { col: number; row: number } | null = null
+    let word: { start: number; end: number } | null = null
+
+    // Map a screen point to a buffer cell. xterm exposes no hit-testing API
+    // and the pane is canvas-rendered, so derive the cell from the live
+    // screen box and the terminal's own cols/rows.
+    function cellAt(clientX: number, clientY: number): { col: number; row: number } | null {
+      const term = termRef.current
+      const screen = host.querySelector('.xterm-screen') as HTMLElement | null
+      const rect = (screen ?? host).getBoundingClientRect()
+      if (!term || rect.width <= 0 || rect.height <= 0) return null
+      const cols = term.cols || 80
+      const rows = term.rows || 24
+      const viewportRow = Math.min(rows - 1, Math.max(0, Math.floor(((clientY - rect.top) / rect.height) * rows)))
+      const col = Math.min(cols - 1, Math.max(0, Math.floor(((clientX - rect.left) / rect.width) * cols)))
+      return { col, row: term.buffer.active.viewportY + viewportRow }
     }
-    function onTouchMove(e: TouchEvent) {
-      if (!active || e.touches.length !== 1) return
+
+    function selectWordAt(clientX: number, clientY: number): boolean {
+      const term = termRef.current
+      const at = cellAt(clientX, clientY)
+      if (!term || !at) return false
+      const line = term.buffer.active.getLine(at.row)
+      if (!line) return false
+      const text = line.translateToString(true)
+      let start = Math.min(at.col, text.length)
+      let end = start
+      if (text[start] && WORD_CHAR.test(text[start])) {
+        while (start > 0 && WORD_CHAR.test(text[start - 1])) start--
+        while (end < text.length && WORD_CHAR.test(text[end])) end++
+      } else {
+        end = Math.min(text.length, start + 1)
+      }
+      if (end <= start) return false
+      anchor = { col: start, row: at.row }
+      word = { start, end }
+      term.select(start, at.row, end - start)
+      try { navigator.vibrate?.(10) } catch { /* unsupported */ }
+      return true
+    }
+
+    function extendSelection(clientX: number, clientY: number) {
+      const term = termRef.current
+      const at = cellAt(clientX, clientY)
+      if (!term || !at || !anchor || !word) return
+      // Drag past the word's start extends from its end backwards; anywhere
+      // else extends forward from its start, like native word handles.
+      const backwards = at.row < anchor.row || (at.row === anchor.row && at.col < word.start)
+      const start = backwards ? at : { col: word.start, row: anchor.row }
+      const end = backwards ? { col: word.end, row: anchor.row } : { col: Math.max(at.col + 1, word.end), row: at.row }
+      const cols = term.cols || 80
+      term.select(start.col, start.row, (end.row - start.row) * cols + (end.col - start.col))
+    }
+
+    function clearLongPress() {
+      window.clearTimeout(longPress)
+      longPress = 0
+    }
+
+    function resetGesture() {
+      active = false
+      selecting = false
+      anchor = null
+      word = null
+      accum = 0
+      clearLongPress()
+    }
+
+    function onTouchStart(e: TouchEvent) {
+      resetGesture()
+      // A fresh tap elsewhere drops the previous highlight, like native
+      // text selection.
+      termRef.current?.clearSelection()
+      if (e.touches.length !== 1) return
       const t = e.touches[0]
+      active = true
+      startX = t.clientX
+      startY = lastY = t.clientY
+      // Native-style long press: select the word under the finger, then let
+      // the same drag extend the selection. xterm has no touch selection of
+      // its own and the pane renders to a canvas, so this is the only way a
+      // phone user can select terminal text.
+      longPress = window.setTimeout(() => {
+        longPress = 0
+        if (!active || selecting) return
+        if (selectWordAt(startX, startY)) {
+          selecting = true
+          active = false
+        }
+      }, LONG_PRESS_MS)
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      if (!active && !selecting) return
+      if (e.touches.length !== 1) return
+      const t = e.touches[0]
+      if (selecting) {
+        e.preventDefault()
+        extendSelection(t.clientX, t.clientY)
+        return
+      }
+      const dx = Math.abs(t.clientX - startX)
+      const dy = Math.abs(t.clientY - startY)
+      if (longPress && (dx > MOVE_TOLERANCE || dy > MOVE_TOLERANCE)) clearLongPress()
       // Let horizontal gestures (rare) pass through untouched.
-      if (Math.abs(t.clientX - startX) > Math.abs(t.clientY - startY)) return
+      if (dx > dy) return
       // Own the gesture: suppress the browser's own scroll so it can't
       // cancel the drag mid-stream (which is what made the pane unscrollable).
       e.preventDefault()
@@ -118,16 +228,44 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
         term.scrollLines(step > 0 ? -lines : lines)
       }
     }
-    function onTouchEnd() { active = false; accum = 0 }
+
+    function onTouchEnd() {
+      if (selecting) {
+        selecting = false
+        anchor = null
+        word = null
+      }
+      active = false
+      accum = 0
+      clearLongPress()
+      // Copy inside the gesture: Safari rejects clipboard writes that
+      // happen after the transient activation expires. No-op when nothing
+      // is selected.
+      copyTerminalRef.current()
+    }
+
+    function onTouchCancel() {
+      resetGesture()
+    }
+
+    function onContextMenu(e: Event) {
+      // Suppress the mobile callout/context menu during a long press; the
+      // accessory bar owns Paste.
+      if (longPress || selecting) e.preventDefault()
+    }
+
     host.addEventListener('touchstart', onTouchStart, { passive: true })
     host.addEventListener('touchmove', onTouchMove, { passive: false })
     host.addEventListener('touchend', onTouchEnd, { passive: true })
-    host.addEventListener('touchcancel', onTouchEnd, { passive: true })
+    host.addEventListener('touchcancel', onTouchCancel, { passive: true })
+    host.addEventListener('contextmenu', onContextMenu)
     return () => {
+      clearLongPress()
       host.removeEventListener('touchstart', onTouchStart)
       host.removeEventListener('touchmove', onTouchMove)
       host.removeEventListener('touchend', onTouchEnd)
-      host.removeEventListener('touchcancel', onTouchEnd)
+      host.removeEventListener('touchcancel', onTouchCancel)
+      host.removeEventListener('contextmenu', onContextMenu)
     }
   }, [hostRef])
 
@@ -185,6 +323,93 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
     term.loadAddon(fit)
     termRef.current = term
     fitRef.current = fit
+
+    const host = hostRef.current
+    let copyTimer = 0
+    // One highlight can fire two copies (the explicit release, then the
+    // debounced selection-change fallback committing after mouseup). The last
+    // write is remembered so the second one is skipped: no duplicate
+    // clipboard write, no second "Copied" toast.
+    let lastCopied = ''
+
+    // Desktop drags in prod belong to tmux: ThemeArgs sets `mouse on`, so
+    // xterm forwards the gesture as SGR mouse reports and its own selection
+    // stays empty. tmux copies the highlighted text into its paste buffer,
+    // which the server exposes at .../selection. Read it after the release
+    // and copy while Chrome's transient activation is still alive. The
+    // Fresh flag keeps an old buffer from being pasted after a drag a TUI
+    // consumed (no tmux copy happened).
+    async function tmuxSelection(): Promise<string> {
+      // Give tmux a beat to finish copy-selection-and-cancel on mouseup.
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      try {
+        const res = await fetch(projectPath(projectId, `/sessions/${encodeURIComponent(session)}/selection`))
+        if (!res.ok) return ''
+        const data = await res.json() as { text?: unknown; fresh?: unknown }
+        return data.fresh === true && typeof data.text === 'string' ? data.text : ''
+      } catch {
+        return ''
+      }
+    }
+
+    // Highlight-to-copy. Three selection sources exist in the wild: xterm's
+    // own canvas selection, the browser's native selection over xterm's
+    // accessibility tree, and tmux's paste buffer (desktop, `mouse on`, where
+    // the drag never reaches xterm). Copy on gesture end while user activation
+    // is still alive; the debounced selection-change copy below covers a
+    // browser that commits the range late.
+    async function copyTerminal(allowTmux = false) {
+      window.clearTimeout(copyTimer)
+      let text = term.getSelection()
+      if (!text) {
+        const native = window.getSelection()
+        if (native && native.rangeCount > 0 && host?.contains(native.anchorNode)) text = native.toString()
+      }
+      if (!text && allowTmux) text = await tmuxSelection()
+      if (!text || text === lastCopied) return
+      // Claim the highlight before awaiting: a second trigger landing
+      // mid-write must not write (or toast) again.
+      lastCopied = text
+      const range = term.getSelectionPosition()
+      if (!(await copyToClipboard(text))) return
+      onCopied?.()
+      // The execCommand fallback focuses a scratch textarea, which can clear
+      // xterm's highlight. Put it back so the selection stays visible after
+      // an automatic copy.
+      if (range && !term.hasSelection()) {
+        const cols = term.cols || 80
+        term.select(range.start.x, range.start.y, (range.end.y - range.start.y) * cols + (range.end.x - range.start.x))
+      }
+    }
+    copyTerminalRef.current = () => { void copyTerminal() }
+
+    const selection = term.onSelectionChange(() => {
+      window.clearTimeout(copyTimer)
+      copyTimer = window.setTimeout(() => { void copyTerminal() }, 120)
+    })
+
+    // A mouseup can land outside the terminal after a drag past its edge, so
+    // the release is read on the document. The drag distance decides whether
+    // tmux is even a candidate: a plain click must NOT fall back to tmux,
+    // because the newest buffer may still be fresh from an earlier drag even
+    // though this gesture copied nothing.
+    let mouseDownAt: { x: number; y: number } | null = null
+    function onMouseDown(e: MouseEvent) {
+      if (e.button !== 0) return
+      mouseDownAt = { x: e.clientX, y: e.clientY }
+      // tmux (mouse mode) owns this drag, so a local highlight from a
+      // previous gesture would be stale. Without mouse mode xterm builds
+      // its own selection; clearing it here would cancel that drag.
+      if (term.modes.mouseTrackingMode !== 'none') term.clearSelection()
+    }
+    function onMouseUp(e: MouseEvent) {
+      const from = mouseDownAt
+      mouseDownAt = null
+      if (!from) return
+      void copyTerminal(Math.abs(e.clientX - from.x) > 3 || Math.abs(e.clientY - from.y) > 3)
+    }
+    host?.addEventListener('mousedown', onMouseDown)
+    document.addEventListener('mouseup', onMouseUp)
 
     // PTY output is coalesced into one xterm.write() per animation frame.
     // An agent streaming test output sends hundreds of frames a second, and
@@ -277,6 +502,11 @@ export function TerminalPane({ projectId, session, redial, fontSize, hostRef, on
     observer.observe(hostRef.current!)
     return () => {
       disposed = true
+      window.clearTimeout(copyTimer)
+      selection.dispose()
+      host?.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('mouseup', onMouseUp)
+      copyTerminalRef.current = () => {}
       cancelAnimationFrame(raf)
       observer.disconnect()
       ws?.close()

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import type { RefObject } from 'react'
-import { render } from '@testing-library/react'
+import { render, waitFor } from '@testing-library/react'
 import { TerminalPane } from '@/components/terminal/TerminalPane'
 import { pasteTermText } from '@/components/terminal/QuickKeys'
 import { mockFetch } from '@/test/mockFetch'
@@ -29,13 +29,16 @@ let wsInstances: MockWebSocket[] = []
 
 // Buffer mode drives the touch bridge: 'normal' has scrollback,
 // 'alternate' is `tmux attach` (no scrollback, tmux owns scroll via mouse).
-const { scrollLines, opened, opts, buf, write, paste } = vi.hoisted(() => ({
+const { scrollLines, opened, opts, buf, write, paste, selection, selText, mouseMode } = vi.hoisted(() => ({
   scrollLines: vi.fn(),
   opened: vi.fn(),
   opts: { v: null as Record<string, unknown> | null },
   buf: { type: 'normal' as 'normal' | 'alternate' },
   write: vi.fn(),
   paste: vi.fn(),
+  selection: { v: null as null | (() => void) },
+  selText: { v: '' },
+  mouseMode: { v: 'none' as 'none' | 'any' },
 }))
 
 vi.mock('@xterm/xterm', () => ({
@@ -48,11 +51,18 @@ vi.mock('@xterm/xterm', () => ({
       write,
       paste,
       onData: vi.fn(),
+      onSelectionChange: (fn: () => void) => { selection.v = fn; return { dispose: vi.fn() } },
+      getSelection: () => selText.v,
+      getSelectionPosition: () => undefined,
+      hasSelection: () => !!selText.v,
+      clearSelection: vi.fn(),
+      select: vi.fn(),
       scrollLines,
       cols: 80,
       rows: 24,
       buffer: { active: { baseY: 0, length: 100, type: 'normal' as string } },
       options: {},
+      modes: { get mouseTrackingMode() { return mouseMode.v } },
       loadAddon: vi.fn(),
     }
     // Read the live mode at access time so each test controls it.
@@ -75,6 +85,9 @@ beforeEach(() => {
   paste.mockClear()
   opts.v = null
   buf.type = 'normal'
+  selection.v = null
+  selText.v = ''
+  mouseMode.v = 'none'
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver)
   vi.stubGlobal('fetch', mockFetch((url) => {
     if (url.endsWith('/sessions')) return { status: 200, body: { sessions: [{ name: 'main' }] } }
@@ -112,6 +125,90 @@ describe('TerminalPane liveness + spaciousness options', () => {
 })
 
 describe('TerminalPane output coalescing', () => {
+  it('copies the finished mouse highlight to the clipboard', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    selText.v = 'npm run dev'
+    const host = hostRef()
+    render(<TerminalPane projectId="abc" session="main" redial={0} fontSize={14} hostRef={host} onStatus={vi.fn()} onError={vi.fn()} />)
+    await new Promise((r) => setTimeout(r, 20))
+
+    host.current?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('npm run dev'))
+  })
+
+  it('copies tmux\'s paste buffer when mouse mode keeps xterm selection empty', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    vi.stubGlobal('fetch', mockFetch((url) => {
+      if (url.endsWith('/sessions')) return { status: 200, body: { sessions: [{ name: 'main' }] } }
+      if (url.endsWith('/selection')) return { status: 200, body: { text: 'tmux selection', fresh: true } }
+      return undefined
+    }))
+    const host = hostRef()
+    render(<TerminalPane projectId="abc" session="main" redial={0} fontSize={14} hostRef={host} onStatus={vi.fn()} onError={vi.fn()} />)
+    await new Promise((r) => setTimeout(r, 20))
+
+    mouseMode.v = 'any'
+    // The release lands 39px from the press, which is what marks the gesture
+    // as a drag worth asking tmux about.
+    host.current?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 1, clientY: 1 }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 40, clientY: 1 }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('tmux selection'))
+  })
+
+  it('ignores a stale tmux buffer', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    vi.stubGlobal('fetch', mockFetch((url) => {
+      if (url.endsWith('/sessions')) return { status: 200, body: { sessions: [{ name: 'main' }] } }
+      if (url.endsWith('/selection')) return { status: 200, body: { text: 'old copy', fresh: false } }
+      return undefined
+    }))
+    const host = hostRef()
+    render(<TerminalPane projectId="abc" session="main" redial={0} fontSize={14} hostRef={host} onStatus={vi.fn()} onError={vi.fn()} />)
+    await new Promise((r) => setTimeout(r, 20))
+
+    mouseMode.v = 'any'
+    host.current?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 1, clientY: 1 }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 40, clientY: 1 }))
+    await new Promise((r) => setTimeout(r, 250))
+    expect(writeText).not.toHaveBeenCalled()
+  })
+
+  it('reports one copy and skips the duplicate debounced write', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    selText.v = 'copy me'
+    const onCopied = vi.fn()
+    const host = hostRef()
+    render(<TerminalPane projectId="abc" session="main" redial={0} fontSize={14} hostRef={host} onStatus={vi.fn()} onError={vi.fn()} onCopied={onCopied} />)
+    await new Promise((r) => setTimeout(r, 20))
+
+    host.current?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    await waitFor(() => expect(onCopied).toHaveBeenCalledTimes(1))
+
+    // The browser commits the same selection after mouseup; the debounced
+    // fallback must not write or toast a second time.
+    selection.v?.()
+    await new Promise((r) => setTimeout(r, 250))
+    expect(writeText).toHaveBeenCalledTimes(1)
+    expect(onCopied).toHaveBeenCalledTimes(1)
+  })
+
+  it('copies when the browser commits the selection after mouseup', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    selText.v = 'late selection'
+    render(<TerminalPane projectId="abc" session="main" redial={0} fontSize={14} hostRef={hostRef()} onStatus={vi.fn()} onError={vi.fn()} />)
+    await new Promise((r) => setTimeout(r, 20))
+
+    selection.v?.()
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('late selection'))
+  })
+
   it('routes clipboard text through xterm paste handling', async () => {
     render(<TerminalPane projectId="abc" session="main" redial={0} fontSize={14} hostRef={hostRef()} onStatus={vi.fn()} onError={vi.fn()} />)
     await new Promise((r) => setTimeout(r, 20))

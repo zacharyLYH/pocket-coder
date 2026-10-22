@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { terminalPath } from '@/lib/paths'
 import { api, errMsg, projectPath } from '@/lib/api'
+import { toast } from '@/components/ui/use-toast'
 import type { Harness } from '@/lib/types'
 import { TerminalHeader } from '@/components/terminal/TerminalHeader'
 import { AccessoryKeys } from '@/components/terminal/AccessoryKeys'
@@ -290,6 +291,9 @@ export function TerminalView({ projectId, initialSession, onBack, onOpenPreview 
           hostRef={hostRef}
           onStatus={setStatus}
           onError={setError}
+          // A highlight-copy is a silent, accidental-looking gesture: confirm
+          // that the text reached the clipboard.
+          onCopied={() => toast({ title: 'Copied', duration: 1600 })}
         />
       </div>
       {tab !== 'terminal' && (
