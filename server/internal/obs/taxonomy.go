@@ -110,6 +110,16 @@ const (
 	PreviewScroll       = "preview.scroll"
 	PreviewViewport     = "preview.viewport"
 
+	// Work Sync. Code generation and applied transfers are milestones; the
+	// per-step handshake and refusals stay out of the audit filter.
+	SyncCode     = "sync.code"
+	SyncHello    = "sync.hello"
+	SyncPlan     = "sync.plan"
+	SyncUpload   = "sync.upload"
+	SyncDownload = "sync.download"
+	SyncAbort    = "sync.abort"
+	SyncError    = "sync.error"
+
 	// Observe reads.
 	ObserveRead = "observe.read"
 
@@ -171,4 +181,7 @@ var AuditTypes = []string{
 	GitPull,
 	GitSwitch,
 	GitOpsPrompt,
+	SyncCode,
+	SyncUpload,
+	SyncDownload,
 }

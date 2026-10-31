@@ -9,6 +9,8 @@ import { PreviewSurface } from '@/components/PreviewSurface'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { isPwaStandalone } from '@/hooks/usePwaInstall'
 import { Toaster } from '@/components/ui/toaster'
+import { SyncLock } from '@/components/SyncLock'
+import { useSyncStatus } from '@/hooks/useSyncStatus'
 import { parsePreviewPath, parseTerminalPath } from '@/lib/paths'
 
 type AuthState = 'loading' | 'out' | 'in'
@@ -59,6 +61,11 @@ export default function App() {
     if (path === '/app' || path === '/' || parseTerminalPath(path) !== null || parsePreviewPath(path) !== null) return
     replace('/app')
   }, [state, path, replace])
+
+  // A live Work Sync locks the open project too, not just its home row.
+  // Hooks run before the early return to keep their order stable.
+  const routedProject = parseTerminalPath(path)?.projectId ?? parsePreviewPath(path) ?? null
+  const routedSync = useSyncStatus(state === 'in' ? routedProject : null)
 
   if (state === 'loading') {
     return (
@@ -121,7 +128,12 @@ export default function App() {
   return (
     <>
       {pulling && <PullToRefreshIndicator />}
-      {content}
+      {/* A live sync makes the routed view non-interactive, not just covered:
+          the veil stops pointers, `inert` stops focus and keystrokes (a
+          focused terminal would otherwise keep taking both). `contents`
+          keeps the wrapper out of layout. */}
+      {routedSync === 'idle' ? content : <div className="contents" inert>{content}</div>}
+      <SyncLock status={routedSync} fullscreen />
       <Toaster />
     </>
   )

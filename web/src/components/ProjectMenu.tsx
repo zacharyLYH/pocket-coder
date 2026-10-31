@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { HarnessesCard } from '@/components/HarnessesCard'
+import { WorkSyncDialog } from '@/components/WorkSyncDialog'
 import { ShortcutsModal } from '@/components/shortcuts/ShortcutsModal'
 import { api, projectPath } from '@/lib/api'
 import { terminalPath } from '@/lib/paths'
@@ -11,11 +12,13 @@ import type { Project } from '@/lib/types'
 
 // Per-project menu: shortcuts + harnesses live here, not on home.
 // The row itself navigates; this menu holds the rest.
-export function ProjectMenu({ project, onChanged, onRemove, navigate }: {
+export function ProjectMenu({ project, onChanged, onRemove, navigate, locked = false }: {
   project: Project; onChanged: () => void; onRemove: (id: string) => void; navigate: (to: string) => void
+  locked?: boolean
 }) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [harnessOpen, setHarnessOpen] = useState(false)
+  const [syncOpen, setSyncOpen] = useState(false)
   const [harnessBusy, setHarnessBusy] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   // Optimistic delete: drop the row now so the user sees it go instead of
@@ -33,15 +36,17 @@ export function ProjectMenu({ project, onChanged, onRemove, navigate }: {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button size="sm" variant="ghost" data-testid={`project-menu-${project.id}`} aria-label={`More actions for ${project.id}`} className="min-h-[44px] min-w-[44px]">...</Button>
+          <Button size="sm" variant="ghost" disabled={locked} data-testid={`project-menu-${project.id}`} aria-label={`More actions for ${project.id}`} className="min-h-[44px] min-w-[44px]">...</Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => navigate(terminalPath(project.id, 'main'))}>Open terminal</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setShortcutsOpen(true)}>Shortcuts</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setHarnessOpen(true)}>Harnesses{installed > 0 ? ` (${installed})` : ''}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setSyncOpen(true)}>Work Sync</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setDeleteOpen(true)} className="text-destructive">Delete project</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <WorkSyncDialog projectId={project.id} open={syncOpen} onOpenChange={setSyncOpen} />
       {shortcutsOpen && <ShortcutsModal projectId={project.id} open={shortcutsOpen} onOpenChange={setShortcutsOpen} onSaved={onChanged} />}
       <Dialog open={harnessOpen} onOpenChange={setHarnessOpen}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto rounded-xl sm:max-w-lg">

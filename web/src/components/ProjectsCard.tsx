@@ -6,6 +6,8 @@ import { api, errMsg } from '@/lib/api'
 import { terminalPath } from '@/lib/paths'
 import type { Project } from '@/lib/types'
 import { ProjectMenu } from '@/components/ProjectMenu'
+import { SyncLock } from '@/components/SyncLock'
+import { useSyncStatus } from '@/hooks/useSyncStatus'
 
 // Projects: the row itself opens the terminal. Everything else lives
 // in the per-project menu; the clone form hides in a disclosure. Every
@@ -41,13 +43,7 @@ export function ProjectsCard({ projects, loading, error, refresh, navigate, onBu
           <p className="px-2 text-sm text-muted-foreground">No projects yet. Clone a repo to open a terminal anywhere.</p>
         )}
         {projects.map((p) => (
-          <div key={p.id} data-testid={`project-card-${p.id}`} className="flex items-center gap-1 rounded-xl px-2 py-1 active:bg-muted">
-            <button onClick={() => navigate(terminalPath(p.id, 'main'))} className="min-h-[44px] min-w-0 flex-1 cursor-pointer truncate text-left text-[15px]" aria-label={`Open ${p.id} terminal`}>
-              <span className="block truncate font-medium underline-offset-4 hover:underline">{p.id.split('/')[1] ?? p.id}</span>
-              <span className="block truncate font-mono text-xs text-muted-foreground">{p.id}</span>
-            </button>
-            <ProjectMenu project={p} onChanged={() => { void refresh() }} onRemove={onRemoved} navigate={navigate} />
-          </div>
+          <ProjectRow key={p.id} project={p} navigate={navigate} refresh={refresh} onRemoved={onRemoved} />
         ))}
         <details className="mx-2 mt-1 rounded-xl bg-muted/50" {...(projects.length === 0 ? { open: true } : {})}>
           <summary className="min-h-[44px] cursor-pointer list-none px-3 py-3 text-sm font-medium active:opacity-70">Clone a repo</summary>
@@ -59,5 +55,31 @@ export function ProjectsCard({ projects, loading, error, refresh, navigate, onBu
         </details>
       </CardContent>
     </Card>
+  )
+}
+
+// ProjectRow locks itself while Work Sync is moving bytes: the laptop
+// overwrites the tree, so navigation and menus are blocked until it lands.
+function ProjectRow({ project, navigate, refresh, onRemoved }: {
+  project: Project; navigate: (to: string) => void; refresh: () => Promise<void>; onRemoved: (id: string) => void
+}) {
+  const status = useSyncStatus(project.id)
+  const locked = status !== 'idle'
+  return (
+    <div data-testid={`project-card-${project.id}`} data-sync={status} className="relative flex items-center gap-1 rounded-xl px-2 py-1 active:bg-muted">
+      <Button
+        variant="ghost"
+        onClick={() => navigate(terminalPath(project.id, 'main'))}
+        disabled={locked}
+        data-testid={`project-open-${project.id}`}
+        className="h-auto min-h-[44px] min-w-0 flex-1 flex-col items-start justify-center gap-0 truncate px-0 py-1 text-left text-[15px] font-normal"
+        aria-label={`Open ${project.id} terminal`}
+      >
+        <span className="block w-full truncate font-medium underline-offset-4 hover:underline">{project.id.split('/')[1] ?? project.id}</span>
+        <span className="block w-full truncate font-mono text-xs font-normal text-muted-foreground">{project.id}</span>
+      </Button>
+      <ProjectMenu project={project} onChanged={() => { void refresh() }} onRemove={onRemoved} navigate={navigate} locked={locked} />
+      <SyncLock status={status} />
+    </div>
   )
 }

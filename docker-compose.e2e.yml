@@ -10,6 +10,9 @@ services:
       # E2E clones come from the per-run git daemon on the host
       # (web/e2e/global-setup.ts), not from GitHub.
       PCODER_ALLOW_ANY_REPO: "1"
+      # Work Sync arrives through the published port (Docker gateway, not
+      # loopback); test stacks opt out of the HTTPS rule.
+      PCODER_SYNC_ALLOW_INSECURE: "1"
       PCODER_PREVIEW_TOKEN_SILENCE: ${PCODER_PREVIEW_TOKEN_SILENCE:-20s}
       PCODER_PREVIEW_SWEEP_INTERVAL: ${PCODER_PREVIEW_SWEEP_INTERVAL:-1s}
     volumes:

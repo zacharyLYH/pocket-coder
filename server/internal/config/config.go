@@ -37,6 +37,14 @@ const (
 	EnvPreviewSweepInterval = "PCODER_PREVIEW_SWEEP_INTERVAL"
 	// EnvPreviewTokenSilence bounds quiet time before token rotation.
 	EnvPreviewTokenSilence = "PCODER_PREVIEW_TOKEN_SILENCE"
+
+	// EnvSyncAllowInsecure skips Work Sync's HTTPS-or-loopback rule for
+	// test stacks whose published port reaches the server via the Docker
+	// gateway. Never set in production.
+	EnvSyncAllowInsecure = "PCODER_SYNC_ALLOW_INSECURE"
+	// EnvSyncBinDir holds the cross-compiled pcoder-sync clients. Empty
+	// means <server binary dir>/sync-bin.
+	EnvSyncBinDir = "PCODER_SYNC_BIN_DIR"
 )
 
 // envKeys is the recognized set, derived from the constants above.
@@ -44,6 +52,7 @@ var envKeys = []string{
 	EnvDataDir, EnvBind, EnvJWTSecret, EnvDockerSock,
 	EnvAllowAnyRepo, EnvAIBaseURL, EnvAPIKey, EnvAIModel,
 	EnvPreviewSweepInterval, EnvPreviewTokenSilence,
+	EnvSyncAllowInsecure, EnvSyncBinDir,
 }
 
 // Config holds everything the server needs to boot. Fields map 1:1 to
@@ -59,6 +68,10 @@ type Config struct {
 	// AllowAnyRepo lifts the GitHub-only create requirement. Test stacks
 	// only (see EnvAllowAnyRepo); production leaves it false.
 	AllowAnyRepo bool
+	// SyncAllowInsecure relaxes Work Sync's transport rule for test stacks.
+	SyncAllowInsecure bool
+	// SyncBinDir is where the bootstrap's client binaries live.
+	SyncBinDir string
 }
 
 // Load reads configuration from the process environment.
@@ -88,6 +101,9 @@ func load(env []string) (*Config, error) {
 		AIModel:    values["PCODER_AI_MODEL"],
 		AllowAnyRepo: values["PCODER_ALLOW_ANY_REPO"] == "1" ||
 			values["PCODER_ALLOW_ANY_REPO"] == "true",
+		SyncAllowInsecure: values["PCODER_SYNC_ALLOW_INSECURE"] == "1" ||
+			values["PCODER_SYNC_ALLOW_INSECURE"] == "true",
+		SyncBinDir: values["PCODER_SYNC_BIN_DIR"],
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err

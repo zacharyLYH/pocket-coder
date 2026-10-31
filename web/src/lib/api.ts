@@ -55,7 +55,13 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
     let body: Record<string, unknown> | null = null
     try {
       body = (await res.json()) as Record<string, unknown> | null
-      if (body?.error) detail = String(body.error)
+      // Two error shapes exist: legacy {"error": "msg"} and the coded
+      // {"error": {code, message, detail}} Work Sync routes use.
+      const err = body?.error
+      if (typeof err === 'string') detail = err
+      else if (err && typeof err === 'object' && typeof (err as { message?: unknown }).message === 'string') {
+        detail = (err as { message: string }).message
+      }
     } catch {
       // non-JSON error body — keep the status
     }

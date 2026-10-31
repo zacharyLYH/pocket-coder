@@ -28,6 +28,7 @@ import (
 	"pcoder/internal/session"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
+	worksync "pcoder/internal/sync"
 	"pcoder/internal/threads"
 )
 
@@ -176,6 +177,14 @@ func main() {
 	}
 	slog.Info("data dir ready", "data_dir", cfg.DataDir, "seeded_harnesses", seeded)
 
+	syncBinDir := cfg.SyncBinDir
+	if syncBinDir == "" {
+		if exe, err := os.Executable(); err == nil {
+			syncBinDir = filepath.Join(filepath.Dir(exe), "sync-bin")
+		}
+	}
+	syncSvc := worksync.New(dkr, filepath.Join(cfg.DataDir, "sync-backups"))
+
 	srv := newHTTPServer(cfg.Bind, httpapi.New(httpapi.Deps{
 		Events: ev, Version: version, Auth: authSvc, Projects: svc,
 		Sessions: sessions, Harnesses: harnesses,
@@ -183,6 +192,7 @@ func main() {
 		Obs: observe, Docker: dkr, Codemaps: codemapStore,
 		Butler: threads.New(filepath.Join(cfg.DataDir, "butler"), true),
 		Push:   pushStore,
+		Sync:   syncSvc, SyncAllowInsecure: cfg.SyncAllowInsecure, SyncBinDir: syncBinDir,
 	}))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

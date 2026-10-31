@@ -14,6 +14,9 @@ services:
       PCODER_DATA_DIR: /data
       PCODER_BIND: :8080
       PCODER_DOCKER_SOCK: unix:///var/run/docker.sock
+      # Dev traffic reaches the server through the Docker gateway, not
+      # loopback, so the local stack allows Work Sync without TLS.
+      PCODER_SYNC_ALLOW_INSECURE: "1"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./server/data:/data

@@ -24,6 +24,7 @@ import (
 	"pcoder/internal/session"
 	"pcoder/internal/sshkeys"
 	"pcoder/internal/state"
+	worksync "pcoder/internal/sync"
 )
 
 // EventLog is what handlers need from the event log: read history, append
@@ -52,6 +53,12 @@ type Deps struct {
 	Codemaps  *threads.Store
 	Butler    *threads.Store
 	Push      *push.Store
+	// Sync is Work Sync's state and apply pipeline. Nil disables the routes.
+	Sync *worksync.Service
+	// SyncAllowInsecure skips the HTTPS-or-loopback rule for test stacks.
+	SyncAllowInsecure bool
+	// SyncBinDir holds the cross-compiled clients the bootstrap downloads.
+	SyncBinDir string
 }
 
 // New returns the HTTP handler for the whole server. Login/logout are
@@ -192,6 +199,20 @@ func New(d Deps) http.Handler {
 	if d.State != nil {
 		authed("GET", "/api/state", handleGetState)
 		authed("DELETE", "/api/state", handleDeleteState)
+	}
+
+	if d.Sync != nil {
+		authedProject("POST", "/api/projects/{id}/sync/code", handleSyncCode)
+		authedProject("GET", "/api/projects/{id}/sync", handleSyncStatus)
+		mux.HandleFunc("POST /api/sync/hello", handleSyncHello(d))
+		mux.HandleFunc("POST /api/sync/{session}/plan", handleSyncPlan(d))
+		mux.HandleFunc("POST /api/sync/{session}/send", handleSyncSend(d))
+		mux.HandleFunc("POST /api/sync/{session}/abort", handleSyncAbort(d))
+		mux.HandleFunc("GET /api/sync/{session}/receive", handleSyncReceive(d))
+	}
+	mux.HandleFunc("GET /sync.sh", handleSyncBootstrap(d))
+	if d.SyncBinDir != "" {
+		mux.HandleFunc("GET /sync/bin/{target}", handleSyncClient(d))
 	}
 
 	if d.Push != nil {
