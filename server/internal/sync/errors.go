@@ -73,7 +73,7 @@ func CodeUsed() *Error {
 }
 
 func SyncRunning() *Error {
-	return NewError(ErrSyncRunning, "Sync already running for this project.\nWait for it to finish, or generate a new code.")
+	return NewError(ErrSyncRunning, "Sync already running for this project.\nIf nothing seems to be happening, just wait — it sorts itself out within 10 minutes, then generate a new code.")
 }
 
 func HTTPSRequired() *Error {

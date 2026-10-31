@@ -97,6 +97,28 @@ func TestGenerateRefusesWhileRunning(t *testing.T) {
 	require.Equal(t, ErrSyncRunning, e.Code)
 }
 
+// An abandoned sync (laptop vanished mid-transfer, so no abort call) must not
+// wedge the project: once its session expires, status reads idle again and a
+// fresh code can be generated.
+func TestExpiredSessionFreesTheProject(t *testing.T) {
+	s := NewCodeStore()
+	base := time.Now()
+	s.now = func() time.Time { return base }
+	code, _, err := s.Generate("acme/api")
+	require.NoError(t, err)
+	sess, err := s.Lookup(code, "acme/api", "c", "/w", "main", "abc")
+	require.NoError(t, err)
+	sess.phase.Store("uploading")
+	require.Equal(t, "uploading", s.ProjectStatus("acme/api"))
+
+	s.now = func() time.Time { return base.Add(CodeTTL + time.Second) }
+	require.Equal(t, "idle", s.ProjectStatus("acme/api"))
+	_, _, err = s.Generate("acme/api")
+	require.NoError(t, err)
+	_, alive := s.sessions[sess.ID]
+	require.False(t, alive, "abandoned session should be dropped")
+}
+
 // --- manifests and deltas ---
 
 func TestDiffActions(t *testing.T) {

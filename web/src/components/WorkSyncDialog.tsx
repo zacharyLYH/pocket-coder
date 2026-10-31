@@ -3,6 +3,7 @@ import { Copy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { api, errMsg, projectPath } from '@/lib/api'
+import { copyToClipboard } from '@/lib/clipboard'
 import { useSyncStatus } from '@/hooks/useSyncStatus'
 import type { SyncCode } from '@/lib/types'
 
@@ -14,13 +15,13 @@ export function WorkSyncDialog({ projectId, open, onOpenChange }: {
   const [info, setInfo] = useState<SyncCode | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [remaining, setRemaining] = useState('')
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'code' | 'command' | null>(null)
   const status = useSyncStatus(projectId, open)
 
   useEffect(() => {
     if (!open) return
     let alive = true
-    setInfo(null); setError(null); setCopied(false)
+    setInfo(null); setError(null); setCopied(null)
     api<SyncCode>(projectPath(projectId, '/sync/code'), { method: 'POST' })
       .then((d) => { if (alive) setInfo(d) })
       .catch((err) => { if (alive) setError(errMsg(err)) })
@@ -36,14 +37,10 @@ export function WorkSyncDialog({ projectId, open, onOpenChange }: {
     return () => clearInterval(id)
   }, [info])
 
-  async function copy() {
+  async function copy(what: 'code' | 'command') {
     if (!info) return
-    try {
-      await navigator.clipboard.writeText(info.code)
-      setCopied(true)
-    } catch {
-      setCopied(false)
-    }
+    const ok = await copyToClipboard(what === 'code' ? info.code : info.command)
+    setCopied(ok ? what : null)
   }
 
   return (
@@ -71,11 +68,20 @@ export function WorkSyncDialog({ projectId, open, onOpenChange }: {
               <p className="text-sm font-medium">On your laptop, run</p>
               <code data-testid="sync-command" className="block overflow-x-auto rounded-lg bg-muted px-3 py-2 font-mono text-xs">{info.command}</code>
               <div className="flex gap-2">
-                <Button type="button" size="sm" variant="outline" onClick={copy} data-testid="sync-copy">
-                  <Copy className="size-4" /> {copied ? 'Copied' : 'Copy code'}
+                <Button type="button" size="sm" variant="outline" onClick={() => void copy('code')} data-testid="sync-copy">
+                  <Copy className="size-4" /> {copied === 'code' ? 'Copied' : 'Copy code'}
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => void copy('command')} data-testid="sync-command-copy">
+                  <Copy className="size-4" /> {copied === 'command' ? 'Copied' : 'Copy command'}
                 </Button>
               </div>
             </div>
+
+            <ol data-testid="sync-steps" className="flex list-decimal flex-col gap-1 pl-5 text-sm">
+              <li><strong>Copy</strong> the code above and the command.</li>
+              <li>Run the command on your laptop. When it asks <strong>Sync code:</strong>, paste the 16-character code and press Enter.</li>
+              <li>Choose <strong>Upload</strong> (laptop → pcoder) or <strong>Download</strong> (pcoder → laptop).</li>
+            </ol>
 
             <p className="text-xs text-muted-foreground">
               <strong>Upload</strong> overwrites pcoder with this folder. <strong>Download</strong> overwrites this folder with pcoder.
@@ -90,6 +96,11 @@ export function WorkSyncDialog({ projectId, open, onOpenChange }: {
                 ? 'Waiting for your laptop…'
                 : `${status === 'uploading' ? 'Uploading' : 'Downloading'}… don't touch this project until it finishes.`}
             </p>
+            {status !== 'idle' && (
+              <p data-testid="sync-stuck-hint" className="text-xs text-muted-foreground">
+                Nothing seems to be happening? Just wait — it sorts itself out within 10 minutes, then generate a new code.
+              </p>
+            )}
           </>
         )}
       </DialogContent>

@@ -220,7 +220,7 @@ test.describe('work sync', () => {
       route.fulfill({
         status: 409,
         contentType: 'application/json',
-        body: JSON.stringify({ error: { code: 'sync_running', message: 'Sync already running for this project.\nWait for it to finish, or generate a new code.' } }),
+        body: JSON.stringify({ error: { code: 'sync_running', message: 'Sync already running for this project.\nIf nothing seems to be happening, just wait — it sorts itself out within 10 minutes, then generate a new code.' } }),
       }))
     await page.getByTestId(`project-menu-${projectId}`).click()
     await page.getByRole('menuitem', { name: 'Work Sync' }).click()

@@ -39,7 +39,7 @@ func (s *CodeStore) ProjectStatus(project string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, sess := range s.sessions {
-		if sess.Project != project || sess.finished.Load() {
+		if sess.Project != project || sess.finished.Load() || s.now().After(sess.ExpiresAt) {
 			continue
 		}
 		if p, ok := sess.phase.Load().(string); ok {
@@ -122,9 +122,13 @@ func (s *CodeStore) Generate(project string) (string, time.Time, error) {
 	defer s.mu.Unlock()
 	if id := s.byProject[project]; id != "" {
 		if old := s.entries[id]; old != nil && old.sessionID != "" {
-			if sess := s.sessions[old.sessionID]; sess != nil && !sess.finished.Load() {
+			sess := s.sessions[old.sessionID]
+			if sess != nil && !sess.finished.Load() && s.now().Before(sess.ExpiresAt) {
 				return "", time.Time{}, SyncRunning()
 			}
+			// Finished or past its expiry: drop it so a laptop that
+			// disconnected mid-sync cannot block this project forever.
+			delete(s.sessions, old.sessionID)
 		}
 		delete(s.entries, s.byProject[project])
 	}
